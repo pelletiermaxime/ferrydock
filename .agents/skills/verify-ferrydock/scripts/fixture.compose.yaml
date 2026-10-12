@@ -1,0 +1,15 @@
+services:
+  probe:
+    image: alpine:3.23
+    command:
+      - sh
+      - -c
+      - |
+        trap 'exit 0' TERM INT
+        echo FERRY_FIXTURE_READY
+        while :; do
+          echo FERRY_HEARTBEAT
+          sleep 2 & wait $!
+        done
+    labels:
+      dev.ferrydock.fixture: "true"
