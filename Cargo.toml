@@ -12,8 +12,8 @@ bollard = "=0.21.1"
 futures-util = "0.3"
 # Keep the GPUI crates on one immutable community-edition revision. This revision
 # includes Linux offscreen GPU rendering; headless test support is opt-in below.
-gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "43dacc568497c615c55a1ea0f77ab381c0d9865b", default-features = false, features = ["x11", "windows-manifest"] }
-gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "43dacc568497c615c55a1ea0f77ab381c0d9865b", default-features = false, features = ["font-kit", "x11"] }
+gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "43dacc568497c615c55a1ea0f77ab381c0d9865b", default-features = false, features = ["wayland", "x11", "windows-manifest"] }
+gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "43dacc568497c615c55a1ea0f77ab381c0d9865b", default-features = false, features = ["font-kit", "wayland", "x11"] }
 gpui_wgpu = { package = "gpui_ce_wgpu", git = "https://github.com/gpui-ce/gpui-ce", rev = "43dacc568497c615c55a1ea0f77ab381c0d9865b", optional = true, features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 serde = { version = "1", features = ["derive"] }

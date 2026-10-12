@@ -467,6 +467,8 @@ def main():
     parser.add_argument("--evidence", type=Path)
     args = parser.parse_args()
     env = os.environ.copy()
+    # This harness finds and drives X11 windows; keep the override scoped to it.
+    env.pop("WAYLAND_DISPLAY", None)
     if args.display:
         env["DISPLAY"] = args.display
     binary = args.binary.resolve()

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=FerryDock
+Comment=Manage Docker containers, logs, and terminals
+Exec=ferrydock
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=dev.ferrydock.FerryDock

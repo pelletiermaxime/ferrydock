@@ -25,15 +25,34 @@ the terminal, and container details close at hand.
 ## Get started
 
 FerryDock is in early development. The current version supports **Linux with
-X11 or XWayland** and a **local Docker daemon**. You need a working graphics
+Wayland or X11/XWayland** and a **local Docker daemon**. You need a working graphics
 driver and permission to access Docker from your user account. FerryDock uses
 your existing Docker installation.
 
 ### Install
 
-For now, build FerryDock from source. Install Rust and the
-[Linux build dependencies](docs/development.md#build-on-linux), then run these
-commands from the FerryDock source directory:
+Download a package from [GitHub Releases](https://github.com/pelletiermaxime/ferrydock/releases/latest).
+The first release is for **Linux x86-64**, built on Ubuntu 24.04; it requires
+glibc 2.39 or newer.
+
+On Ubuntu 24.04 or a compatible Debian-based distribution, download
+`ferrydock_0.1.0_amd64.deb` and install it:
+
+```sh
+sudo apt install ./ferrydock_0.1.0_amd64.deb
+```
+
+Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
+terminal. The package installs its runtime library dependencies automatically.
+You still need Docker and a working graphics driver.
+
+For other compatible distributions, extract
+`ferrydock-0.1.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
+includes a `SHA256SUMS` file to verify the downloads.
+
+To build from source instead, install Rust and the
+[Linux build dependencies](docs/development.md#build-on-linux), then run:
 
 ```sh
 cargo build --release --locked
@@ -90,7 +109,7 @@ Docker contexts. The context and endpoint are displayed in the app.
 To launch with a particular local context:
 
 ```sh
-DOCKER_CONTEXT=my-local-context ./target/release/ferrydock
+DOCKER_CONTEXT=my-local-context ferrydock
 ```
 
 If the Docker CLI is unavailable, FerryDock tries a local Docker socket. If the
@@ -104,7 +123,7 @@ daemon disconnects, FerryDock retries the connection automatically.
 | Your context is unsupported | Select a local Unix socket context. SSH, TCP/TLS, and Windows named pipe connections are not supported yet. |
 | A stopped container is missing | Switch **Running only** to **All** and clear the search field. |
 | A shell will not open | The container must be running and include Bash or sh. Minimal images may have neither. |
-| FerryDock reports a missing display | Launch from your Linux desktop session with X11 or XWayland available. |
+| FerryDock reports a missing display | Launch from your Linux desktop session with Wayland or X11/XWayland available. |
 
 ## Current limits
 
@@ -117,8 +136,8 @@ The terminal does not yet support input method composition (IME) or mouse input
 for terminal applications. **Disconnect** detaches FerryDock from a shell;
 use `exit` when you want to end the shell process.
 
-Native Wayland, macOS, and Windows support are not part of this first Linux
-version.
+FerryDock uses native Wayland when `WAYLAND_DISPLAY` is set, or X11/XWayland
+when only `DISPLAY` is set. macOS and Windows support are planned.
 
 ## Contributing
 

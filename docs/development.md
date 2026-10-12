@@ -9,8 +9,9 @@ For the user guide, see the [README](../README.md).
 
 ## Build on Linux
 
-Install Rust and the native build dependencies. Rust 1.99 was used for local
-verification. On Debian/Ubuntu, the typical prerequisites are:
+Install Rust through rustup and the native build dependencies. The toolchain is
+pinned to Rust 1.99.0 in `rust-toolchain.toml`. On Debian/Ubuntu, the typical
+prerequisites are:
 
 ```sh
 sudo apt install build-essential pkg-config cmake clang \
@@ -19,8 +20,7 @@ sudo apt install build-essential pkg-config cmake clang \
   libxcb1-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev
 ```
 
-Dependencies were already available on the development machine; this package
-command has not been verified on a clean Ubuntu installation.
+GitHub Actions builds and tests on Ubuntu 24.04 with these dependencies.
 
 `Cargo.lock` is included. For the initial dependency download:
 
@@ -42,9 +42,12 @@ cargo build --release --locked
 ```
 
 Use a desktop terminal with access to Docker and a GPU/driver supported by GPUI.
-The Linux app uses X11, including XWayland on a Wayland desktop. `DISPLAY` must
-be set by the desktop session; no manual backend override is needed. Native
-Wayland remains disabled until it can be verified with GPUI-CE.
+The Linux app lets GPUI select native Wayland when `WAYLAND_DISPLAY` is set,
+or X11/XWayland when only `DISPLAY` is set. Launch from the desktop session
+without changing these variables. To exercise X11 explicitly on a Wayland
+desktop, use `env -u WAYLAND_DISPLAY cargo run --locked`; this override is
+limited to that child process. Backend selection does not retry X11 after a
+Wayland connection failure.
 
 All GPUI crates are pinned to Community Edition Git revision
 `43dacc568497c615c55a1ea0f77ab381c0d9865b`. Its Linux renderer uses wgpu and
@@ -121,6 +124,47 @@ selection before input, and retains screenshots/transcripts under
 `xdotool`, ImageMagick, Tesseract, and Python with Pillow. Use the actual display
 on another workstation. Consult the feature map for exercised entry points and
 mouse/display limitations; use `/maintain-verification-skill` as the app evolves.
+
+## CI and releases
+
+[Tests](../.github/workflows/ci.yml) runs on pushes to `main`, pull requests,
+and manual dispatches. It checks formatting, Clippy, unit tests, the disposable
+Docker integration fixture, and the headless UI flow with Mesa's software GPU
+driver. Headless evidence is retained as a workflow artifact for seven days.
+
+[Release](../.github/workflows/release.yml) runs when a `v*` tag is pushed. It
+reuses the test workflow, then builds Linux x86-64 packages on Ubuntu 24.04:
+
+- A `.tar.gz` archive containing the binary, license, install guide, and desktop
+  launcher.
+- An `.deb` package with library dependencies derived from the built binary.
+- `SHA256SUMS` for both packages.
+
+The workflow installs the Debian package and checks both binaries in a clean
+Ubuntu container before publishing the GitHub Release. This startup check
+verifies library loading and the missing-display error; it does not exercise
+the native desktop UI. Native UI coverage is recorded separately above.
+
+For a release, update the Cargo version and lockfile, add user-facing notes in
+`docs/releases/v<version>.md`, commit the changes, and push the matching tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The tag must match the Cargo version and have a release-notes file. The publish
+job is the only job with write access to repository contents.
+
+To package a locally built release on an Ubuntu 24.04 x86-64 host, install
+`dpkg-dev`, build the binary, and run:
+
+```sh
+bash scripts/package-linux.sh v0.1.0
+```
+
+Output goes to `target/packages/`. Local builds on newer distributions may
+require newer runtime libraries; publish the Ubuntu-built workflow artifacts.
 
 ## Dependency licenses
 

@@ -3,16 +3,15 @@ use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions
 fn main() {
     #[cfg(target_os = "linux")]
     {
-        if std::env::var("DISPLAY").map_or(true, |display| display.is_empty()) {
+        let has_display = ["WAYLAND_DISPLAY", "DISPLAY"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+        if !has_display {
             eprintln!(
-                "FerryDock needs an X11 or XWayland desktop connection (DISPLAY). Launch it from your desktop terminal."
+                "FerryDock needs a Wayland (WAYLAND_DISPLAY) or X11 (DISPLAY) desktop connection. Launch it from your desktop terminal."
             );
             std::process::exit(1);
         }
-        // The published CE platform enables Wayland transitively and prefers it
-        // when both display variables are present. Keep this build on X11/XWayland.
-        // SAFETY: this runs before GPUI or the Docker worker starts any threads.
-        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
     }
     gpui_platform::application().run(|cx: &mut App| {
         cx.on_window_closed(|cx, _| {

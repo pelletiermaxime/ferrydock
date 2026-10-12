@@ -23,7 +23,7 @@ For native-window verification, build the shipping configuration before testing 
 cargo build --release --locked
 ```
 
-The Linux desktop needs an accessible X11 display, Docker Engine with a local Unix socket, Docker Compose, `xdotool`, ImageMagick's `magick`, Tesseract with English data, and Python 3 with Pillow. GPUI's system build dependencies are listed in the project README. This workstation was observed on display `:0`; use the actual display on another workstation.
+The Linux desktop needs an accessible X11 display, Docker Engine with a local Unix socket, Docker Compose, `xdotool`, ImageMagick's `magick`, Tesseract with English data, and Python 3 with Pillow. GPUI's system build dependencies are listed in the project README. This workstation was observed on display `:0`; use the actual display on another workstation. The application normally selects native Wayland when available. This X11-specific harness removes `WAYLAND_DISPLAY` only from its child environment so its window ownership and input checks still work; it does not prove native Wayland integration.
 
 ```sh
 python3 .agents/skills/verify-ferrydock/scripts/native.py doctor --display :0

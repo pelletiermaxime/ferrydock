@@ -1,10 +1,47 @@
 # FerryDock verification
 
 Date: 2026-10-12. Scope: the first runnable Linux milestone in `PLAN.md`,
-including its GPUI Community Edition Git upgrade and Linux headless GPU
-verification. Earlier registry/upstream evidence is retained separately below.
+including native Wayland/X11 selection, its GPUI Community Edition Git upgrade
+and Linux headless GPU verification. Earlier evidence is retained below.
 
-## GPUI-CE Git upgrade and headless GPU verification
+## Native Wayland and X11 selection
+
+Both backends are explicitly enabled on the pinned GPUI crates. FerryDock
+accepts either `WAYLAND_DISPLAY` or `DISPLAY` and leaves those variables intact.
+GPUI prefers native Wayland when its display variable is nonempty, otherwise
+selects X11. This is selection at startup, not an automatic retry of X11 after
+a Wayland connection failure. The X11-specific native verifier now removes
+`WAYLAND_DISPLAY` only in its child environment.
+
+The incremental debug build passed a native Wayland smoke check on the KDE
+desktop with `DISPLAY` removed. The owned process received keyboard focus and
+committed Wayland surfaces; its active-window screenshot was inspected and
+showed the FerryDock UI. It used an intentionally unavailable Docker socket,
+so the visible disconnected state is expected and no containers were affected.
+The process was terminated after capture. Evidence:
+[Wayland result](.verification/wayland/20261012T214414Z-67466d6e/result.json),
+[window screenshot](.verification/wayland/20261012T214414Z-67466d6e/window.png),
+[Wayland protocol log](.verification/wayland/20261012T214414Z-67466d6e/application.log).
+
+The same binary also created a visible X11 window with `WAYLAND_DISPLAY`
+removed, matched by its owned PID and exact title, and was then terminated:
+[X11 result](.verification/wayland/20261012T214414Z-67466d6e/x11-result.json).
+The missing-display guard still exits with an actionable error.
+
+Luna reran the headless flow successfully in **10.442 seconds**, retaining six
+screenshots and inspecting the initial list, empty search and terminal frames:
+[result](.verification/headless/20261012T214342Z-6c61d1a7/result.json).
+Formatting, all-target/all-feature Clippy with warnings denied, and the five
+existing unit tests passed. The opt-in Docker integration test was not rerun
+for this startup-only change. The native launch proof uses the development
+binary; the previous release binary is not rebuilt by this check.
+
+Wayland keyboard typing, resizing, clipboard, IME and Docker-backed terminal
+interaction remain unverified. Headless input proof does not establish those
+desktop behaviors. The earlier X11/Docker evidence below retains its original
+scope and binary identity.
+
+## Historical GPUI-CE Git upgrade and headless GPU verification
 
 All 19 GPUI packages are pinned to Git revision
 `43dacc568497c615c55a1ea0f77ab381c0d9865b`. The application uses that revision's
@@ -59,7 +96,7 @@ Passed upgrade checks:
   A real shell created the independently observed marker file and reported
   13x128 PTY dimensions. Seven screenshots remain after owned cleanup.
 
-Current release SHA-256:
+Release SHA-256 for that verification:
 `94146203b7d106bfcebf177b3ec6cb16175f6e345300dc7cd63e7a0f1b7f7797`.
 
 ## Historical registry GPUI-CE migration

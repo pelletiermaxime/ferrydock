@@ -1,0 +1,29 @@
+FerryDock for Linux x86-64
+
+Requires Ubuntu 24.04 or a compatible Linux distribution (glibc 2.39 or newer),
+a working graphics driver, a Wayland or X11/XWayland desktop, and access to a local
+Docker daemon. Docker must be installed separately.
+
+Debian package:
+  sudo apt install ./ferrydock_@VERSION@_amd64.deb
+  Launch FerryDock from your applications menu or run: ferrydock
+
+Tar archive:
+  Extract the archive, open a desktop terminal in the extracted directory,
+  and run: ./ferrydock
+  Optional installation: install -Dm755 ferrydock ~/.local/bin/ferrydock
+
+The archive uses system libraries. On Ubuntu/Debian, install the runtime
+libraries if they are missing:
+  sudo apt install libfontconfig1 libfreetype6 libxcb1 libxkbcommon0 \
+    libxkbcommon-x11-0 libvulkan1 libegl1 libwayland-client0 \
+    libwayland-cursor0 libwayland-egl1
+
+You also need an installed font and a GPU driver usable by Vulkan or EGL.
+The Debian package installs library dependencies automatically.
+
+User guide and troubleshooting:
+  https://github.com/pelletiermaxime/ferrydock#readme
+
+License: MIT. See LICENSE in this archive or /usr/share/doc/ferrydock/copyright
+when installed from the Debian package.
