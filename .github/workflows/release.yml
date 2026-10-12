@@ -41,7 +41,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config cmake clang dpkg-dev \
+          sudo apt-get install -y build-essential pkg-config cmake clang dpkg-dev curl file \
             libssl-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libwayland-dev libfontconfig1-dev libfreetype-dev \
             libxcb1-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev
@@ -78,6 +78,32 @@ jobs:
             test "$status" -eq 1
             grep -F "FerryDock needs a Wayland (WAYLAND_DISPLAY) or X11 (DISPLAY) desktop connection" /tmp/archive-error
           '
+      - name: Test AppImage library loading, rendering, and keyboard input
+        run: |
+          docker run --rm -v "$PWD/target/packages:/packages:ro" ubuntu:24.04 bash -euc '
+            set +e
+            /packages/ferrydock-*-linux-x86_64.AppImage --appimage-extract-and-run 2>/tmp/startup-error
+            status=$?
+            set -e
+            test "$status" -eq 1
+            grep -F "FerryDock needs a Wayland (WAYLAND_DISPLAY) or X11 (DISPLAY) desktop connection" /tmp/startup-error
+          '
+          docker build -f packaging/linux/appimage-test.Dockerfile -t ferrydock-appimage-test packaging/linux
+          mkdir -p target/appimage-proof
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD/target/packages:/packages:ro" \
+            -v "$PWD/scripts/verify-appimage.py:/verify-appimage.py:ro" \
+            -v "$PWD/target/appimage-proof:/proof" \
+            ferrydock-appimage-test bash -euc '
+              python3 /verify-appimage.py /packages/ferrydock-*-linux-x86_64.AppImage --evidence /proof/run
+            '
+      - name: Preserve AppImage verification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: appimage-proof
+          path: target/appimage-proof/
+          if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-packages

@@ -138,33 +138,61 @@ reuses the test workflow, then builds Linux x86-64 packages on Ubuntu 24.04:
 - A `.tar.gz` archive containing the binary, license, install guide, and desktop
   launcher.
 - An `.deb` package with library dependencies derived from the built binary.
-- `SHA256SUMS` for both packages.
+- An `.AppImage` with ELF dependencies and runtime-loaded Wayland libraries,
+  an icon/launcher, and bundled library copyright notices. glibc, fonts, and
+  the Vulkan/EGL graphics driver stack remain host requirements.
+- `SHA256SUMS` for all three packages.
 
 The workflow installs the Debian package and checks both binaries in a clean
 Ubuntu container before publishing the GitHub Release. This startup check
 verifies library loading and the missing-display error; it does not exercise
-the native desktop UI. Native UI coverage is recorded separately above.
+the native desktop UI. A separate clean Ubuntu container launches the AppImage
+with `--appimage-extract-and-run` on its own Xvfb display using Mesa software
+Vulkan. It checks that application libraries are loaded from the bundle,
+captures rendered UI, and verifies keyboard search input through OCR. The
+AppImage check has no Docker socket and does not prove Docker operations,
+native Wayland, FUSE mounting, or hardware GPU compatibility. Its screenshots,
+logs, and result are retained in the `appimage-proof` workflow artifact.
+Native UI coverage is recorded separately above.
 
 For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 The tag must match the Cargo version and have a release-notes file. The publish
 job is the only job with write access to repository contents.
 
 To package a locally built release on an Ubuntu 24.04 x86-64 host, install
-`dpkg-dev`, build the binary, and run:
+`dpkg-dev`, `curl`, `file`, Python 3, and the Linux build dependencies, then
+build the binary and run:
 
 ```sh
-bash scripts/package-linux.sh v0.1.0
+bash scripts/package-linux.sh v0.1.1
 ```
 
 Output goes to `target/packages/`. Local builds on newer distributions may
 require newer runtime libraries; publish the Ubuntu-built workflow artifacts.
+The AppImage builder and runtime are pinned and SHA-256 checked by
+`scripts/package-appimage.sh`, with downloads cached in `target/appimage-tools/`.
+The bundler uses Debian package metadata to retain copyright notices, so run
+packaging on Ubuntu/Debian.
+
+To reproduce the AppImage check without exposing the host Docker daemon:
+
+```sh
+docker build -f packaging/linux/appimage-test.Dockerfile -t ferrydock-appimage-test packaging/linux
+mkdir -p target/appimage-proof
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/target/packages:/packages:ro" \
+  -v "$PWD/scripts/verify-appimage.py:/verify-appimage.py:ro" \
+  -v "$PWD/target/appimage-proof:/proof" ferrydock-appimage-test \
+  bash -euc 'python3 /verify-appimage.py /packages/ferrydock-*.AppImage --evidence /proof/run'
+```
+
+Use a new evidence directory for each run; the verifier refuses an existing one.
 
 ## Dependency licenses
 

@@ -8,6 +8,16 @@ Debian package:
   sudo apt install ./ferrydock_@VERSION@_amd64.deb
   Launch FerryDock from your applications menu or run: ferrydock
 
+AppImage:
+  chmod +x ferrydock-@VERSION@-linux-x86_64.AppImage
+  ./ferrydock-@VERSION@-linux-x86_64.AppImage
+  If FUSE mounting is unavailable:
+  ./ferrydock-@VERSION@-linux-x86_64.AppImage --appimage-extract-and-run
+  Application libraries, including Wayland libraries, are bundled. glibc,
+  fonts, the Vulkan/EGL graphics driver stack, and Docker come from your system.
+  Bundled library notices are inside usr/share/doc/ferrydock/bundled-libraries;
+  use --appimage-extract to inspect the AppImage contents.
+
 Tar archive:
   Extract the archive, open a desktop terminal in the extracted directory,
   and run: ./ferrydock

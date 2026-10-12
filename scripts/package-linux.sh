@@ -74,9 +74,10 @@ Description: Native desktop app for managing Docker containers
  Requires Wayland or X11/XWayland, a working graphics driver, and a local Docker daemon.
 CONTROL
 dpkg-deb --root-owner-group --build "$deb" "$output/ferrydock_${version}_amd64.deb"
+bash scripts/package-appimage.sh "$version" "$stage" "$output"
 (
   cd "$output"
-  sha256sum "$archive.tar.gz" "ferrydock_${version}_amd64.deb" >SHA256SUMS
+  sha256sum "$archive.tar.gz" "ferrydock_${version}_amd64.deb" "$archive.AppImage" >SHA256SUMS
   sha256sum --check SHA256SUMS
 )
 echo "Packages written to $output"
