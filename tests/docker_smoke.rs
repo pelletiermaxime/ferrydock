@@ -16,6 +16,28 @@ async fn receive(events: &mut mpsc::Receiver<Event>) -> Result<Event> {
         .context("Docker worker ended")
 }
 
+async fn wait_for_container_state(docker: &bollard::Docker, id: &str, running: bool) -> Result<()> {
+    let mut last_state = String::new();
+    let result = time::timeout(Duration::from_secs(20), async {
+        loop {
+            let containers = docker::snapshot(docker).await?;
+            let probe = containers
+                .iter()
+                .find(|container| container.id == id)
+                .context("Fixture disappeared")?;
+            last_state = format!("{} ({})", probe.state, probe.status);
+            if probe.running() == running {
+                return Ok(());
+            }
+            time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    result.with_context(|| {
+        format!("Timed out waiting for running={running}; last Docker state: {last_state}")
+    })?
+}
+
 async fn wait_for_text(
     events: &mut mpsc::Receiver<Event>,
     terminal: &mut TerminalCore,
@@ -108,12 +130,7 @@ async fn docker_daily_loop_and_interactive_terminal() -> Result<()> {
 
     for action in [Action::Stop, Action::Start, Action::Restart] {
         docker::perform(&docker, &id, action).await?;
-        let containers = docker::snapshot(&docker).await?;
-        let probe = containers
-            .iter()
-            .find(|container| container.id == id)
-            .context("Fixture disappeared")?;
-        assert_eq!(probe.running(), !matches!(action, Action::Stop));
+        wait_for_container_state(&docker, &id, !matches!(action, Action::Stop)).await?;
     }
     println!("PASS stop, start, restart and snapshot reconciliation");
 

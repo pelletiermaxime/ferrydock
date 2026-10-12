@@ -34,7 +34,7 @@ sed "s/@VERSION@/$version/g" packaging/linux/INSTALL.txt >"$stage/$archive/INSTA
 install -m644 packaging/linux/dev.ferrydock.FerryDock.desktop "$stage/$archive/"
 tar -czf "$output/$archive.tar.gz" -C "$stage" "$archive"
 
-deb="$stage/deb"
+deb="$stage/debian/ferrydock"
 mkdir -p "$deb/DEBIAN" "$deb/usr/bin" "$deb/usr/share/applications" \
   "$deb/usr/share/doc/ferrydock" "$stage/debian"
 install -m755 target/release/ferrydock "$deb/usr/bin/ferrydock"
@@ -53,7 +53,7 @@ Package: ferrydock
 Architecture: amd64
 Description: Native desktop app for managing Docker containers
 CONTROL
-dependencies="$(cd "$stage" && dpkg-shlibdeps -O -e "$deb/usr/bin/ferrydock")"
+dependencies="$(cd "$stage" && dpkg-shlibdeps -O -e debian/ferrydock/usr/bin/ferrydock)"
 dependencies="${dependencies#shlibs:Depends=}"
 test -n "$dependencies"
 installed_size="$(du -sk "$deb/usr" | cut -f1)"
