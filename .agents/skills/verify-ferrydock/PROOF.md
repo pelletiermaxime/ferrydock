@@ -1,5 +1,36 @@
 # FerryDock verification execution
 
+## ANSI log rendering
+
+After committed release `febf1b8` / `v0.2.0`, the subsequent working-tree
+changes passed sixteen unit tests, all-target/all-feature Clippy, formatting
+and the locked release build. The final headless flow passed in 9.839 s
+including compilation, retaining fourteen PNGs and completing owned-process
+teardown. Scoped pixel assertions cover container/project/operation colours,
+neutral metadata, resets, and CR/erase progress replacement with injected
+Docker timestamps protected. Luna high inspected the final container,
+project and operation frames and found no literal escape artifacts or overlap:
+[result](../../../.verification/headless/20261013T014029Z-517bf81c/result.json),
+[container](../../../.verification/headless/20261013T014029Z-517bf81c/01-containers-and-logs.png),
+[project](../../../.verification/headless/20261013T014029Z-517bf81c/07-project-logs-all.png),
+[operation](../../../.verification/headless/20261013T014029Z-517bf81c/11-compose-operation-live.png).
+This run is pinned. The 10,000-record burst processed in 0.166 s; only 17 rows
+were rendered from 1,500 retained records, with tail-follow and controls passing:
+[metrics](../../../.verification/headless/20261013T014029Z-517bf81c/log-performance.json).
+
+The rebuilt release passed the owned native X11/XWayland helper with `--ansi`:
+ten disposable containers produced nominally 500 coloured UTF-8 records/s.
+The five-second sample measured 9.2% CPU and 71.9 MiB RSS. Live-output and
+completed-search capture bounds were 0.363 s and 1.166 s respectively;
+the latter includes typing, and OCR overhead is recorded separately:
+[native result](../../../.verification/log-performance/20261013T014129Z-a532d541/result.json),
+[native logs](../../../.verification/log-performance/20261013T014129Z-a532d541/busy-logs-after-sample.png).
+Owned PID 1084573 exited, and project `ferrydock-log-perf-3ba2f73c` and its
+network were removed. No user stack was adopted. Native Wayland input,
+OS clipboard, every text attribute and full-screen terminal controls are
+outside this proof. Real Compose CLI colour emission is not established by
+fixture operation frames; worker transport was unchanged.
+
 ## Busy-log performance correction
 
 The all-services regression now has an instrumented before/after flow. Final

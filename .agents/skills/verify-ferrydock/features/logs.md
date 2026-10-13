@@ -10,6 +10,7 @@ Read the selected container's output, follow live lines, pause/resume follow, an
 - `logs.refresh`: reconnect the log stream.
 - `logs.copy`: copy retained output to the desktop clipboard.
 - `logs.scroll`: navigate retained output with the dock scroll area.
+- `logs.ansi`: colours/common styles, split escape sequences/UTF-8, readable copied text and basic single-line progress replacement.
 
 ## How to get to it (user POV)
 
@@ -23,6 +24,8 @@ Read the selected container's output, follow live lines, pause/resume follow, an
 Preconditions: headless checks need cached dependencies and a usable Linux WGPU driver; native checks additionally need the skill's native Doctor and its owned fixture/window.
 
 - **Headless development check:** `python3 scripts/verify-headless.py` delivers fixture log bytes through the event channel, captures their GPU-rendered output, and clicks the rendered `follow` selector twice using GPUI pointer events. Assertions verify pause/resume state and the retained paused frame. This proves the view and toggle, not live daemon streaming or viewport motion under a long stream.
+
+Frame 01 also checks split ANSI colour sequences with green first-line pixels and neutral reset text in the second row. Colour checks are scoped to rendered log-row bounds, rather than matching similarly coloured controls. Unit tests check indexed/RGB attributes, split UTF-8, clean copy and basic CR/backspace/erase-in-line updates. ANSI parsing is cached at ingestion; the view renders only visible styled rows. This does not claim full-screen log cursor control or OS clipboard proof.
 
 The native probe below prints an initial marker and heartbeat every two seconds.
 

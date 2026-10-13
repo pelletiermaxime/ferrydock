@@ -10,17 +10,13 @@ use alacritty_terminal::{
 };
 use gpui::{prelude::*, *};
 
-use crate::docker::Command;
+use crate::{ansi::PALETTE, docker::Command};
 
 const FONT_SIZE: f32 = 13.0;
 const LINE_HEIGHT: f32 = 19.0;
 const PADDING: f32 = 10.0;
 const FOREGROUND: u32 = 0xe0ece7;
 const BACKGROUND: u32 = 0x101819;
-const PALETTE: [u32; 16] = [
-    0x162025, 0xe87979, 0x74d7b1, 0xe5c07b, 0x7eafe8, 0xbe9ae8, 0x73c9d0, 0xcbd8d2, 0x60746a,
-    0xff9b9b, 0x9aebc8, 0xffdf9e, 0xa1c8ff, 0xd8b6ff, 0x9ce9ee, 0xf0f6f2,
-];
 
 struct Size {
     columns: usize,

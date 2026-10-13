@@ -23,6 +23,8 @@ Associate project files and manage the project from its bottom-dock workspace.
 
 Run `python3 scripts/verify-headless.py`. The input-driven flow checks form values at the command boundary, disabled unassociated/conflicting actions, all three operation requests, live output and retained failure. Inspect the association/live/failure frames. This does not execute Compose or write real settings.
 
+Frame 11 also renders ANSI-coloured operation output and checks a partial `Starting` line replaced by `Started` through CR/erase-in-line. The operation buffer and viewport retain cached styled records and render only visible rows. This is not full terminal-screen emulation, and the fixture output is not evidence that the Compose CLI emits colours in its current plain-output mode.
+
 Run `bash scripts/verify-compose.sh` separately. It owns a new two-service fixture, pins the local endpoint, and isolates settings. The production worker saves associations and executes Compose. Assertions prove override order, environment file, profile, real lifecycle state/restart time, streamed output, a real CLI failure/error output, ambient override removal, rejected invalid settings and persistence. The script removes its fixture and verifies scoped cleanup. This does not drive desktop input.
 
 Passing both commands proves the headless UI and real process boundaries separately. No native Wayland/X11 Compose interaction, cancellation UI, Rebuild or Down is claimed.

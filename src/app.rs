@@ -6,9 +6,10 @@ use std::{
 use gpui::{prelude::*, *};
 
 use crate::{
+    ansi::Buffer as StyledLogBuffer,
     compose::{self, Config as ComposeConfig, Project as ComposeProject},
     docker::{Action, Backend, Command, Connection, Event, Shell},
-    model::{Container, GroupKey, LogBuffer, groups},
+    model::{Container, GroupKey, groups},
     terminal::TerminalView,
 };
 
@@ -57,7 +58,8 @@ struct ComposeOperation {
     id: u64,
     action: compose::Action,
     running: bool,
-    output: LogBuffer,
+    output: StyledLogBuffer,
+    output_scroll: UniformListScrollHandle,
     result: Option<Result<(), String>>,
 }
 
@@ -79,7 +81,7 @@ pub struct FerryDock {
     terminal: Option<Entity<TerminalView>>,
     tab: Tab,
     shell: Shell,
-    logs: LogBuffer,
+    logs: StyledLogBuffer,
     log_status: String,
     log_follow: bool,
     log_scroll: UniformListScrollHandle,
@@ -169,7 +171,7 @@ impl FerryDock {
             terminal: None,
             tab: Tab::Logs,
             shell: Shell::Auto,
-            logs: LogBuffer::default(),
+            logs: StyledLogBuffer::with_timestamps(),
             log_status: "Select a container to view its logs".into(),
             log_follow: true,
             log_scroll: UniformListScrollHandle::default(),
@@ -228,7 +230,7 @@ impl FerryDock {
         }
         self.selected = Some(id.clone());
         self.generation += 1;
-        self.logs = LogBuffer::default();
+        self.logs = StyledLogBuffer::with_timestamps();
         self.inspection = "Loading container configuration…".into();
         self.log_status = "Connecting to logs…".into();
         self.log_follow = true;
@@ -313,6 +315,7 @@ impl FerryDock {
                     && current.id == operation
                 {
                     current.output.push(&data);
+                    current.output_scroll.scroll_to_bottom();
                 }
             }
             Event::ComposeFinished {
@@ -377,12 +380,17 @@ impl FerryDock {
                     .as_ref()
                     .is_some_and(|id| containers.iter().any(|container| &container.id == id));
                 self.containers = containers;
+                self.project_logs.retain_sources(
+                    self.containers
+                        .iter()
+                        .map(|container| container.id.as_str()),
+                );
                 if !selected_exists {
                     self.selected = None;
                     self.backend.send(Command::CloseLogs);
                     self.backend.send(Command::CloseTerminal);
                     self.terminal = None;
-                    self.logs = LogBuffer::default();
+                    self.logs = StyledLogBuffer::with_timestamps();
                     self.inspection.clear();
                     self.generation += 1;
                     let next = self
@@ -405,7 +413,7 @@ impl FerryDock {
                             && (after.as_deref() == Some("running") || self.reopen_logs)
                         {
                             self.generation += 1;
-                            self.logs = LogBuffer::default();
+                            self.logs = StyledLogBuffer::with_timestamps();
                             self.backend.send(Command::Logs {
                                 id: id.clone(),
                                 generation: self.generation,
@@ -745,7 +753,8 @@ impl FerryDock {
                 id: self.next_operation,
                 action,
                 running: true,
-                output: LogBuffer::default(),
+                output: StyledLogBuffer::default(),
+                output_scroll: UniformListScrollHandle::default(),
                 result: None,
             },
         );
@@ -1073,7 +1082,7 @@ impl FerryDock {
             .logs
             .lines
             .iter()
-            .map(String::len)
+            .map(|line| line.len())
             .chain(std::iter::once(self.logs.partial.len()))
             .enumerate()
             .max_by_key(|(_, length)| *length)
@@ -1084,15 +1093,18 @@ impl FerryDock {
             cx.processor(|this, range: std::ops::Range<usize>, _, _| {
                 range
                     .map(|index| {
-                        div().h(px(18.0)).whitespace_nowrap().child(
-                            this.logs.lines.get(index).cloned().unwrap_or_else(|| {
-                                if this.logs.partial.is_empty() {
-                                    "Waiting for log output…".into()
-                                } else {
-                                    this.logs.partial.clone()
-                                }
-                            }),
-                        )
+                        let text = if let Some(line) = this.logs.lines.get(index) {
+                            line.render("", TEXT)
+                        } else if this.logs.partial.is_empty() {
+                            StyledText::new("Waiting for log output…")
+                        } else {
+                            this.logs.partial.render("", TEXT)
+                        };
+                        div()
+                            .h(px(18.0))
+                            .whitespace_nowrap()
+                            .debug_selector(move || format!("container-log-line-{index}"))
+                            .child(text)
                     })
                     .collect::<Vec<_>>()
             }),
@@ -1158,7 +1170,7 @@ impl FerryDock {
                                 && this.connection.is_some()
                             {
                                 this.generation += 1;
-                                this.logs = LogBuffer::default();
+                                this.logs = StyledLogBuffer::with_timestamps();
                                 this.backend.send(Command::Logs {
                                     id: id.clone(),
                                     generation: this.generation,
@@ -1617,6 +1629,52 @@ impl FerryDock {
                     None => "Operation ended".into(),
                 }
             };
+            let count =
+                operation.output.lines.len() + usize::from(!operation.output.partial.is_empty());
+            let widest = operation
+                .output
+                .lines
+                .iter()
+                .map(|line| line.len())
+                .chain(std::iter::once(operation.output.partial.len()))
+                .enumerate()
+                .max_by_key(|(_, length)| *length)
+                .map(|(index, _)| index);
+            let project_name = name.to_owned();
+            let output = uniform_list(
+                "compose-log-scroll",
+                count.max(1),
+                cx.processor(move |this, range: std::ops::Range<usize>, _, _| {
+                    let operation = &this.compose_operations[&project_name];
+                    range
+                        .map(|index| {
+                            let text = if let Some(line) = operation.output.lines.get(index) {
+                                line.render("", TEXT)
+                            } else if !operation.output.partial.is_empty() {
+                                operation.output.partial.render("", TEXT)
+                            } else {
+                                StyledText::new(if operation.running {
+                                    "Waiting for Compose output…"
+                                } else {
+                                    "Compose produced no output."
+                                })
+                            };
+                            div()
+                                .h(px(18.0))
+                                .whitespace_nowrap()
+                                .debug_selector(move || format!("compose-log-line-{index}"))
+                                .child(text)
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            )
+            .with_width_from_item(widest)
+            .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+            .track_scroll(&operation.output_scroll)
+            .flex_1()
+            .min_h_0()
+            .font_family("DejaVu Sans Mono")
+            .text_size(px(12.0));
             body = body
                 .child(
                     div()
@@ -1629,25 +1687,7 @@ impl FerryDock {
                         ))
                         .child(status),
                 )
-                .child(
-                    div()
-                        .font_family("DejaVu Sans Mono")
-                        .text_size(px(12.0))
-                        .child(
-                            if operation.output.lines.is_empty()
-                                && operation.output.partial.is_empty()
-                            {
-                                if operation.running {
-                                    "Waiting for Compose output…"
-                                } else {
-                                    "Compose produced no output."
-                                }
-                                .into()
-                            } else {
-                                operation.output.text()
-                            },
-                        ),
-                );
+                .child(output);
         } else if let Some(config) = project.and_then(|project| project.config.as_ref()) {
             body = body.child(div().text_size(px(12.0)).text_color(rgb(MUTED)).child(format!("Directory: {}\nFiles: {}\nEnvironment files: {}\nProfiles: {}\n\nStart creates/starts services without building images. Stop and Restart operate on project services. Volumes are preserved.",
                 config.directory.display(), config.files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(" → "),
@@ -1794,7 +1834,7 @@ impl FerryDock {
                                 .whitespace_nowrap()
                                 .text_color(rgb(if line.error { ERROR } else { TEXT }))
                                 .debug_selector(move || format!("project-log-line-{index}"))
-                                .child(line.display())
+                                .child(line.render(if line.error { ERROR } else { TEXT }))
                         } else {
                             div()
                                 .h(px(18.0))

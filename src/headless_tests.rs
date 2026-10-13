@@ -229,6 +229,37 @@ impl Harness {
     fn drain_commands(&mut self) -> Vec<Command> {
         std::iter::from_fn(|| self.commands.try_recv().ok()).collect()
     }
+
+    fn require_glyph_color(&mut self, image: &RgbaImage, selector: &str, color: u32) {
+        let bounds = self
+            .cx
+            .debug_bounds(self.window.into(), selector)
+            .unwrap()
+            .unwrap();
+        let scale = self
+            .cx
+            .update_window(self.window.into(), |_, window, _| window.scale_factor())
+            .unwrap();
+        // Styled runs blend/convert colors before entering the GPU scene. Check
+        // actual pixels inside the row, excluding similarly colored controls.
+        let left = (f32::from(bounds.origin.x) * scale).max(0.0) as u32;
+        let top = (f32::from(bounds.origin.y) * scale).max(0.0) as u32;
+        let right = (f32::from(bounds.bottom_right().x) * scale).ceil().max(0.0) as u32;
+        let bottom = (f32::from(bounds.bottom_right().y) * scale).ceil().max(0.0) as u32;
+        let expected = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
+        let mut pixels = 0;
+        for y in top..bottom.min(image.height()) {
+            for x in left..right.min(image.width()) {
+                if image.get_pixel(x, y).0[..3] == expected {
+                    pixels += 1;
+                }
+            }
+        }
+        assert!(
+            pixels > 8,
+            "Expected actual colored glyph pixels in {selector}: {pixels} at {bounds:?}"
+        );
+    }
 }
 
 fn container(id: &str, name: &str, state: &str, project: Option<&str>) -> Container {
@@ -282,9 +313,20 @@ fn headless_gpu_user_flow() {
     let generation = h.observe(|v| v.generation);
     h.deliver(Event::Log {
         generation,
-        data: b"HEADLESS GPU FIXTURE READY\nA real frame, without a desktop window.\n".to_vec(),
+        data: b"2026-10-12T23:30:00.000000001Z \x1b[3".to_vec(),
+    });
+    h.deliver(Event::Log {
+        generation,
+        data: b"2mHEADLESS GPU FIXTURE READY\x1b[0m\n2026-10-12T23:30:00.000000002Z A real frame, without a desktop window.\n2026-10-12T23:30:00.000000003Z \x1b[32mbuilding 10%\r\x1b[2Kdone\x1b[0m\n"
+            .to_vec(),
     });
     let initial = h.capture("containers-and-logs");
+    h.require_glyph_color(&initial, "container-log-line-0", crate::ansi::PALETTE[2]);
+    h.require_glyph_color(&initial, "container-log-line-0", TEXT);
+    h.require_glyph_color(&initial, "container-log-line-1", TEXT);
+    h.require_glyph_color(&initial, "container-log-line-2", crate::ansi::PALETTE[2]);
+    assert!(h.observe(|v| v.logs.lines[2].text == "2026-10-12T23:30:00.000000003Z done"));
+    assert!(!h.observe(|v| v.logs.text()).contains('\x1b'));
     assert!(
         h.cx.debug_bounds(h.window.into(), "row-fixture-probe-running")
             .unwrap()
@@ -432,7 +474,7 @@ fn headless_gpu_user_flow() {
             "fixture-probe-running",
             "probe",
             "headless-fixture-probe-1",
-            "2026-10-12T23:30:00.000000001Z HTTP ready",
+            "2026-10-12T23:30:00.000000001Z \x1b[32mHTTP ready\x1b[0m",
         ),
         (
             "fixture-worker",
@@ -458,7 +500,15 @@ fn headless_gpu_user_flow() {
     });
     h.click("project-log-follow");
     assert!(!h.observe(|v| v.project_log_follow));
-    h.capture("project-logs-all");
+    let project_image = h.capture("project-logs-all");
+    h.require_glyph_color(
+        &project_image,
+        "project-log-line-0",
+        crate::ansi::PALETTE[2],
+    );
+    h.require_glyph_color(&project_image, "project-log-line-0", TEXT);
+    h.require_glyph_color(&project_image, "project-log-line-1", TEXT);
+    assert!(!h.observe(|v| v.project_logs.text(None)).contains('\x1b'));
     h.click("project-service-probe");
     assert_eq!(
         h.observe(|v| v.project_service.clone()).as_deref(),
@@ -582,9 +632,23 @@ fn headless_gpu_user_flow() {
     h.deliver(Event::ComposeOutput {
         project: "headless-fixture".into(),
         operation,
-        data: b"Container headless-fixture-probe-1 Started\n".to_vec(),
+        data: b"\x1b[33mContainer headless-fixture-probe-1 Starting".to_vec(),
     });
-    h.capture("compose-operation-live");
+    h.deliver(Event::ComposeOutput {
+        project: "headless-fixture".into(),
+        operation,
+        data: b"\r\x1b[2K\x1b[32mContainer headless-fixture-probe-1 Started\x1b[0m\n".to_vec(),
+    });
+    let operation_image = h.capture("compose-operation-live");
+    h.require_glyph_color(
+        &operation_image,
+        "compose-log-line-0",
+        crate::ansi::PALETTE[2],
+    );
+    assert!(h.observe(|v| {
+        let output = v.compose_operations["headless-fixture"].output.text();
+        !output.contains('\x1b') && !output.contains("Starting") && output.contains("Started")
+    }));
     h.deliver(Event::ComposeFinished {
         project: "headless-fixture".into(),
         operation,
@@ -751,6 +815,7 @@ fn headless_gpu_user_flow() {
         "frame_timings": h.frame_timings,
         "log_performance": performance,
         "checks": ["fixture discovery", "keyboard search", "empty matches", "restored selection",
+            "container ANSI glyph colors and split sequences", "project ANSI glyph colors with neutral metadata and plain copy", "Compose ANSI colors and carriage-return progress replacement",
             "log follow pointer toggle", "stop command at Docker boundary", "terminal ANSI rendering", "terminal input routing",
             "Compose association keyboard form", "ordered files, environment files and profiles", "unassociated and conflicting actions blocked",
             "Compose Start Stop Restart requests", "streamed operation output and retained failure",

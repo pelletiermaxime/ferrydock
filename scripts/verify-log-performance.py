@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/ferrydock')
     parser.add_argument('--display', default=os.environ.get('DISPLAY'))
     parser.add_argument('--profile', action='store_true', help='Capture owned-process thread CPU and three debugger stack samples')
+    parser.add_argument('--ansi', action='store_true', help='Emit colored UTF-8 fixture records to exercise ANSI processing under load')
     args = parser.parse_args()
     binary = args.binary.resolve()
     if not args.display:
@@ -47,14 +48,16 @@ def main():
     env.update(DOCKER_HOST=endpoint, DISPLAY=args.display, XDG_CONFIG_HOME=str(evidence / 'settings'))
     services = {}
     for service in ('probe', 'worker'):
-        command = f'echo FERRY_PERF_{service}_BOOT; i=0; while true; do j=0; while [ "$$j" -lt 5 ]; do echo FERRY_PERF_{service}_TICK:$$i; i=$$((i+1)); j=$$((j+1)); done; sleep 0.1; done'
+        emit = (f'printf "\\033[32mFERRY_PERF_{service}_TICK:%s café\\033[0m\\n" "$$i"'
+                if args.ansi else f'echo FERRY_PERF_{service}_TICK:$$i')
+        command = f'echo FERRY_PERF_{service}_BOOT; i=0; while true; do j=0; while [ "$$j" -lt 5 ]; do {emit}; i=$$((i+1)); j=$$((j+1)); done; sleep 0.1; done'
         services[service] = {'image': 'alpine:3.23', 'command': ['sh', '-c', command], 'stop_grace_period': '1s', 'labels': {'dev.ferrydock.fixture': 'true'}}
     fixture = evidence / 'compose.json'
     fixture.write_text(json.dumps({'services': services}))
     compose = ['docker', '--host', endpoint, 'compose', '--project-name', project, '--file', str(fixture)]
     build_profile = 'release' if binary == (ROOT / 'target/release/ferrydock').resolve() else 'development' if binary == (ROOT / 'target/debug/ferrydock').resolve() else 'custom'
     result = {'status': 'failed', 'project': project, 'endpoint': endpoint, 'binary': str(binary), 'build_profile': build_profile, 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-              'backend': 'X11/XWayland', 'fixture_containers': 10, 'nominal_lines_per_second': 500, 'evidence': str(evidence)}
+              'backend': 'X11/XWayland', 'fixture_containers': 10, 'nominal_lines_per_second': 500, 'ansi_fixture': args.ansi, 'evidence': str(evidence)}
     app = None
     app_pid = None
     app_log = None

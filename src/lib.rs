@@ -1,3 +1,4 @@
+pub mod ansi;
 pub mod app;
 pub mod compose;
 pub mod docker;

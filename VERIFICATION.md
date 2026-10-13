@@ -1,8 +1,61 @@
 # FerryDock verification
 
-Date: 2026-10-12. Scope: FerryDock 0.2.0 release preparation, including Compose
-project controls, combined project logs, and busy-log performance. Earlier
-Linux milestone and desktop evidence is retained below.
+Date: 2026-10-12. Scope: FerryDock 0.2.1 ANSI log rendering and the preceding
+0.2.0 Compose project controls, combined logs and busy-log performance.
+Earlier Linux milestone and desktop evidence is retained below.
+
+## ANSI log rendering after the 0.2.0 commit
+
+Work started after release commit `febf1b8` and tag `v0.2.0` were committed and
+pushed. These changes are prepared for 0.2.1 and are not part of that tag.
+Container, project and Compose operation output now use cached ANSI
+styles from Alacritty's VTE processor. Standard/bright, indexed and RGB colours
+and common text attributes are preserved; source labels/timestamps remain
+neutral, and copied text omits escape sequences. Project decoders are scoped
+to container IDs, including replicas of the same service. Container and
+operation buffers handle partial output and basic CR/backspace/erase-in-line
+progress changes, while protecting Docker's injected timestamp prefix from
+those edits. This does not turn the log list into a full terminal screen.
+
+Sixteen unit tests and all-target/all-feature Clippy passed. Unit checks cover
+split escapes and UTF-8, resets, RGB/indexed colour decoding, attributes,
+discarded OSC wrappers, progress replacement, per-container state, clean copy,
+line/history/style bounds and expired-source cleanup. The unchanged raw Docker
+transport still supplies original timestamps to replay suppression.
+
+The input-driven headless flow passed in **9.839 s including build**, retaining
+14 PNGs with owned-process teardown. It checks actual pixels within rendered
+log rows for container/project/operation colours, neutral metadata and reset
+text, plus replacement of `Starting` with `Started` through CR/erase-in-line
+and preservation of Docker timestamps during container progress updates.
+An initial exact internal-colour scene assertion failed despite visible green
+text; it was replaced with scoped screenshot pixel checks, not a bypass of
+colour verification. Luna high inspected frames 01/07/08/11/14 and confirmed
+the visible styling and lack of literal escape-code artifacts or pane overlap:
+[result](.verification/headless/20261013T014029Z-517bf81c/result.json),
+[container logs](.verification/headless/20261013T014029Z-517bf81c/01-containers-and-logs.png),
+[project logs](.verification/headless/20261013T014029Z-517bf81c/07-project-logs-all.png),
+[operation progress](.verification/headless/20261013T014029Z-517bf81c/11-compose-operation-live.png).
+Busy history still renders **17 rows**, retains 1,500 records and reaches the
+latest line; the 10,000-record fixture processed in **0.166 s** and controls
+responded. The busy frame's synthetic fixture has no production status event
+after refreshing, so its `Connecting…` footer is not live-daemon status proof:
+[performance](.verification/headless/20261013T014029Z-517bf81c/log-performance.json).
+This run is pinned with `.keep`.
+
+A freshly built release was tested with `verify-log-performance.py --ansi`
+against ten owned disposable containers producing nominally 500 coloured UTF-8
+records/s. The real native X11/XWayland screenshot shows green payloads and
+neutral metadata, with no literal SGR codes. The five-second sample measured
+**9.2% CPU and 71.9 MiB RSS**, comparable to the preceding 9.4% plain-record
+sample rather than a claimed speedup. Search remained responsive; the visible
+live-output capture bound was 0.363 s and the completed search capture bound
+was 1.166 s including typing, with OCR time reported separately:
+[native result](.verification/log-performance/20261013T014129Z-a532d541/result.json),
+[coloured Docker logs](.verification/log-performance/20261013T014129Z-a532d541/busy-logs-after-sample.png).
+Owned app PID 1084573 exited, and fixture `ferrydock-log-perf-3ba2f73c` plus its
+network were removed. No native Wayland input, OS clipboard, full-screen log
+controls or every SGR visual attribute is claimed by this check.
 
 ## 0.2.0 release checks
 

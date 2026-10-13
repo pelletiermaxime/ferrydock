@@ -13,7 +13,7 @@ the terminal, and container details close at hand.
 - **Find containers quickly.** Browse Compose projects and standalone containers,
   search by name, image, service, or project, and switch between running and all
   containers.
-- **Follow live logs.** Read timestamped output, pause automatic scrolling, copy
+- **Follow live logs.** Read timestamped output with ANSI colours and styles, pause automatic scrolling, copy
   logs, and reconnect the stream. Combine a Compose project's service logs in
   one view and filter them by service.
 - **Open a terminal inside a container.** Use Bash or sh with colors, scrollback,
@@ -110,6 +110,8 @@ a service button to filter the view, pause/resume following, and copy the
 filtered retained output. Logs work directly from Docker labels without a file
 association. The view picks up restarted or recreated services automatically.
 **Operations** keeps Start/Stop/Restart output separate from application logs.
+Colours remain scoped to each container. Copied logs contain readable text
+with their source labels and timestamps, without ANSI escape sequences.
 
 Start creates or starts project services without building images. Stop and
 Restart operate on the configured project's services. The dock streams Compose

@@ -10,6 +10,7 @@ Watch all Compose service/container streams from one project workspace.
 - `project-logs.follow`: pause/resume scrolling while bounded collection continues.
 - `project-logs.copy`: copy the filtered retained history.
 - `project-logs.retry`: resume existing IDs with timestamp replay suppression.
+- `project-logs.ansi`: cached per-container colours/styles with neutral source metadata and clean copied text.
 
 ## How to get to it (user POV)
 
@@ -28,6 +29,8 @@ Run `bash scripts/verify-compose.sh` separately. The production worker follows t
 
 Unit checks prove retry replay counts (including identical same-timestamp lines), late live-line acceptance, global history bounds and service-filtered copy formatting. A passing UI check alone does not establish those transport effects.
 
+The headless all/filtered frames use a green probe payload and neutral worker payload, with actual screenshot pixel checks scoped to log-row bounds. Unit checks separately verify style continuation per container ID, isolation between replicas of one service, resets, neutral source metadata, clean copy and decoder cleanup after a source disappears and its records expire. The raw transport/replay cursor still consumes original records; ANSI styling is applied in the cached UI history.
+
 The headless flow also fills 1,500 retained records and feeds a 10,000-line batch burst. Check `log-performance.json`, latest-line bounds and frames 13/14: work must stay below 80 rendered rows, follow must reach the tail, and controls must respond. The production Compose check emits 10,000 real records and requires bounded batches with no lost lines. Unit checks separately prove batch order and payload bounds.
 
 For native load, run `cargo build --locked` and `python3 scripts/verify-log-performance.py --display :0` (or select a freshly built release with `--binary target/release/ferrydock`). It owns ten disposable containers and an X11/XWayland window, validates scope, measures CPU and memory, checks search while logs stream, preserves PNGs/OCR/results, and performs scoped cleanup. It takes focus and must not overlap another native-input session. Require all success/cleanup flags in its result; distinguish capture/OCR overhead from application latency.
@@ -38,4 +41,4 @@ For native load, run `cargo build --locked` and `python3 scripts/verify-log-perf
 - Initial tails are 200 lines per container; total retained history is 1,500 lines. Output is merged as received, not globally sorted by timestamp.
 - Follow paused freezes scrolling, not collection. Old records continue to expire at the bound.
 - Unsupported Docker logging drivers or stream failures appear as source-specific errors. Running streams retry with a short delay; stopped streams reopen when state changes.
-- No native clipboard/Wayland/X11 interaction proof is claimed by these checks. A partial list row at the dock boundary is normal scroll viewport clipping when no pixels overlap the dock.
+- Headless/worker checks do not prove native desktop or clipboard integration. The separate native performance helper proves owned X11/XWayland log reading and search, with `--ansi` for real coloured UTF-8 output; native Wayland, filter/pause clicks and clipboard remain outside that helper. A partial list row at the dock boundary is normal scroll viewport clipping when no pixels overlap the dock.

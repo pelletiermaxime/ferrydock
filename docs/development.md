@@ -149,6 +149,26 @@ follow position and input responsiveness. The Compose check independently
 emits 10,000 real log records and verifies bounded batches without lost records;
 the batch unit test separately proves record order and payload bounds.
 
+`src/ansi.rs` uses the VTE processor already supplied by Alacritty to decode
+output incrementally. Container logs and operation output retain a styled
+buffer; project history keeps a decoder per container ID and caches each
+completed record's text/style ranges. Source prefixes and Docker timestamps
+stay neutral. Copy text contains no escape sequences. The raw transport
+`model::LogBuffer` is unchanged so timestamp replay cursors still see the
+original source records. Removed, expired source decoders are released during
+snapshot reconciliation; quiet live containers retain their colour state.
+
+Supported formatting includes standard/bright, indexed and RGB colours,
+backgrounds, bold, italic, underline, strike, dim and inverse. Basic single-line
+carriage-return, backspace and erase-in-line updates work in streamed container
+and operation buffers. This is a record viewer, not a terminal screen: full-screen
+cursor control and wide-character cursor editing are outside its contract.
+Individual lines are bounded to 64 KiB, with at most 512 styled spans per line;
+excess styling falls back to neutral text. Styling is parsed at ingestion,
+and only visible cached rows are rendered, including Compose operation output.
+Tests cover split escapes/UTF-8, resets, stream isolation, plain copy, progress
+replacement, bounds and actual coloured pixels within GPU-rendered log rows.
+
 For native log-load measurements, build the development binary and run:
 
 ```sh
@@ -161,7 +181,8 @@ roughly 500 lines per second. It takes desktop focus, measures process/thread
 CPU and RSS, checks search under load, retains screenshots/results under
 `.verification/log-performance/`, and removes only its fixture and process.
 Use `--binary target/release/ferrydock` after a release build for shipping
-performance. Capture timings bound when the visible result was obtained;
+performance. Add `--ansi` to emit real coloured UTF-8 fixture records under the
+same load. Capture timings bound when the visible result was obtained;
 separate OCR time is verification overhead. Search capture time includes
 synthetic typing at the established 20 ms cadence. It does not drive native
 Wayland. GPUI and Taffy are optimized in the development
@@ -228,8 +249,8 @@ For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag -a v0.2.0 -m "FerryDock 0.2.0"
-git push --atomic origin main v0.2.0
+git tag -a v0.2.1 -m "FerryDock 0.2.1"
+git push --atomic origin main v0.2.1
 ```
 
 The tag must match the Cargo version and have a release-notes file. The publish

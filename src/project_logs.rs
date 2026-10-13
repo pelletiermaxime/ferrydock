@@ -1,5 +1,6 @@
 //! Merge Docker log streams for the selected project's current membership.
 use crate::{
+    ansi::{Decoder, StyledLine},
     docker::Event,
     model::{Container, LogBuffer},
 };
@@ -30,15 +31,50 @@ impl Line {
     }
 }
 
+pub struct Record {
+    line: Line,
+    pub styled: StyledLine,
+    prefix: String,
+}
+
+impl std::ops::Deref for Record {
+    type Target = Line;
+    fn deref(&self) -> &Line {
+        &self.line
+    }
+}
+
+impl Record {
+    pub fn render(&self, fallback: u32) -> gpui::StyledText {
+        self.styled.render(&self.prefix, fallback)
+    }
+}
+
 #[derive(Default)]
 pub struct History {
-    pub lines: VecDeque<Line>,
+    pub lines: VecDeque<Record>,
     services: BTreeMap<String, usize>,
+    decoders: HashMap<String, Decoder>,
 }
 impl History {
-    pub fn push(&mut self, line: Line) {
+    pub fn push(&mut self, mut line: Line) {
+        let (timestamp, body) = crate::ansi::split_timestamp(&line.text);
+        let styled = if line.error {
+            Decoder::default().record(body)
+        } else {
+            self.decoders
+                .entry(line.container.clone())
+                .or_default()
+                .record(body)
+        };
+        let prefix = format!("[{} / {}] {timestamp}", line.service, line.name);
+        line.text = format!("{timestamp}{}", styled.text);
         *self.services.entry(line.service.clone()).or_default() += 1;
-        self.lines.push_back(line);
+        self.lines.push_back(Record {
+            line,
+            styled,
+            prefix,
+        });
         while self.lines.len() > LogBuffer::MAX_LINES {
             if let Some(line) = self.lines.pop_front()
                 && let Some(count) = self.services.get_mut(&line.service)
@@ -53,11 +89,20 @@ impl History {
     pub fn services(&self) -> impl Iterator<Item = &String> {
         self.services.keys()
     }
+    pub fn retain_sources<'a>(&mut self, active: impl Iterator<Item = &'a str>) {
+        let retained = self
+            .lines
+            .iter()
+            .map(|line| line.container.clone())
+            .chain(active.map(str::to_owned))
+            .collect::<std::collections::HashSet<_>>();
+        self.decoders.retain(|id, _| retained.contains(id.as_str()));
+    }
     pub fn text(&self, service: Option<&str>) -> String {
         self.lines
             .iter()
             .filter(|line| service.is_none_or(|service| line.service == service))
-            .map(Line::display)
+            .map(|line| line.display())
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -387,6 +432,48 @@ mod tests {
         assert!(!cursor.accept("2026-10-12T23:29:59.999999999Z old"));
         assert!(cursor.accept("2026-10-12T23:30:00.223456789Z new"));
         assert!(cursor.accept("2026-10-12T23:30:00.123456789Z late live line"));
+    }
+
+    #[test]
+    fn ansi_state_is_per_container_and_copy_keeps_neutral_metadata() {
+        let mut history = History::default();
+        let line = |id: &str, text: &str| Line {
+            container: id.into(),
+            service: "replica".into(),
+            name: id.into(),
+            text: format!("2026-10-12T23:30:00.000000001Z {text}"),
+            error: false,
+        };
+        history.push(line("a", "\x1b[32mgreen"));
+        history.push(line("b", "neutral"));
+        history.push(line("a", "still green\x1b[0m reset"));
+        assert_eq!(
+            history.lines[0].styled.spans[0].1.foreground,
+            Some(crate::ansi::PALETTE[2])
+        );
+        assert!(history.lines[1].styled.spans.is_empty());
+        assert_eq!(history.lines[2].styled.spans[0].0, 0..11);
+        let copy = history.text(None);
+        assert!(!copy.contains('\x1b'));
+        assert!(copy.contains("[replica / a] 2026-10-12T23:30:00.000000001Z green"));
+        history.push(Line {
+            error: true,
+            ..line("a", "Logs unavailable")
+        });
+        assert!(history.lines[3].styled.spans.is_empty());
+        for _ in 0..1500 {
+            history.push(line("b", "retained"));
+        }
+        history.retain_sources(["a", "b"].into_iter());
+        assert!(
+            history.decoders.contains_key("a"),
+            "Quiet active sources keep their styles"
+        );
+        history.retain_sources(["b"].into_iter());
+        assert!(
+            !history.decoders.contains_key("a"),
+            "Removed and expired sources release their decoder"
+        );
     }
     #[test]
     fn mixed_service_history_is_bounded_and_filters_copy_text() {
