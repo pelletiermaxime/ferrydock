@@ -94,8 +94,15 @@ def verify(appimage, evidence):
             dependencies = run("ldd", str(appdir / "usr/lib" / name), env=library_env)
             assert "not found" not in dependencies, dependencies
         maps = Path(f"/proc/{pid}/maps").read_text()
-        for name in ("libfontconfig.so.1", "libfreetype.so.6", "libxcb.so.1",
-                     "libxkbcommon.so.0", "libxkbcommon-x11.so.0"):
+        # Require the executable's real ELF dependencies to load from the
+        # bundle. The Fast renderer uses Rust font discovery/rasterization on
+        # Linux, so Fontconfig/FreeType are no longer linked dependencies.
+        dependencies = run("ldd", str(executable), env=library_env)
+        assert "not found" not in dependencies, dependencies
+        required = {line.split()[0] for line in dependencies.splitlines() if " => " in line}
+        assert {"libxcb.so.1", "libxkbcommon.so.0", "libxkbcommon-x11.so.0"} <= required
+        assert {"libxcb.so.1", "libxkbcommon.so.0", "libxkbcommon-x11.so.0"} <= manifest.keys()
+        for name in required & manifest.keys():
             assert str(appdir / "usr/lib" / name) in maps, f"{name} was not loaded from the bundle"
         (evidence / "bundled-libraries.json").write_text(json.dumps(manifest, indent=2) + "\n")
         (evidence / "loaded-libraries.txt").write_text(maps)
