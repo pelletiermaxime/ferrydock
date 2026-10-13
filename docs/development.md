@@ -312,8 +312,8 @@ For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag -a v0.5.0 -m "FerryDock 0.5.0"
-git push --atomic origin main v0.5.0
+git tag -a v0.5.1 -m "FerryDock 0.5.1"
+git push --atomic origin main v0.5.1
 ```
 
 Replace the example version with the version being released. The tag must match
@@ -325,7 +325,7 @@ To package a locally built release on an Ubuntu 24.04 x86-64 host, install
 build the binary and run:
 
 ```sh
-bash scripts/package-linux.sh v0.5.0
+bash scripts/package-linux.sh v0.5.1
 ```
 
 Output goes to `target/packages/`. Local builds on newer distributions may
