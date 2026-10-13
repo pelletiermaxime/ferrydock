@@ -87,10 +87,22 @@ def verify(appimage, evidence):
         executable = Path(f"/proc/{pid}/exe").resolve()
         assert executable.parts[-3:] == ("usr", "bin", "ferrydock"), str(executable)
         appdir = executable.parents[2]
-        manifest_path = appdir / "usr/share/doc/ferrydock/bundled-libraries/manifest.json"
-        manifest = json.loads(manifest_path.read_text())
+        library_dir = appdir / "usr/lib"
+        libraries = {str(path.relative_to(library_dir)): path
+                     for path in sorted(library_dir.rglob("*.so*")) if path.is_file()}
+        # linuxdeploy retains Debian package notices beside the application
+        # license. Inspect those resources in the packaged artifact itself.
+        assert (appdir / "usr/share/doc/ferrydock/LICENSE").is_file()
+        copyright_files = sorted((appdir / "usr/share/doc").glob("*/copyright"))
+        for package in ("libxcb1", "libxkbcommon0", "libxkbcommon-x11-0"):
+            notice = appdir / "usr/share/doc" / package / "copyright"
+            assert notice in copyright_files and notice.stat().st_size, f"Missing {package} notice"
+        # Mesa drivers on newer desktops require newer Wayland symbols than
+        # the release builder provides. They must use the host's libraries.
+        for pattern in ("libwayland-*.so*", "libvulkan.so*", "libEGL.so*", "libGL*.so*", "libOpenGL.so*"):
+            assert not list(library_dir.rglob(pattern)), f"AppImage bundles host library: {pattern}"
         library_env = env | {"LD_LIBRARY_PATH": str(appdir / "usr/lib")}
-        for name in manifest:
+        for name in libraries:
             dependencies = run("ldd", str(appdir / "usr/lib" / name), env=library_env)
             assert "not found" not in dependencies, dependencies
         maps = Path(f"/proc/{pid}/maps").read_text()
@@ -101,13 +113,19 @@ def verify(appimage, evidence):
         assert "not found" not in dependencies, dependencies
         required = {line.split()[0] for line in dependencies.splitlines() if " => " in line}
         assert {"libxcb.so.1", "libxkbcommon.so.0", "libxkbcommon-x11.so.0"} <= required
-        assert {"libxcb.so.1", "libxkbcommon.so.0", "libxkbcommon-x11.so.0"} <= manifest.keys()
-        for name in required & manifest.keys():
-            assert str(appdir / "usr/lib" / name) in maps, f"{name} was not loaded from the bundle"
-        (evidence / "bundled-libraries.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        assert {"libxcb.so.1", "libxkbcommon.so.0", "libxkbcommon-x11.so.0"} <= libraries.keys()
+        for name in required & libraries.keys():
+            library = libraries[name].resolve()
+            assert str(library) in maps, f"{name} was not loaded from the bundle"
+        (evidence / "bundled-libraries.json").write_text(json.dumps(sorted(libraries), indent=2) + "\n")
+        (evidence / "bundled-copyrights.json").write_text(json.dumps(
+            [str(path.relative_to(appdir)) for path in copyright_files], indent=2
+        ) + "\n")
         (evidence / "loaded-libraries.txt").write_text(maps)
         result.update(window=window, pid=pid, executable=str(executable),
-                      bundled_libraries=len(manifest), bundled_loading_check="passed")
+                      bundled_libraries=len(libraries), bundled_loading_check="passed",
+                      bundled_copyrights=len(copyright_files), copyright_check="passed",
+                      host_wayland_check="passed")
 
         def capture(name, expected):
             deadline = time.monotonic() + 15

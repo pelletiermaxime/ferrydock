@@ -49,12 +49,12 @@ Download a package from [GitHub Releases](https://github.com/pelletiermaxime/fer
 The release is for **Linux x86-64**, built on Ubuntu 24.04; it requires
 glibc 2.39 or newer.
 
-The examples below use `0.4.0`; replace it with the version you downloaded.
+The examples below use `0.4.1`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.4.0_amd64.deb
+sudo apt install ./ferrydock_0.4.1_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -62,20 +62,20 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.4.0-linux-x86_64.AppImage`:
+`ferrydock-0.4.1-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.4.0-linux-x86_64.AppImage
-./ferrydock-0.4.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.4.1-linux-x86_64.AppImage
+./ferrydock-0.4.1-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
 It still requires glibc 2.39 or newer, an installed font, your desktop's
-Vulkan/EGL graphics driver stack, and Docker. If FUSE mounting is unavailable,
-run it with `--appimage-extract-and-run`.
+Wayland libraries and Vulkan/EGL graphics driver stack, and Docker. If FUSE
+mounting is unavailable, run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.4.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.4.1-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify all three downloads.
 

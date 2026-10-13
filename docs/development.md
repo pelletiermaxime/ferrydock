@@ -211,9 +211,13 @@ reuses the test workflow, then builds Linux x86-64 packages on Ubuntu 24.04:
 - A `.tar.gz` archive containing the binary, license, install guide, and desktop
   launcher.
 - An `.deb` package with library dependencies derived from the built binary.
-- An `.AppImage` with ELF dependencies and runtime-loaded Wayland libraries,
-  an icon/launcher, and bundled library copyright notices. glibc, fonts, and
-  the Vulkan/EGL graphics driver stack remain host requirements.
+- An `.AppImage` with ELF dependencies, an icon/launcher, and bundled library
+  copyright notices. `linuxdeploy` collects dependencies, patches library search
+  paths, copies Debian library copyright notices, and installs desktop assets;
+  `appimagetool` packages the result. glibc, fonts, Wayland libraries, and the
+  Vulkan/EGL graphics driver stack remain host requirements. Wayland libraries
+  must match the host drivers; an older bundled client library can prevent newer
+  Mesa drivers from loading.
 - `SHA256SUMS` for all three packages.
 
 The workflow installs the Debian package and checks both binaries in a clean
@@ -232,8 +236,8 @@ For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag -a v0.4.0 -m "FerryDock 0.4.0"
-git push --atomic origin main v0.4.0
+git tag -a v0.4.1 -m "FerryDock 0.4.1"
+git push --atomic origin main v0.4.1
 ```
 
 Replace the example version with the version being released. The tag must match
@@ -245,15 +249,18 @@ To package a locally built release on an Ubuntu 24.04 x86-64 host, install
 build the binary and run:
 
 ```sh
-bash scripts/package-linux.sh v0.4.0
+bash scripts/package-linux.sh v0.4.1
 ```
 
 Output goes to `target/packages/`. Local builds on newer distributions may
 require newer runtime libraries; publish the Ubuntu-built workflow artifacts.
-The AppImage builder and runtime are pinned and SHA-256 checked by
-`scripts/package-appimage.sh`, with downloads cached in `target/appimage-tools/`.
-The bundler uses Debian package metadata to retain copyright notices, so run
-packaging on Ubuntu/Debian.
+The linuxdeploy release, AppImage builder, and runtime are pinned and SHA-256
+checked by `scripts/package-appimage.sh`, with downloads cached in
+`target/appimage-tools/`. linuxdeploy uses Debian package metadata to retain
+library copyright notices under `usr/share/doc/<library-package>/copyright`,
+so run packaging on Ubuntu/Debian.
+`libxcb` is explicitly bundled to preserve startup on a clean Ubuntu system;
+Wayland and graphics loaders are explicitly excluded to use the host driver stack.
 
 To reproduce the AppImage check without exposing the host Docker daemon:
 
