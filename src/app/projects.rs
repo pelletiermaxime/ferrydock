@@ -199,10 +199,12 @@ impl FerryDock {
                 result: None,
             },
         );
-        if matches!(action, compose::Action::Stop | compose::Action::Restart)
-            && self
-                .selected_container()
-                .is_some_and(|container| container.project.as_ref() == Some(&project))
+        if matches!(
+            action,
+            compose::Action::Stop | compose::Action::Restart | compose::Action::Rebuild
+        ) && self
+            .selected_container()
+            .is_some_and(|container| container.project.as_ref() == Some(&project))
         {
             self.backend.send(Command::CloseTerminal);
             if let Some(terminal) = &self.terminal.view {
@@ -253,6 +255,7 @@ impl FerryDock {
             (compose::Action::Start, "compose-start"),
             (compose::Action::Stop, "compose-stop"),
             (compose::Action::Restart, "compose-restart"),
+            (compose::Action::Rebuild, "compose-rebuild"),
         ] {
             let loading = self
                 .projects

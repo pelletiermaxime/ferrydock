@@ -190,12 +190,14 @@ UI behavior; real operations require the separate integration checks:
 | Command | Boundary exercised |
 | --- | --- |
 | `bash scripts/verify-docker.sh` | Real discovery/logs, Start/Stop/Restart, interactive shell I/O, PTY resize, ANSI parsing, full-screen vi, shell exit, missing Bash |
-| `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, streamed failures, restart/recreation log recovery, bounded batches |
+| `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, changed build inputs and rebuilt image/container contents, build failure without stopping services, streamed failures, restart/rebuild/recreation log recovery, bounded batches |
 | `python3 scripts/verify-log-performance.py` | Owned native window (Wayland preferred) and ten disposable containers; CPU/RSS and search under live log load |
 
 Docker checks create unique Compose fixtures on the existing daemon and remove
-only their containers and networks. They may pull `alpine:3.23`; the image cache
-remains. Compose settings are isolated under the evidence directory. Fixtures
+only their containers and networks. The Compose check also removes its uniquely
+labelled built images, including superseded images; Docker's build cache and the
+`alpine:3.23` base image remain. Compose settings and build inputs are isolated
+under the evidence directory. Fixtures
 have no host mounts, published ports, or persistent volumes.
 
 Build with `cargo build --locked` before the native performance helper; use

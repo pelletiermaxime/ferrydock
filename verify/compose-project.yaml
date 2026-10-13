@@ -1,7 +1,13 @@
 services:
   probe:
-    image: alpine:3.23
-    command: ["sh", "-c", "echo FERRY_PROJECT_PROBE_BOOT; n=0; while true; do echo FERRY_PROJECT_PROBE_TICK:$$n; n=$$((n+1)); sleep 1; done"]
+    image: ${FERRY_COMPOSE_BUILD_IMAGE:?fixture image required}
+    build:
+      context: .
+      dockerfile: compose-project.Dockerfile
+      labels:
+        dev.ferrydock.fixture: "true"
+        dev.ferrydock.fixture.project: ${FERRY_COMPOSE_BUILD_PROJECT:?fixture project required}
+    command: ["sh", "-c", "echo FERRY_PROJECT_PROBE_BOOT; echo FERRY_PROJECT_BUILD:$$(cat /ferry-rebuild-marker); n=0; while true; do echo FERRY_PROJECT_PROBE_TICK:$$n; n=$$((n+1)); sleep 1; done"]
     stop_grace_period: 1s
     environment:
       FERRY_COMPOSE_MARKER: ${FERRY_COMPOSE_MARKER:?fixture environment file required}

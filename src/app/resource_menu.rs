@@ -56,6 +56,7 @@ impl FerryDock {
                 compose::Action::Start,
                 compose::Action::Stop,
                 compose::Action::Restart,
+                compose::Action::Rebuild,
             ] {
                 let owner = owner.clone();
                 let project = project.clone();

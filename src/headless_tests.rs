@@ -1303,6 +1303,7 @@ fn headless_gpu_user_flow() {
     );
     h.drain_commands();
     h.click("compose-start");
+    h.click("compose-rebuild");
     assert!(
         h.drain_commands().is_empty(),
         "Unassociated project must not run"
@@ -1421,6 +1422,7 @@ fn headless_gpu_user_flow() {
         })
         .expect("Compose Start request");
     h.click("compose-stop");
+    h.click("compose-rebuild");
     assert!(
         h.drain_commands().is_empty(),
         "Conflicting controls must be disabled"
@@ -1489,13 +1491,120 @@ fn headless_gpu_user_flow() {
                 .contains("failure output retained")
     }));
     h.click("compose-restart");
-    assert!(h.drain_commands().iter().any(|command| matches!(
-        command,
-        Command::Compose {
-            action: compose::Action::Restart,
-            ..
-        }
-    )));
+    let operation = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Compose {
+                operation,
+                action: compose::Action::Restart,
+                ..
+            } => Some(operation),
+            _ => None,
+        })
+        .expect("Compose Restart request");
+    h.deliver(Event::ComposeFinished {
+        project: "headless-fixture".into(),
+        operation,
+        result: Ok(()),
+    });
+    h.click("compose-rebuild");
+    let operation = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Compose {
+                project,
+                operation,
+                action: compose::Action::Rebuild,
+            } if project == "headless-fixture" => Some(operation),
+            _ => None,
+        })
+        .expect("Compose Rebuild & restart request");
+    assert!(h.observe(|v| v.projects.tab == super::projects::ProjectTab::Operations));
+    for control in [
+        "compose-start",
+        "compose-stop",
+        "compose-restart",
+        "compose-rebuild",
+        "compose-configure",
+    ] {
+        h.click(control);
+    }
+    assert!(
+        h.drain_commands().is_empty(),
+        "Rebuild must block duplicate and conflicting actions"
+    );
+    h.key("ctrl-1");
+    h.drain_commands();
+    h.click("primary-action");
+    assert!(
+        h.drain_commands().is_empty(),
+        "Container controls must be blocked during a project rebuild"
+    );
+    h.key("ctrl-4");
+    h.click_tab("project-tabs", 1);
+    h.drain_commands();
+    h.deliver(Event::ComposeOutput {
+        project: "headless-fixture".into(),
+        operation,
+        data: b"Building probe image\nContainer headless-fixture-probe-1 Recreated\n".to_vec(),
+    });
+    h.capture("compose-rebuild-live");
+    h.deliver(Event::ComposeFinished {
+        project: "headless-fixture".into(),
+        operation,
+        result: Err("Fixture build failed".into()),
+    });
+    h.key("ctrl-1");
+    h.key("ctrl-4");
+    h.click_tab("project-tabs", 1);
+    assert!(
+        h.observe(|v| {
+            let operation = &v.projects.operations["headless-fixture"];
+            !operation.running
+                && operation.result.as_ref().unwrap().is_err()
+                && operation.output.text().contains("Building probe image")
+        }),
+        "Build failure and output must survive leaving the project and returning"
+    );
+    h.capture("compose-rebuild-failed");
+    h.drain_commands();
+    h.click("project-more");
+    h.capture("compose-rebuild-menu");
+    h.actions.push(json!({"input":"menu-click", "menu":"project-more", "index":6, "action":"Rebuild & restart"}));
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.within("popup-menu").click(6, cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    let operation = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Compose {
+                project,
+                operation,
+                action: compose::Action::Rebuild,
+            } if project == "headless-fixture" => Some(operation),
+            _ => None,
+        })
+        .expect("Project menu Rebuild & restart request");
+    h.deliver(Event::ComposeOutput {
+        project: "headless-fixture".into(),
+        operation,
+        data: b"Probe image built\nConfigured services recreated and started\n".to_vec(),
+    });
+    h.deliver(Event::ComposeFinished {
+        project: "headless-fixture".into(),
+        operation,
+        result: Ok(()),
+    });
+    assert!(h.observe(|v| {
+        let operation = &v.projects.operations["headless-fixture"];
+        !v.project_busy("headless-fixture") && operation.result.as_ref().unwrap().is_ok()
+    }));
+    h.capture("compose-rebuild-completed");
 
     h.click_tab("project-tabs", 0);
     let generation = h.observe(|v| v.project_logs.generation);
@@ -1623,7 +1732,7 @@ fn headless_gpu_user_flow() {
             "Compose association keyboard form", "Kit Compose caret selection and Unicode editing", "Kit Compose undo",
             "Kit Compose pointer focus and Tab Shift-Tab wraparound", "Kit Compose disabled editing while saving", "Kit Compose Escape cancellation",
             "ordered files, environment files and profiles", "unassociated and conflicting actions blocked",
-            "Compose Start Stop Restart requests", "streamed operation output and retained failure",
+            "Compose Start Stop Restart Rebuild requests", "Rebuild toolbar and project menu requests", "Rebuild duplicate and conflicting project/container actions blocked", "Rebuild live output and success", "Rebuild failure output retained after leaving and returning", "streamed operation output and retained failure",
             "project log request without association", "combined service prefixes", "project service filter rendered rows",
             "project log follow pause and copy feedback", "recreated member log rendering", "return to container log routing"]
     });

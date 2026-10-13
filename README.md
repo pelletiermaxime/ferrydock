@@ -19,8 +19,8 @@ the terminal, and container details close at hand.
 - **Open a terminal inside a container.** Use Bash or sh with colors, scrollback,
   text selection, copy and paste, and support for full-screen terminal programs.
 - **Start, stop, and restart containers.** See progress and any errors in the
-  detail panel. Associate Compose files to control a whole project and watch
-  its operation output.
+  detail panel. Associate Compose files to control a whole project, rebuild its
+  images and restart its services, and watch its operation output.
 - **Inspect container configuration.** Read syntax-highlighted JSON with line
   numbers, text selection, folding, and built-in search. The view is read-only.
 - **Adjust the workspace.** Drag the divider between the container list and
@@ -130,7 +130,7 @@ Click a Compose project heading to open its controls in the bottom dock. Choose
 **Associate files** to review the suggested project directory and Compose files.
 Enter files in override order, one per line, and include the environment files
 and profiles you normally use. Save the association to enable **Start**, **Stop**,
-and **Restart**. **Configuration** lets you edit it later.
+**Restart**, and **Rebuild & restart**. **Configuration** lets you edit it later.
 
 The project's **Logs** tab combines output from all its containers, with a coloured
 service/container prefix on each line that matches the container's list marker.
@@ -147,7 +147,11 @@ dates and omit Docker's additional timestamp prefix. Copied project logs keep
 their source labels without ANSI escape sequences.
 
 Start creates or starts project services without building images. Stop and
-Restart operate on the configured project's services. The dock streams Compose
+Restart operate on the configured project's services. **Rebuild & restart**
+builds images using Docker's build cache, then recreates and starts the configured
+services, including services that use an existing image. Build and startup output
+appears in **Operations**. If a build fails, its error and output remain available
+and the running services are left in place. The dock streams Compose
 output and keeps the latest result, including failures, when you switch away
 and return. Project groups remain accessible when their containers are stopped.
 Conflicting container and project operations are blocked.
@@ -213,8 +217,9 @@ daemon disconnects, FerryDock retries the connection automatically.
 
 ## Current limits
 
-Individual container controls and Compose project Start/Stop/Restart are
-available. Rebuild, Down, and network, volume, and cleanup pages are planned.
+Individual container controls and Compose project Start/Stop/Restart and
+Rebuild & restart are available. Down and network, volume, and cleanup pages
+are planned.
 
 Container logs and combined project logs each retain up to 1,500 lines; project
 streams begin with the last 200 lines per container and merge output as received.

@@ -39,6 +39,29 @@ async fn operation(
     }
 }
 
+async fn rebuild_marker(endpoint: &str, container: &str) -> Result<String> {
+    let output = time::timeout(
+        Duration::from_secs(10),
+        tokio::process::Command::new("docker")
+            .args([
+                "--host",
+                endpoint,
+                "exec",
+                container,
+                "cat",
+                "/ferry-rebuild-marker",
+            ])
+            .output(),
+    )
+    .await??;
+    assert!(
+        output.status.success(),
+        "Cannot read fixture build marker: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
 async fn wait_project_logs(
     events: &mut mpsc::Receiver<Event>,
     generation: u64,
@@ -147,7 +170,8 @@ async fn compose_project_controls_and_association() -> Result<()> {
         ],
         None,
     )
-    .await?;
+    .await
+    .context("Initial project log sources")?;
     assert!(initial_logs.iter().all(|line| {
         owned
             .iter()
@@ -212,7 +236,8 @@ async fn compose_project_controls_and_association() -> Result<()> {
         "Backlog must be coalesced, not delivered as individual UI messages"
     );
     let busy_logs = serde_json::json!({"lines":burst_lines,"batches":burst_batches,"wall_seconds":burst_started.elapsed().as_secs_f64()});
-    let (result, _) = operation(&backend, &mut events, &project, compose::Action::Stop, 1).await?;
+    let (result, _) =
+        operation(&backend, &mut events, &project, compose::Action::Rebuild, 1).await?;
     assert!(
         result.is_err(),
         "Unassociated project operation must be refused"
@@ -285,7 +310,8 @@ async fn compose_project_controls_and_association() -> Result<()> {
         ],
         restarted_after,
     )
-    .await?;
+    .await
+    .context("Project log sources after restart")?;
     let old_extra = owned
         .iter()
         .find(|container| container.service.as_deref() == Some("extra"))
@@ -318,7 +344,116 @@ async fn compose_project_controls_and_association() -> Result<()> {
         &[("extra", Some(&new_extra.id), "FERRY_PROJECT_EXTRA_BOOT")],
         None,
     )
-    .await?;
+    .await
+    .context("Project log source after fixture recreation")?;
+    let old_probe = owned
+        .iter()
+        .find(|container| container.service.as_deref() == Some("probe"))
+        .context("Buildable fixture service")?;
+    let original_image = docker.inspect_container(&old_probe.id, None).await?.image;
+    assert_eq!(
+        rebuild_marker(&endpoint, &old_probe.id).await?,
+        "before-rebuild"
+    );
+    std::fs::write(directory.join("rebuild-marker"), "after-rebuild\n")?;
+    let (result, output) =
+        operation(&backend, &mut events, &project, compose::Action::Rebuild, 6).await?;
+    result.map_err(anyhow::Error::msg)?;
+    assert!(
+        !output.is_empty(),
+        "Build and startup output must be streamed"
+    );
+    let rebuilt = docker::snapshot(&docker).await?;
+    let rebuilt_probe = rebuilt
+        .iter()
+        .find(|container| {
+            container.project.as_deref() == Some(&project)
+                && container.service.as_deref() == Some("probe")
+        })
+        .context("Rebuilt fixture service")?;
+    assert_ne!(
+        rebuilt_probe.id, old_probe.id,
+        "Rebuild must recreate the buildable service"
+    );
+    let rebuilt_image = docker
+        .inspect_container(&rebuilt_probe.id, None)
+        .await?
+        .image;
+    assert_ne!(
+        rebuilt_image, original_image,
+        "Changed build inputs must produce a new image"
+    );
+    assert_eq!(
+        rebuild_marker(&endpoint, &rebuilt_probe.id).await?,
+        "after-rebuild"
+    );
+    let rebuilt_extra = rebuilt
+        .iter()
+        .find(|container| {
+            container.project.as_deref() == Some(&project)
+                && container.service.as_deref() == Some("extra")
+        })
+        .context("Recreated profiled service")?;
+    assert_ne!(
+        rebuilt_extra.id, new_extra.id,
+        "Rebuild must restart configured services without a build too"
+    );
+    assert!(rebuilt_probe.running() && rebuilt_extra.running());
+    let rebuild_logs = wait_project_logs(
+        &mut events,
+        77,
+        &[
+            (
+                "probe",
+                Some(&rebuilt_probe.id),
+                "FERRY_PROJECT_PROBE_TICK:",
+            ),
+            (
+                "extra",
+                Some(&rebuilt_extra.id),
+                "FERRY_PROJECT_EXTRA_TICK:",
+            ),
+        ],
+        None,
+    )
+    .await
+    .context("Project log sources after rebuild")?;
+    transcripts.push(
+        serde_json::json!({"action":compose::Action::Rebuild.label(),"output":output,
+        "before_container":old_probe.id,"after_container":rebuilt_probe.id,
+        "before_image":original_image,"after_image":rebuilt_image,"marker":"after-rebuild"}),
+    );
+
+    // A failed build must report its output and leave the running services intact.
+    let dockerfile = directory.join("compose-project.Dockerfile");
+    let valid_dockerfile = std::fs::read(&dockerfile)?;
+    std::fs::write(
+        &dockerfile,
+        "FROM alpine:3.23\nRUN echo FERRY_EXPECTED_BUILD_FAILURE >&2; exit 1\n",
+    )?;
+    let (result, output) =
+        operation(&backend, &mut events, &project, compose::Action::Rebuild, 7).await?;
+    assert!(result.is_err(), "Broken Dockerfile must fail the rebuild");
+    assert!(
+        output.contains("FERRY_EXPECTED_BUILD_FAILURE"),
+        "Build error must be streamed: {output}"
+    );
+    for container in [rebuilt_probe, rebuilt_extra] {
+        let inspected = docker.inspect_container(&container.id, None).await?;
+        assert_eq!(
+            inspected.state.and_then(|state| state.running),
+            Some(true),
+            "Failed build must preserve the running services"
+        );
+    }
+    assert_eq!(
+        rebuild_marker(&endpoint, &rebuilt_probe.id).await?,
+        "after-rebuild"
+    );
+    transcripts.push(
+        serde_json::json!({"action":"Failed rebuild","error":result.unwrap_err(),"output":output}),
+    );
+    std::fs::write(dockerfile, valid_dockerfile)?;
     backend.send(Command::CloseProjectLogs);
     let evidence = PathBuf::from(env::var("FERRYDOCK_COMPOSE_TEST_EVIDENCE")?);
     let invalid_file = evidence.join("invalid-compose.yaml");
@@ -391,11 +526,11 @@ async fn compose_project_controls_and_association() -> Result<()> {
     std::fs::write(
         evidence.join("result.json"),
         serde_json::to_vec_pretty(
-            &serde_json::json!({"status":"passed", "project":project,"endpoint":endpoint,"configuration":config,"operations":transcripts,"project_logs":{"initial":initial_logs,"after_restart":restarted_logs,"recreated":recreated_logs,"busy":busy_logs},"checks":["label discovery","association required","persistent endpoint-scoped configuration","ordered override and env file","profiled service","Stop Start Restart side effects","streamed CLI output","ambient Compose overrides ignored","real CLI failure output and nonzero exit","invalid association preserves existing settings","combined project stdout and stderr with source identity","live logs after restart","recreated service stream discovery without reopening","10000-line busy project burst coalesced without lost lines"]}),
+            &serde_json::json!({"status":"passed", "project":project,"endpoint":endpoint,"configuration":config,"operations":transcripts,"project_logs":{"initial":initial_logs,"after_restart":restarted_logs,"recreated":recreated_logs,"after_rebuild":rebuild_logs,"busy":busy_logs},"checks":["label discovery","association required","persistent endpoint-scoped configuration","ordered override and env file","profiled service","Stop Start Restart side effects","changed build input produces new image and container with updated contents","rebuild restarts profiled image-only service","project logs reattach after rebuild","failed build streams errors and preserves running services","streamed CLI output","ambient Compose overrides ignored","real CLI failure output and nonzero exit","invalid association preserves existing settings","combined project stdout and stderr with source identity","live logs after restart","recreated service stream discovery without reopening","10000-line busy project burst coalesced without lost lines"]}),
         )?,
     )?;
     println!(
-        "PASS Compose discovery, saved association, Stop/Start/Restart, output and scoped configuration"
+        "PASS Compose discovery, saved association, Stop/Start/Restart/Rebuild, build failure, output and scoped configuration"
     );
     Ok(())
 }

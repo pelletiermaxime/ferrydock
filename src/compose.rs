@@ -109,6 +109,7 @@ pub enum Action {
     Start,
     Stop,
     Restart,
+    Rebuild,
 }
 impl Action {
     pub fn label(self) -> &'static str {
@@ -116,6 +117,7 @@ impl Action {
             Self::Start => "Start",
             Self::Stop => "Stop",
             Self::Restart => "Restart",
+            Self::Rebuild => "Rebuild & restart",
         }
     }
     fn args(self) -> &'static [&'static str] {
@@ -123,6 +125,7 @@ impl Action {
             Self::Start => &["up", "--detach", "--no-build"],
             Self::Stop => &["stop"],
             Self::Restart => &["restart"],
+            Self::Rebuild => &["up", "--detach", "--build", "--force-recreate"],
         }
     }
 }
