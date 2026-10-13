@@ -64,10 +64,25 @@ python3 scripts/verify-headless.py
 Run verification commands from the repository root. This harness runs the real
 FerryDock view and WGPU renderer with `DISPLAY` and `WAYLAND_DISPLAY` removed.
 It dispatches GPUI keyboard and pointer events, asserts behavior, and retains
-six GPU-rendered PNGs, input actions, frame timings, and a structured result
+fourteen GPU-rendered PNGs, input actions, frame timings, and a structured result
 under `.verification/headless/<run>/`. No desktop window or Docker worker is
 started. Fixture data enters through the Docker event channel; outgoing Stop
 and terminal-input commands are checked at that boundary.
+
+Headless PNGs use lossless adaptive filtering and balanced compression at full
+resolution. The headless and native helpers automatically keep the newest eight
+completed runs in their own default evidence folders. Active/incomplete runs,
+failed resource cleanup, explicit `--evidence` paths, and runs with a `.keep`
+file are preserved. Use `--keep-runs N` to change the limit or `--keep-runs 0`
+to disable pruning. Historical links to automatically pruned runs may expire;
+pin or export evidence that needs to remain available.
+
+To preview or apply the same retention policy to existing headless/native runs:
+
+```sh
+python3 scripts/verification_evidence.py --dry-run
+python3 scripts/verification_evidence.py
+```
 
 The flow covers discovery/grouping, search/empty matches/restored selection,
 log-follow clicks, Stop requests, terminal ANSI output, and keyboard input
@@ -84,9 +99,10 @@ below verifies actual container operations and shell execution.
 
 ```sh
 cargo fmt --all --check
-cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --lib --locked
 bash scripts/verify-docker.sh
+bash scripts/verify-compose.sh
 ```
 
 The Docker verification script creates a uniquely named Compose project using
@@ -100,6 +116,58 @@ start/stop/restart, shell input, PTY resize, ANSI parsing, a full-screen `vi`
 edit, shell exit, and a missing-Bash error. Unit tests cover split UTF-8,
 bounded logs, replicas/filtering, terminal parser state, and terminal
 input/output protocol.
+
+The Compose check uses a separate uniquely named two-service project, ordered
+base/override files, an environment file, and an explicit profile. It drives
+the production worker commands for association and Start/Stop/Restart, checks
+real Docker state and streamed success/failure output, and tests that ambient Compose variables
+cannot change the saved invocation. Settings are isolated under its evidence
+directory in `.verification/compose/`; containers and the network are removed
+on exit. It does not drive a native desktop window.
+
+The headless flow also drives the Compose association form, disabled controls,
+project operation requests, and live/failure output through actual GPUI input.
+Its fixture events do not execute Compose. Together these checks cover the UI
+and real process boundary without requiring desktop automation for each change.
+
+Project logs use Docker API streams for the selected project's labelled
+containers, with membership updates from the existing snapshot watcher.
+Service filters operate on a shared 1,500-line history. Per-container timestamp
+cursors suppress replayed lines on stream retry; new container IDs get their
+own stream and initial tail. The Compose integration fixture also proves mixed
+stdout/stderr, resumed logs after restart and new membership after recreation.
+Headless checks cover service-filter rendering, follow/pause, copy feedback,
+recreated-member output and routing back to individual container logs. Native
+clipboard behavior remains outside the headless proof.
+
+Both log views use virtual lists that lay out only visible rows. The project
+worker batches records for up to 50 ms, with at most 256 records and 64 KiB per
+batch (a single larger bounded record is allowed). The UI drains events within
+an 8 ms budget per poll. The headless flow fills the 1,500-line history, then
+feeds a 10,000-line burst; `log-performance.json` records actual rendered rows,
+follow position and input responsiveness. The Compose check independently
+emits 10,000 real log records and verifies bounded batches without lost records;
+the batch unit test separately proves record order and payload bounds.
+
+For native log-load measurements, build the development binary and run:
+
+```sh
+cargo build --locked
+python3 scripts/verify-log-performance.py --display :0
+```
+
+This owns an X11/XWayland window and ten disposable fixture containers producing
+roughly 500 lines per second. It takes desktop focus, measures process/thread
+CPU and RSS, checks search under load, retains screenshots/results under
+`.verification/log-performance/`, and removes only its fixture and process.
+Use `--binary target/release/ferrydock` after a release build for shipping
+performance. Capture timings bound when the visible result was obtained;
+separate OCR time is verification overhead. Search capture time includes
+synthetic typing at the established 20 ms cadence. It does not drive native
+Wayland. GPUI and Taffy are optimized in the development
+profile because unoptimized layout work can dominate live frames; FerryDock
+itself stays unoptimized for fast rebuilds. `--profile` launches the owned child
+under GDB and captures three UI-thread stack samples in `application.log`.
 
 ## Native UI verification
 
@@ -129,8 +197,9 @@ mouse/display limitations; use `/maintain-verification-skill` as the app evolves
 
 [Tests](../.github/workflows/ci.yml) runs on pushes to `main`, pull requests,
 and manual dispatches. It checks formatting, Clippy, unit tests, the disposable
-Docker integration fixture, and the headless UI flow with Mesa's software GPU
-driver. Headless evidence is retained as a workflow artifact for seven days.
+Docker and Compose integration fixtures, and the headless UI flow with Mesa's
+software GPU driver. Headless and Compose evidence are retained as workflow
+artifacts for seven days.
 
 [Release](../.github/workflows/release.yml) runs when a `v*` tag is pushed. It
 reuses the test workflow, then builds Linux x86-64 packages on Ubuntu 24.04:
@@ -159,8 +228,8 @@ For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag v0.1.1
-git push origin v0.1.1
+git tag -a v0.2.0 -m "FerryDock 0.2.0"
+git push --atomic origin main v0.2.0
 ```
 
 The tag must match the Cargo version and have a release-notes file. The publish
@@ -171,7 +240,7 @@ To package a locally built release on an Ubuntu 24.04 x86-64 host, install
 build the binary and run:
 
 ```sh
-bash scripts/package-linux.sh v0.1.1
+bash scripts/package-linux.sh v0.2.0
 ```
 
 Output goes to `target/packages/`. Local builds on newer distributions may

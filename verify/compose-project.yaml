@@ -1,0 +1,17 @@
+services:
+  probe:
+    image: alpine:3.23
+    command: ["sh", "-c", "echo FERRY_PROJECT_PROBE_BOOT; n=0; while true; do echo FERRY_PROJECT_PROBE_TICK:$$n; n=$$((n+1)); sleep 1; done"]
+    stop_grace_period: 1s
+    environment:
+      FERRY_COMPOSE_MARKER: ${FERRY_COMPOSE_MARKER:?fixture environment file required}
+      FERRY_OVERRIDE: base
+    labels:
+      dev.ferrydock.fixture: "true"
+  extra:
+    image: alpine:3.23
+    command: ["sh", "-c", "echo FERRY_PROJECT_EXTRA_BOOT; n=0; while true; do echo FERRY_PROJECT_EXTRA_TICK:$$n >&2; n=$$((n+1)); sleep 1; done"]
+    stop_grace_period: 1s
+    profiles: [extra]
+    labels:
+      dev.ferrydock.fixture: "true"

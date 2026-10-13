@@ -2,6 +2,20 @@
 
 A small native Docker workbench for the everyday loop: find a service, read its logs, open a shell, restart it, or rebuild it without losing your place.
 
+## Current implementation
+
+The Linux app implements container browsing/search, Compose grouping, streaming
+logs, an embedded terminal, inspect, and container Start/Stop/Restart. Native
+Wayland and X11 are enabled. Compose projects now support saved configuration
+associations, project Start/Stop/Restart, and streamed operation output in the
+bottom dock. Start uses `up --detach --no-build`; Rebuild, Down, resource pages,
+and cleanup remain planned. See `VERIFICATION.md` for actual proof boundaries.
+The project Logs tab combines all labelled member streams, with service
+filtering, follow/pause, copy, bounded history and restart/recreation discovery.
+The container and log lists render only visible rows. Project log records are
+batched before UI delivery; busy-history, burst and native-load checks cover
+the performance boundary alongside the existing functional flows.
+
 ## Agreed direction
 
 - Rust and GPUI.
@@ -72,7 +86,7 @@ Start with a single Cargo package and clear module boundaries. Split crates only
 
 Use **GPUI** for the native interface, **Tokio** for background I/O, and **Bollard** for the Docker Engine API. Keep network and process work away from the UI thread. Transfer typed updates into GPUI rather than sharing UI state with background workers.
 
-Use pinned published GPUI Community Edition packages (`gpui-ce` and `gpui_ce_platform`) for the native interface. This replaces the initial upstream GPUI 0.2.2 snapshot with the community distribution and its wgpu Linux renderer. Keep the verified X11/XWayland backend until native Wayland is exercised. Evaluate component libraries only after checking their current API, platform support, and license. Avoid a large dependency stack merely to assemble a sidebar and list.
+Use the pinned GPUI Community Edition Git revision for the native interface and its wgpu Linux renderer. Both native Wayland and X11/XWayland are enabled. Evaluate component libraries only after checking their API, platform support, and license. Avoid a large dependency stack merely to assemble a sidebar and list.
 
 Use **alacritty_terminal** as a candidate terminal-emulation core, with a FerryDock GPUI view rendering its cells. Confirm the integration in the first milestone. A text area displaying ANSI-stripped output is insufficient for interactive applications.
 
@@ -102,7 +116,7 @@ Resolve the active local connection using Docker context/environment configurati
 
 ## Source notes
 
-Research checked on 2026-10-12. This plan proposes implementation choices; no FerryDock application has been implemented or validated yet.
+Research checked on 2026-10-12. This plan records the product direction; current implementation and validation are tracked above and in `VERIFICATION.md`.
 
 - [Recomposable product README](https://github.com/janvandorth/recomposable): service status, rebuilds, workspace switching, logs, keyboard workflow.
 - [Echo product README](https://github.com/echo-and/echo): product-level reference only. No source code inspected or reused.

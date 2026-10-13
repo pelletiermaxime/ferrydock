@@ -3,6 +3,7 @@
 
 use super::{FerryDock, TEXT, Tab};
 use crate::{
+    compose::{self, Config as ComposeConfig, Project as ComposeProject},
     docker::{Action, Backend, Command, Connection, Event},
     model::{Container, groups},
 };
@@ -182,7 +183,9 @@ impl Harness {
         let encoding_started = Instant::now();
         let file =
             std::io::BufWriter::new(std::fs::File::create(self.evidence.join(&filename)).unwrap());
-        PngEncoder::new_with_quality(file, CompressionType::Fast, FilterType::NoFilter)
+        // UI frames have large flat regions. Filtering plus balanced deflate
+        // keeps full-resolution evidence small without a separate optimizer.
+        PngEncoder::new_with_quality(file, CompressionType::Default, FilterType::Adaptive)
             .write_image(
                 image.as_raw(),
                 image.width(),
@@ -243,6 +246,9 @@ fn container(id: &str, name: &str, state: &str, project: Option<&str>) -> Contai
         project: project.map(str::to_owned),
         service: project.map(|_| "probe".into()),
         ports: String::new(),
+        compose_directory: Default::default(),
+        compose_files: vec![],
+        compose_env_files: vec![],
     }
 }
 
@@ -398,6 +404,343 @@ fn headless_gpu_user_flow() {
         .collect();
     assert_eq!(input, b"echo verified\r");
 
+    h.deliver(Event::ComposeProjects(vec![ComposeProject {
+        name: "headless-fixture".into(),
+        config: None,
+        hint: ComposeConfig {
+            project: "headless-fixture".into(),
+            directory: "/fixture/project".into(),
+            files: vec!["compose.yaml".into()],
+            ..Default::default()
+        },
+    }]));
+    h.click("project-headless-fixture");
+    assert!(h.drain_commands().iter().any(|command| matches!(command, Command::ProjectLogs { project, .. } if project == "headless-fixture")));
+    let generation = h.observe(|v| v.project_log_generation);
+    let mut members = h.observe(|v| v.containers.clone());
+    let mut worker = container(
+        "fixture-worker",
+        "headless-fixture-worker-1",
+        "running",
+        Some("headless-fixture"),
+    );
+    worker.service = Some("worker".into());
+    members.push(worker.clone());
+    h.deliver(Event::Snapshot(members));
+    for (id, service, name, text) in [
+        (
+            "fixture-probe-running",
+            "probe",
+            "headless-fixture-probe-1",
+            "2026-10-12T23:30:00.000000001Z HTTP ready",
+        ),
+        (
+            "fixture-worker",
+            "worker",
+            "headless-fixture-worker-1",
+            "2026-10-12T23:30:00.000000002Z Queue ready",
+        ),
+    ] {
+        h.deliver(Event::ProjectLog {
+            generation,
+            line: crate::project_logs::Line {
+                container: id.into(),
+                service: service.into(),
+                name: name.into(),
+                text: text.into(),
+                error: false,
+            },
+        });
+    }
+    h.deliver(Event::ProjectLogsStatus {
+        generation,
+        status: "3 project containers · 2 live streams · timestamps · merged as received".into(),
+    });
+    h.click("project-log-follow");
+    assert!(!h.observe(|v| v.project_log_follow));
+    h.capture("project-logs-all");
+    h.click("project-service-probe");
+    assert_eq!(
+        h.observe(|v| v.project_service.clone()).as_deref(),
+        Some("probe")
+    );
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "project-log-line-0")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "project-log-line-1")
+            .unwrap()
+            .is_none()
+    );
+    h.click("project-log-copy");
+    assert!(h.observe(|v| {
+        v.message
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("project logs copied")
+    }));
+    h.capture("project-logs-filtered");
+    h.click("project-service-all");
+    h.click("project-log-follow");
+    assert!(h.observe(|v| v.project_log_follow));
+    let mut members = h.observe(|v| v.containers.clone());
+    members.retain(|container| container.id != "fixture-worker");
+    worker.id = "fixture-worker-recreated".into();
+    members.push(worker);
+    h.deliver(Event::Snapshot(members));
+    h.deliver(Event::ProjectLog {
+        generation,
+        line: crate::project_logs::Line {
+            container: "fixture-worker-recreated".into(),
+            service: "worker".into(),
+            name: "headless-fixture-worker-1".into(),
+            text: "2026-10-12T23:30:01.000000001Z Worker recreated and live".into(),
+            error: false,
+        },
+    });
+    assert!(h.observe(|v| {
+        v.project_logs
+            .text(None)
+            .contains("Worker recreated and live")
+    }));
+    h.capture("project-logs-recreated");
+    h.click("row-fixture-probe-running");
+    let commands = h.drain_commands();
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::CloseProjectLogs))
+    );
+    assert!(commands.iter().any(
+        |command| matches!(command, Command::Logs { id, .. } if id == "fixture-probe-running")
+    ));
+    h.key("ctrl-4");
+    assert_eq!(
+        h.observe(|v| v.selected_project.clone()).as_deref(),
+        Some("headless-fixture")
+    );
+    h.drain_commands();
+    h.click("compose-start");
+    assert!(
+        h.drain_commands().is_empty(),
+        "Unassociated project must not run"
+    );
+    h.click("compose-configure");
+    h.key("ctrl-a");
+    h.type_text("/fixture/associated");
+    h.key("tab");
+    h.key("ctrl-a");
+    h.type_text("base.yaml");
+    h.key("enter");
+    h.type_text("override.yaml");
+    h.key("tab");
+    h.type_text(".env.dev");
+    h.key("tab");
+    h.type_text("dev");
+    h.capture("compose-association");
+    h.click("compose-save");
+    let config = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::ConfigureCompose { config } => Some(config),
+            _ => None,
+        })
+        .expect("Association command");
+    assert_eq!(config.directory, PathBuf::from("/fixture/associated"));
+    assert_eq!(
+        config.files,
+        vec![PathBuf::from("base.yaml"), PathBuf::from("override.yaml")]
+    );
+    assert_eq!(config.env_files, vec![PathBuf::from(".env.dev")]);
+    assert_eq!(config.profiles, vec!["dev"]);
+    h.deliver(Event::ComposeConfigured {
+        project: config.project.clone(),
+        result: Ok(config),
+    });
+    h.click("compose-start");
+    let operation = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Compose {
+                project,
+                operation,
+                action: compose::Action::Start,
+            } if project == "headless-fixture" => Some(operation),
+            _ => None,
+        })
+        .expect("Compose Start request");
+    h.click("compose-stop");
+    assert!(
+        h.drain_commands().is_empty(),
+        "Conflicting controls must be disabled"
+    );
+    h.deliver(Event::ComposeOutput {
+        project: "headless-fixture".into(),
+        operation,
+        data: b"Container headless-fixture-probe-1 Started\n".to_vec(),
+    });
+    h.capture("compose-operation-live");
+    h.deliver(Event::ComposeFinished {
+        project: "headless-fixture".into(),
+        operation,
+        result: Ok(()),
+    });
+    assert!(h.observe(|v| {
+        v.compose_operations["headless-fixture"]
+            .result
+            .as_ref()
+            .unwrap()
+            .is_ok()
+    }));
+    h.click("compose-stop");
+    let operation = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Compose {
+                operation,
+                action: compose::Action::Stop,
+                ..
+            } => Some(operation),
+            _ => None,
+        })
+        .expect("Compose Stop request");
+    h.deliver(Event::ComposeOutput {
+        project: "headless-fixture".into(),
+        operation,
+        data: b"Fixture Compose failure output retained\n".to_vec(),
+    });
+    h.deliver(Event::ComposeFinished {
+        project: "headless-fixture".into(),
+        operation,
+        result: Err("Fixture Compose operation failed".into()),
+    });
+    h.capture("compose-operation-failed");
+    assert!(h.observe(|v| {
+        !v.project_busy("headless-fixture")
+            && v.compose_operations["headless-fixture"]
+                .output
+                .text()
+                .contains("failure output retained")
+    }));
+    h.click("compose-restart");
+    assert!(h.drain_commands().iter().any(|command| matches!(
+        command,
+        Command::Compose {
+            action: compose::Action::Restart,
+            ..
+        }
+    )));
+
+    h.click("project-tab-logs");
+    let generation = h.observe(|v| v.project_log_generation);
+    let ingestion_started = Instant::now();
+    for chunk in (0..1500).collect::<Vec<_>>().chunks(64) {
+        for index in chunk {
+            h.events
+                .try_send(Event::ProjectLog {
+                    generation,
+                    line: crate::project_logs::Line {
+                        container: format!("stress-{}", index % 10),
+                        service: format!("service-{}", index % 10),
+                        name: format!("stress-service-{}-1", index % 10),
+                        text: format!(
+                            "2026-10-12T23:30:02.000000001Z busy-service log line {index:04} {}",
+                            "application output ".repeat(8)
+                        ),
+                        error: false,
+                    },
+                })
+                .unwrap();
+        }
+        h.cx.advance_clock(Duration::from_millis(40));
+        h.cx.run_until_parked();
+    }
+    let ingestion_seconds = ingestion_started.elapsed().as_secs_f64();
+    h.capture("project-logs-busy");
+    let rows_rendered = h.observe(|v| v.project_rows_rendered.get());
+    assert!(
+        rows_rendered < 80,
+        "Log layout must be limited to visible rows, not all 1,500 retained lines"
+    );
+    assert!(
+        h.observe(|v| v.project_log_scroll.is_scrolled_to_end()) == Some(true),
+        "Follow must jump directly to the current tail"
+    );
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "project-log-line-1499")
+            .unwrap()
+            .is_some()
+    );
+    let batched_started = Instant::now();
+    for chunk in (0..10_000)
+        .collect::<Vec<_>>()
+        .chunks(crate::project_logs::MAX_BATCH_LINES)
+    {
+        h.events
+            .try_send(Event::ProjectLogBatch {
+                generation,
+                lines: chunk
+                    .iter()
+                    .map(|index| crate::project_logs::Line {
+                        container: format!("stress-{}", index % 10),
+                        service: format!("service-{}", index % 10),
+                        name: format!("stress-service-{}-1", index % 10),
+                        text: format!(
+                            "2026-10-12T23:30:03.000000001Z batched busy log line {index:04}"
+                        ),
+                        error: false,
+                    })
+                    .collect(),
+            })
+            .unwrap();
+    }
+    for _ in 0..20 {
+        h.cx.advance_clock(Duration::from_millis(40));
+        h.cx.run_until_parked();
+        if h.observe(|v| {
+            v.project_logs
+                .lines
+                .back()
+                .is_some_and(|line| line.text.contains("line 9999"))
+        }) {
+            break;
+        }
+    }
+    let batched_ingestion_seconds = batched_started.elapsed().as_secs_f64();
+    assert!(h.observe(|v| {
+        v.project_logs.lines.len() == 1500
+            && v.project_logs
+                .lines
+                .back()
+                .unwrap()
+                .text
+                .contains("line 9999")
+    }));
+    h.capture("project-logs-batched-busy");
+    assert!(h.observe(|v| v.project_rows_rendered.get()) < 80);
+    assert_eq!(
+        h.observe(|v| v.project_log_scroll.is_scrolled_to_end()),
+        Some(true)
+    );
+    h.click("project-log-follow");
+    assert!(
+        !h.observe(|v| v.project_log_follow),
+        "Controls must remain responsive after a log flood"
+    );
+    let performance = json!({"input_lines":1500,"retained_lines":h.observe(|v| v.project_logs.lines.len()),"rows_rendered_in_frame":rows_rendered,"ingestion_seconds":ingestion_seconds,
+        "batched_input_lines":10000,"batched_ingestion_seconds":batched_ingestion_seconds,"batched_rows_rendered":h.observe(|v| v.project_rows_rendered.get()),"follow_reached_tail":true,"controls_respond_after_flood":true});
+    std::fs::write(
+        h.evidence.join("log-performance.json"),
+        serde_json::to_vec_pretty(&performance).unwrap(),
+    )
+    .unwrap();
+
     let report = json!({
         "status": "passed", "renderer": "GPUI-CE WgpuHeadlessRenderer",
         "display": null, "wayland_display": null, "docker_worker_started": false,
@@ -406,8 +749,13 @@ fn headless_gpu_user_flow() {
         "render_and_flow_seconds": started.elapsed().as_secs_f64(),
         "changed_pixels_after_search_lower_bound": changed_pixels, "screenshots": h.screenshots,
         "frame_timings": h.frame_timings,
+        "log_performance": performance,
         "checks": ["fixture discovery", "keyboard search", "empty matches", "restored selection",
-            "log follow pointer toggle", "stop command at Docker boundary", "terminal ANSI rendering", "terminal input routing"]
+            "log follow pointer toggle", "stop command at Docker boundary", "terminal ANSI rendering", "terminal input routing",
+            "Compose association keyboard form", "ordered files, environment files and profiles", "unassociated and conflicting actions blocked",
+            "Compose Start Stop Restart requests", "streamed operation output and retained failure",
+            "project log request without association", "combined service prefixes", "project service filter rendered rows",
+            "project log follow pause and copy feedback", "recreated member log rendering", "return to container log routing"]
     });
     std::fs::write(
         h.evidence.join("headless.json"),

@@ -1,8 +1,182 @@
 # FerryDock verification
 
-Date: 2026-10-12. Scope: the first runnable Linux milestone in `PLAN.md`,
-including native Wayland/X11 selection, its GPUI Community Edition Git upgrade
-and Linux headless GPU verification. Earlier evidence is retained below.
+Date: 2026-10-12. Scope: FerryDock 0.2.0 release preparation, including Compose
+project controls, combined project logs, and busy-log performance. Earlier
+Linux milestone and desktop evidence is retained below.
+
+## 0.2.0 release checks
+
+The 0.2.0 manifest and lockfile agree, and user-facing release notes are in
+[docs/releases/v0.2.0.md](docs/releases/v0.2.0.md). Formatting, all-target and
+all-feature Clippy with warnings denied, all ten library tests, Python helper
+syntax, shell helper syntax, and the locked shipping release build passed.
+
+The current headless GPU/input flow passed with owned-process teardown and
+14 PNGs in **15.952 s including build**. The initial list, empty search,
+terminal, combined/filtered/recreated project logs, association form, live and
+failed Compose operations, and both busy-log frames were visually inspected.
+The 10,000-line burst retained 1,500 lines and rendered 17 rows; assertions
+confirmed follow at the tail and responding controls. This run is pinned:
+[result](.verification/headless/20261013T010053Z-fcb7b5ee/result.json),
+[performance](.verification/headless/20261013T010053Z-fcb7b5ee/log-performance.json).
+
+The real Docker integration test passed discovery, logs, Stop/Start/Restart,
+snapshot reconciliation, interactive shell/PTY resize, full-screen vi editing,
+shell exit, and the missing-Bash error. Its disposable container and network
+were removed. The separate Compose worker test passed all 14 checks, including
+saved configuration, override/environment/profile handling, lifecycle effects,
+failure output, restart/recreation log attachment, and a 10,000-record burst
+without lost lines. Its two containers and network were removed:
+[result](.verification/compose/20261013T010139Z-ZpzrUC/result.json),
+[cleanup](.verification/compose/20261013T010139Z-ZpzrUC/cleanup.log).
+
+These checks establish headless UI rendering/input and real worker/daemon
+behavior separately. This release pass did not repeat native Wayland,
+clipboard, or desktop Compose clicks. Ubuntu package installation and AppImage
+checks run in the tag-triggered release workflow; the local workstation is
+CachyOS, so its binary is not used as the published Ubuntu build.
+
+## Busy project-log performance regression
+
+The reported all-services slowdown came from laying out every retained log
+record on each redraw and sending records individually to the UI. Both log
+views and the container list now render through virtual lists. The production
+project worker batches records for up to 50 ms, bounded to 256 lines/64 KiB
+(one oversized bounded record may travel alone); the UI drains events with an
+8 ms per-poll budget. Follow uses the virtual list's current tail directly.
+Service names are cached in the bounded history. GPUI and Taffy are optimized
+in development builds after native UI-thread stacks identified layout work
+as a remaining hotspot.
+
+The instrumented headless baseline laid out **1,500 rows** and took **9.062 s**
+to ingest the 1,500-record fixture. Final source lays out **17 rows** (visible
+rows plus measurement work), ingests that fixture in **0.670 s**, and processes
+the 10,000-record batched fixture in **0.027 s** while keeping 1,500 records.
+Assertions require newest-line bounds, follow at the tail and responding
+controls. These are fixture-channel/layout measurements, not daemon throughput
+or screenshot GPU readback benchmarks:
+[baseline](.verification/headless/20261013T000723Z-c9834b71/log-performance.json),
+[final metrics](.verification/headless/20261013T004135Z-587fa951/log-performance.json),
+[final result](.verification/headless/20261013T004135Z-587fa951/result.json).
+The final warm check retained 14 PNGs and passed in **12.242 s including build**
+(8.14 s test execution). Luna high reviewed the preceding equivalent layout
+at original resolution, including all/filtered and busy-tail frames, and
+found no pane overlap. Long records intentionally scroll horizontally:
+[Luna run](.verification/headless/20261013T003645Z-eb289b92/result.json).
+These headless runs are pinned with `.keep`.
+
+The production Compose check received **10,000 real records in 40 batches**
+in **0.368 s**, verified the history transport without lost records, and passed
+existing association/lifecycle/recreation checks. Both fixture containers and
+their project network were removed:
+[result](.verification/compose/20261013T001636Z-Guck4o/result.json),
+[cleanup](.verification/compose/20261013T001636Z-Guck4o/cleanup.log).
+
+The native performance helper owns ten disposable containers generating
+nominally 500 lines/s and a PID/executable/title-verified X11/XWayland window.
+An early development run still reproduced **95.39% CPU** after the first
+virtual-log change. Final development samples measured **23–35.2%**, with
+search confirmed under load; the freshly rebuilt **release measured 9.4% CPU
+and 65.9 MiB RSS** over its five-second sample. Build profiles differ, so the
+release number is not a same-profile before/after comparison. The release
+obtained a selected-project/live-tail capture within **1.793 s**, and captured
+the completed no-match search within **1.123 s including synthetic typing**.
+OCR takes additional time and is reported separately. These are capture upper
+bounds and workstation observations, not portable latency/CPU thresholds:
+[development baseline](.verification/log-performance/20261013T002416Z-36fbc835/result.json),
+[final development](.verification/log-performance/20261013T004201Z-b9ef3e1c/result.json),
+[release](.verification/log-performance/20261013T004540Z-b882a1e4/result.json),
+[release search](.verification/log-performance/20261013T004540Z-b882a1e4/responsive-search.png).
+The release fixture `ferrydock-log-perf-e3223f28`, its network and app PID
+864254 were removed; both owned-process exit and cleanup flags passed.
+No native Wayland or clipboard interaction is claimed by this helper.
+
+Ten unit tests, all-target/all-feature Clippy with warnings denied, formatting,
+and release compilation passed. Ctrl+4 now opens the selected container's
+Compose project logs from the main-list focus. The new stress flow, native
+helper and proof boundaries are documented in the project verification skill.
+
+## Combined Compose project logs
+
+Project workspaces now have Logs and Operations tabs. Logs use Docker labels,
+so no Compose association is needed. Lines retain timestamps and service/
+container prefixes; service filters and copy use the shared bounded history.
+Follow/pause affects scrolling while collection continues. Each stream starts
+with the last 200 lines and retries from a timestamp cursor; the worker watches
+membership to attach replacement container IDs. The global history is capped
+at 1,500 lines, merged as received rather than globally sorted by timestamp.
+
+Luna passed the expanded headless flow in **17.811 seconds including compilation**,
+retaining 12 screenshots. It checked combined/filtered/recreated project rows,
+follow/pause and copy feedback, routing back to container logs, and coexistence
+with the Compose operation/configuration workspace:
+[result](.verification/headless/20261012T235355Z-67ea0335/result.json),
+[combined logs](.verification/headless/20261012T235355Z-67ea0335/07-project-logs-all.png),
+[service filter](.verification/headless/20261012T235355Z-67ea0335/08-project-logs-filtered.png),
+[recreated member](.verification/headless/20261012T235355Z-67ea0335/09-project-logs-recreated.png).
+A suspected row overlap was independently inspected and reassessed by Luna:
+the partial row ends at the scroll viewport boundary and does not paint into
+the dock. No concrete visual defect remained.
+
+The final real Compose fixture passed in **5.38 seconds of test execution**. Both
+services' stdout/stderr were attributed to the correct source, logs resumed
+after Stop/Start/Restart (requiring timestamps after both services restarted),
+and a force-recreated service's new container ID
+emitted its startup marker without reopening the project stream. Existing
+configuration/action/error checks also passed:
+[result](.verification/compose/20261012T235850Z-BOKLV8/result.json),
+[cleanup](.verification/compose/20261012T235850Z-BOKLV8/cleanup.log).
+Project `ferrydock-compose-verify-1791849530-532402` was removed and the script
+confirmed its containers/network were absent. Settings remained isolated.
+Nine unit tests and all-target/all-feature Clippy passed. Timestamp replay
+counts, late live lines, bounded mixed-service history and filtered copy text
+have unit coverage. Native clipboard/compositor integration remains separate.
+The existing Docker/container-log/terminal regression passed in 21.96 seconds;
+its fixture `ferrydock-verify-1791849365-514322` was also removed.
+
+## Compose project management
+
+Project headings now open a bottom-dock workspace for configuration association
+and Start/Stop/Restart. Labels prefill file suggestions, but an explicitly saved
+association enables operations. Associations retain ordered files, environment
+files and profiles, keyed by Docker endpoint and project name. Start uses
+`up --detach --no-build`; Stop/Restart and container actions share project
+conflict guards. The dock retains the latest output and result per project.
+
+Luna passed the expanded headless flow, including keyboard form entry,
+unassociated/conflicting action guards, all three outgoing operation requests,
+live output, and retained failure. It inspected the new frames and reported no
+visible defects. The final run retained nine PNGs in **12.649 seconds including
+compilation**:
+[result](.verification/headless/20261012T232843Z-b05f1fc1/result.json),
+[association](.verification/headless/20261012T232843Z-b05f1fc1/07-compose-association.png),
+[live output](.verification/headless/20261012T232843Z-b05f1fc1/08-compose-operation-live.png),
+[failure](.verification/headless/20261012T232843Z-b05f1fc1/09-compose-operation-failed.png).
+
+`bash scripts/verify-compose.sh` passed the production worker and real Compose
+CLI against a uniquely owned two-service fixture. It verified label discovery,
+association required before operation, persistent endpoint-scoped settings,
+file override order, an environment file, a profiled service, Stop/Start/Restart
+daemon state and restart timestamp, streamed output, ignored hostile ambient
+Compose overrides, a real invalid-YAML CLI failure and streamed error output,
+and rejected invalid associations without losing settings.
+The final test itself took **3.11 seconds**:
+[result](.verification/compose/20261012T232834Z-P4ydvM/result.json),
+[test log](.verification/compose/20261012T232834Z-P4ydvM/test.log),
+[cleanup](.verification/compose/20261012T232834Z-P4ydvM/cleanup.log).
+Fixture project `ferrydock-compose-verify-1791847714-345030` was removed; the
+script confirmed no project containers or networks remained. Settings were
+isolated inside the retained evidence directory. No user project was changed.
+
+Seven unit tests, formatting, and all-target/all-feature Clippy with warnings
+denied passed. The existing Docker/terminal regression also passed in 21.93
+seconds, including container lifecycle, PTY/ANSI, vi editing, shell exit and
+missing Bash; its fixture `ferrydock-verify-1791847594-332917` was removed.
+The new Compose script is wired into CI, but CI execution is not
+claimed here. Native desktop Compose clicks, cancellation UI, Rebuild and Down
+are outside this slice. Closing/disconnecting stops the tracked process; it
+does not roll back Docker effects. The previous release binary is not this
+source's verification artifact.
 
 ## Native Wayland and X11 selection
 

@@ -22,6 +22,9 @@ import uuid
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(ROOT / "scripts"))
+from verification_evidence import keep_runs, prune_runs
+
 FIXTURE = Path(__file__).with_name("fixture.compose.yaml")
 LOCK = Path("/tmp") / f"ferrydock-native-verification-{os.getuid()}.lock"
 
@@ -465,6 +468,8 @@ def main():
     parser.add_argument("--binary", type=Path, default=ROOT / "target/release/ferrydock")
     parser.add_argument("--feature", choices=("containers", "logs", "terminal", "controls", "inspect"), default="terminal")
     parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--keep-runs", type=keep_runs, default=8,
+                        help="Completed default-path runs to retain; 0 keeps all")
     args = parser.parse_args()
     env = os.environ.copy()
     # This harness finds and drives X11 windows; keep the override scoped to it.
@@ -502,9 +507,14 @@ def main():
             except Exception as failure:
                 error = (error + "; " if error else "") + "cleanup: " + str(failure)
             proof.save("result.json", {"status": "failed" if error else "passed", "feature": args.feature,
-                                       "error": error, "evidence": str(evidence), "project": proof.project})
-        print(json.dumps({"status": "failed" if error else "passed", "feature": args.feature,
-                          "evidence": str(evidence), "error": error}, indent=2))
+                                       "error": error, "evidence": str(evidence), "project": proof.project,
+                                       "custom_evidence": args.evidence is not None})
+        summary = {"status": "failed" if error else "passed", "feature": args.feature,
+                   "evidence": str(evidence), "error": error}
+        if args.evidence is None:
+            summary["retention"] = prune_runs(ROOT / ".verification/ferrydock", "ferrydock",
+                                              args.keep_runs, current=evidence)
+        print(json.dumps(summary, indent=2))
         return 1 if error else 0
 
 

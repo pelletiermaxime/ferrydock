@@ -18,7 +18,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::model::Container;
+use crate::{compose, model::Container};
 
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -45,11 +45,24 @@ impl Action {
 
 pub enum Command {
     Refresh,
+    ConfigureCompose {
+        config: compose::Config,
+    },
+    Compose {
+        project: String,
+        operation: u64,
+        action: compose::Action,
+    },
     Logs {
         id: String,
         generation: u64,
     },
     CloseLogs,
+    ProjectLogs {
+        project: String,
+        generation: u64,
+    },
+    CloseProjectLogs,
     Inspect {
         id: String,
         generation: u64,
@@ -112,6 +125,34 @@ pub enum Event {
     Connected(Connection),
     Disconnected(String),
     Snapshot(Vec<Container>),
+    ComposeProjects(Vec<compose::Project>),
+    ProjectLog {
+        generation: u64,
+        line: crate::project_logs::Line,
+    },
+    ProjectLogBatch {
+        generation: u64,
+        lines: Vec<crate::project_logs::Line>,
+    },
+    ProjectLogsStatus {
+        generation: u64,
+        status: String,
+    },
+    ComposeSettingsError(String),
+    ComposeConfigured {
+        project: String,
+        result: Result<compose::Config, String>,
+    },
+    ComposeOutput {
+        project: String,
+        operation: u64,
+        data: Vec<u8>,
+    },
+    ComposeFinished {
+        project: String,
+        operation: u64,
+        result: Result<(), String>,
+    },
     Log {
         generation: u64,
         data: Vec<u8>,
@@ -332,9 +373,10 @@ async fn run(
         } => result };
         match connection {
             Ok((connection, docker)) => {
-                let _ = events.send(Event::Connected(connection)).await;
+                let _ = events.send(Event::Connected(connection.clone())).await;
                 let session_cancel = cancel.child_token();
-                let result = connected(docker, &mut commands, &events, &session_cancel).await;
+                let result =
+                    connected(docker, connection, &mut commands, &events, &session_cancel).await;
                 session_cancel.cancel();
                 if cancel.is_cancelled() || commands.is_closed() {
                     return;
@@ -363,6 +405,7 @@ async fn run(
 
 async fn connected(
     docker: Docker,
+    connection: Connection,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     events: &mpsc::Sender<Event>,
     cancel: &CancellationToken,
@@ -385,15 +428,39 @@ async fn connected(
     let mut interval = time::interval(Duration::from_secs(10));
     let mut dirty = true;
     let mut logs_cancel = cancel.child_token();
+    let mut project_logs_cancel = cancel.child_token();
+    let (project_snapshots, snapshots) = watch::channel(Vec::new());
     let mut terminal_cancel = cancel.child_token();
     let mut terminal = None::<(u64, mpsc::UnboundedSender<TerminalCommand>)>;
     let mut busy = HashSet::new();
     let mut actions = FuturesUnordered::new();
+    let mut compose_jobs = FuturesUnordered::new();
+    let mut compose_busy = HashSet::new();
+    let mut container_projects = std::collections::HashMap::new();
+    let mut settings =
+        match compose::Settings::path().and_then(|path| compose::Settings::load(&path)) {
+            Ok(settings) => settings,
+            Err(error) => {
+                events
+                    .send(Event::ComposeSettingsError(format!("{error:#}")))
+                    .await?;
+                compose::Settings::default()
+            }
+        };
     loop {
         if dirty {
+            let containers = snapshot(&docker).await?;
+            project_snapshots.send_replace(containers.clone());
+            container_projects = containers
+                .iter()
+                .map(|container| (container.id.clone(), container.project.clone()))
+                .collect();
             events
-                .send(Event::Snapshot(snapshot(&docker).await?))
+                .send(Event::ComposeProjects(
+                    settings.projects(&connection.endpoint, &containers),
+                ))
                 .await?;
+            events.send(Event::Snapshot(containers)).await?;
             dirty = false;
         }
         tokio::select! {
@@ -406,10 +473,48 @@ async fn connected(
                 let _ = events.send(Event::ActionFinished { id, result }).await;
                 dirty = true;
             }
+            Some(result) = compose_jobs.next(), if !compose_jobs.is_empty() => {
+                let (project, operation, result) = result?;
+                compose_busy.remove(&project);
+                let _ = events.send(Event::ComposeFinished { project, operation, result }).await;
+                dirty = true;
+            }
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(()); };
                 match command {
                     Command::Refresh => dirty = true,
+                    Command::ProjectLogs { project, generation } => {
+                        project_logs_cancel.cancel(); project_logs_cancel = cancel.child_token();
+                        tokio::spawn(crate::project_logs::follow(docker.clone(), project, generation, snapshots.clone(), events.clone(), project_logs_cancel.clone()));
+                    }
+                    Command::CloseProjectLogs => project_logs_cancel.cancel(),
+                    Command::ConfigureCompose { config } => {
+                        let project = config.project.clone();
+                        let result = (|| -> Result<compose::Config> {
+                            if compose_busy.contains(&project) { bail!("Wait for the project operation before changing configuration"); }
+                            let config = config.validated()?;
+                            settings = compose::Settings::save(&compose::Settings::path()?, &connection.endpoint, config.clone())?;
+                            Ok(config)
+                        })().map_err(|error| format!("{error:#}"));
+                        let _ = events.send(Event::ComposeConfigured { project, result }).await;
+                        dirty = true;
+                    }
+                    Command::Compose { project, operation, action } => {
+                        let conflict = compose_busy.contains(&project) || busy.iter().any(|id| container_projects.get(id).and_then(Option::as_ref) == Some(&project));
+                        let config = settings.config(&connection.endpoint, &project).cloned();
+                        if let Some(config) = config.filter(|_| !conflict) {
+                            compose_busy.insert(project.clone());
+                            let endpoint = connection.endpoint.clone();
+                            let events = events.clone();
+                            let cancellation = cancel.child_token();
+                            compose_jobs.push(tokio::spawn(async move {
+                                let result = compose::run(config, endpoint, action, operation, events, cancellation).await.map_err(|error| format!("{error:#}"));
+                                (project, operation, result)
+                            }));
+                        } else {
+                            let _ = events.send(Event::ComposeFinished { project, operation, result: Err(if conflict { "Another operation is running on this project" } else { "Associate and save this project's Compose configuration first" }.into()) }).await;
+                        }
+                    }
                     Command::CloseLogs => logs_cancel.cancel(),
                     Command::CloseTerminal => { terminal_cancel.cancel(); terminal = None; },
                     Command::Logs { id, generation } => {
@@ -423,7 +528,7 @@ async fn connected(
                             let _ = events.send(Event::Inspection { generation, result }).await;
                         });
                     }
-                    Command::Action { id, action } if !busy.contains(&id) => {
+                    Command::Action { id, action } if !busy.contains(&id) && !container_projects.get(&id).and_then(Option::as_ref).is_some_and(|project| compose_busy.contains(project)) => {
                         busy.insert(id.clone());
                         let _ = events.send(Event::ActionStarted { id: id.clone(), action }).await;
                         let docker = docker.clone();
@@ -432,7 +537,9 @@ async fn connected(
                             (id, result)
                         }));
                     }
-                    Command::Action { .. } => {},
+                    Command::Action { id, .. } => {
+                        let _ = events.send(Event::ActionFinished { id, result: Err("Another operation is running on this container or its Compose project".into()) }).await;
+                    },
                     Command::Terminal { id, generation, shell, columns, rows } => {
                         terminal_cancel.cancel(); terminal_cancel = cancel.child_token();
                         let (tx, rx) = mpsc::unbounded_channel(); terminal = Some((generation, tx));

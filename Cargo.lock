@@ -1600,11 +1600,12 @@ dependencies = [
 
 [[package]]
 name = "ferrydock"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
  "bollard",
+ "chrono",
  "futures-util",
  "gpui-ce",
  "gpui_ce_platform",

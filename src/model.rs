@@ -12,6 +12,9 @@ pub struct Container {
     pub project: Option<String>,
     pub service: Option<String>,
     pub ports: String,
+    pub compose_directory: std::path::PathBuf,
+    pub compose_files: Vec<std::path::PathBuf>,
+    pub compose_env_files: Vec<std::path::PathBuf>,
 }
 
 impl Container {
@@ -58,6 +61,30 @@ impl Container {
                 .filter(|s| !s.is_empty())
                 .cloned(),
             ports,
+            compose_directory: labels
+                .get("com.docker.compose.project.working_dir")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default(),
+            compose_files: labels
+                .get("com.docker.compose.project.config_files")
+                .map(|value| {
+                    value
+                        .split(',')
+                        .filter(|part| !part.is_empty())
+                        .map(std::path::PathBuf::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            compose_env_files: labels
+                .get("com.docker.compose.project.environment_file")
+                .map(|value| {
+                    value
+                        .split(',')
+                        .filter(|part| !part.is_empty())
+                        .map(std::path::PathBuf::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }

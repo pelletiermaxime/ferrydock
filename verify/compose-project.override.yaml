@@ -1,0 +1,4 @@
+services:
+  probe:
+    environment:
+      FERRY_OVERRIDE: override

@@ -1,6 +1,6 @@
 [package]
 name = "ferrydock"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "A small native Docker workbench built with Rust and GPUI"
@@ -9,6 +9,7 @@ description = "A small native Docker workbench built with Rust and GPUI"
 alacritty_terminal = "=0.26.0"
 anyhow = "1"
 bollard = "=0.21.1"
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = "0.3"
 # Keep the GPUI crates on one immutable community-edition revision. This revision
 # includes Linux offscreen GPU rendering; headless test support is opt-in below.
@@ -26,6 +27,14 @@ headless-tests = ["gpui/test-support", "gpui_platform/test-support", "dep:gpui_w
 
 [profile.dev]
 debug = 0
+
+# Layout runs for every live log frame. GPUI instantiates Taffy's generic layout
+# code, so optimize both while leaving application code fast to compile.
+[profile.dev.package.gpui-ce]
+opt-level = 2
+
+[profile.dev.package.taffy]
+opt-level = 2
 
 # PNG readback is part of the development verification loop. Optimize these
 # stable dependencies while keeping FerryDock itself quick to rebuild.

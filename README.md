@@ -14,11 +14,13 @@ the terminal, and container details close at hand.
   search by name, image, service, or project, and switch between running and all
   containers.
 - **Follow live logs.** Read timestamped output, pause automatic scrolling, copy
-  logs, and reconnect the stream.
+  logs, and reconnect the stream. Combine a Compose project's service logs in
+  one view and filter them by service.
 - **Open a terminal inside a container.** Use Bash or sh with colors, scrollback,
   text selection, copy and paste, and support for full-screen terminal programs.
 - **Start, stop, and restart containers.** See progress and any errors in the
-  detail panel.
+  detail panel. Associate Compose files to control a whole project and watch
+  its operation output.
 - **Inspect container configuration.** View the full Docker inspect result as
   JSON.
 
@@ -36,10 +38,10 @@ The release is for **Linux x86-64**, built on Ubuntu 24.04; it requires
 glibc 2.39 or newer.
 
 On Ubuntu 24.04 or a compatible Debian-based distribution, download
-`ferrydock_0.1.1_amd64.deb` and install it:
+`ferrydock_0.2.0_amd64.deb` and install it:
 
 ```sh
-sudo apt install ./ferrydock_0.1.1_amd64.deb
+sudo apt install ./ferrydock_0.2.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -47,11 +49,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.1.1-linux-x86_64.AppImage`:
+`ferrydock-0.2.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.1.1-linux-x86_64.AppImage
-./ferrydock-0.1.1-linux-x86_64.AppImage
+chmod +x ferrydock-0.2.0-linux-x86_64.AppImage
+./ferrydock-0.2.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -60,7 +62,7 @@ Vulkan/EGL graphics driver stack, and Docker. If FUSE mounting is unavailable,
 run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.1.1-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.2.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify all three downloads.
 
@@ -94,6 +96,33 @@ and Docker environment.
 Type `exit` to end a shell normally. Stopping or restarting a container closes
 its terminal session; open a new shell after it starts again.
 
+### Manage a Compose project
+
+Click a Compose project heading to open its controls in the bottom dock. Choose
+**Associate files** to review the suggested project directory and Compose files.
+Enter files in override order, one per line, and include the environment files
+and profiles you normally use. Save the association to enable **Start**, **Stop**,
+and **Restart**. **Configuration** lets you edit it later.
+
+The project's **Logs** tab combines output from all its containers, with
+timestamps and a service/container prefix on each line. Use **All services** or
+a service button to filter the view, pause/resume following, and copy the
+filtered retained output. Logs work directly from Docker labels without a file
+association. The view picks up restarted or recreated services automatically.
+**Operations** keeps Start/Stop/Restart output separate from application logs.
+
+Start creates or starts project services without building images. Stop and
+Restart operate on the configured project's services. The dock streams Compose
+output and keeps the latest result, including failures, when you switch away
+and return. Project groups remain accessible when their containers are stopped.
+Conflicting container and project operations are blocked.
+
+Associations are saved per Docker endpoint and project name in
+`$XDG_CONFIG_HOME/ferrydock/compose.json`, or `~/.config/ferrydock/compose.json`.
+Only file paths and profiles are saved; environment-file contents are not
+copied. Saved projects remain listed even if no containers remain. Docker Compose
+v2 must be installed, and the associated files must be available on this machine.
+
 ## Keyboard shortcuts
 
 These shortcuts work when the container list has focus. In search, press
@@ -108,6 +137,7 @@ These shortcuts work when the container list has focus. In search, press
 | Ctrl+1 | Open Logs |
 | Ctrl+2 | Open Terminal |
 | Ctrl+3 | Open Inspect |
+| Ctrl+4 | Open the selected container's Compose project logs |
 
 Inside the terminal, control keys go to the shell. Drag to select text, then use
 **Ctrl+Shift+C** to copy. Paste with **Ctrl+Shift+V** or **Shift+Insert**, and
@@ -140,11 +170,13 @@ daemon disconnects, FerryDock retries the connection automatically.
 
 ## Current limits
 
-This first version focuses on individual containers. Compose projects are
-grouped for browsing; project-wide controls, rebuilding, and network or volume
-management are planned. See the [roadmap](PLAN.md) for more.
+Individual container controls and Compose project Start/Stop/Restart are
+available. Rebuild, Down, and network, volume, and cleanup pages are planned.
+See the [roadmap](PLAN.md) for more.
 
-Logs retain up to 1,500 lines; terminal scrollback retains up to 5,000 lines.
+Container logs and combined project logs each retain up to 1,500 lines; project
+streams begin with the last 200 lines per container and merge output as received.
+Terminal scrollback retains up to 5,000 lines.
 The terminal does not yet support input method composition (IME) or mouse input
 for terminal applications. **Disconnect** detaches FerryDock from a shell;
 use `exit` when you want to end the shell process.

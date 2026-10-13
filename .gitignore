@@ -1,3 +1,4 @@
 /target/
 /.firecrawl/
 /.verification/
+__pycache__/

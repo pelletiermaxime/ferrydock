@@ -1,6 +1,6 @@
 ---
 name: verify-ferrydock
-description: Verify FerryDock with fast Linux headless GPU screenshots and GPUI input tests, or with a real native window and disposable Docker fixture. Use for development checks, containers/search, logs, embedded terminal, inspect, and container controls. Preserve screenshots, actions, results and scoped cleanup evidence.
+description: Verify FerryDock with fast Linux headless GPU screenshots and GPUI input tests, real Compose worker checks, or a native window and disposable Docker fixture. Use for development checks, containers/search, logs, terminal, inspect, container controls, and Compose project associations/actions. Preserve screenshots, actions, results and scoped cleanup evidence.
 ---
 
 # Verify FerryDock
@@ -50,6 +50,18 @@ Run `python3 scripts/verify-headless.py` for the mapped development flow. It see
 
 The PNGs are visual evidence and the test checks meaningful image changes; there is no golden-image comparison yet. Clipboard/compositor behavior, other terminal entry points and the full feature inventory remain outside this flow. It can run while the user works on their desktop because it sends no desktop input. A verifier subagent can run this command and return `result.json`, relevant failures from `test.log`, and screenshot paths without editing the app or inventing coverage.
 
+For FerryDock verifier delegation, the user's preferred configuration is `gpt-6-luna` with `high` reasoning effort. Use a fresh bounded verifier agent with these settings; an existing agent created with `low` effort keeps its original setting. Have it run the existing checks and inspect screenshots without editing app code. Report concrete visible defects and distinguish normal scroll viewport clipping from content overlapping another pane. Do not automatically broaden the task into implementation or unrelated verification.
+
+The same headless flow also clicks a project heading, edits the Compose association form through keyboard events, and asserts ordered files, environment files and profiles. It checks disabled unassociated/conflicting controls, outgoing Start/Stop/Restart requests, and live/failure output using fixture events. Inspect all three Compose screenshots when this feature changes. No Compose subprocess is launched by headless tests.
+
+Project headings default to the combined Logs tab. The headless flow proves the project stream request without association, source-prefixed records, service-filter rendered rows, follow/pause, copy feedback, recreated-member rendering and return-to-container routing. Inspect the all-services, filtered and recreated-member frames. Copy text formatting has a unit check; the headless action does not prove the operating system clipboard. See [features/project-logs.md](features/project-logs.md).
+
+Busy-log verification fills the retained 1,500-line history and feeds 10,000 additional records in batches. Require `log-performance.json` to show fewer than 80 rendered rows, the retained history bound, newest-line visibility, `follow_reached_tail: true` and `controls_respond_after_flood: true`. Inspect frames 13 and 14. These measurements exercise rendering and fixture-channel ingestion, not native CPU or real Docker throughput. The container list and both log lists are virtualized; horizontal scrolling intentionally keeps long log records on one line.
+
+For development-build log performance, intentionally build with `cargo build --locked`, then run `python3 scripts/verify-log-performance.py --display :0`. Use `--binary target/release/ferrydock` after a release build to measure shipping performance. This separate check owns an X11/XWayland window and ten uniquely labelled disposable containers producing roughly 500 lines/s. It takes desktop focus, uses the native-input lock, validates PID/executable/window/fixture ownership, checks the selected project header and live output, measures CPU/RSS, types a no-match search under load, and cleans up its process and fixture. Require `result.json` status passed, `controls_respond_under_load`, `owned_process_exited` and `cleanup_success`. Capture/OCR timings are reported separately; CPU is an observation on this workstation, not a portable threshold. This does not verify native Wayland or clipboard integration. Do not run alongside another native-input session.
+
+For real Compose process behavior, run `bash scripts/verify-compose.sh`. This creates a unique `ferrydock-compose-verify-<timestamp>-<pid>` two-service project with base/override files, an environment file and a profile. It pins the current local Unix endpoint, isolates `XDG_CONFIG_HOME` under its evidence directory, drives production worker commands, checks daemon effects and streamed CLI output, and removes only that project on exit. It deliberately supplies conflicting ambient Compose variables to prove that saved settings win. It does not drive native GPUI input. Read [features/compose.md](features/compose.md) for the combined proof boundary.
+
 For native desktop integration, choose one mapped flow; each invocation owns a new session and cleans it up:
 
 The embedded-terminal flow is the exercised baseline. Mouse-dependent flows
@@ -72,9 +84,13 @@ Keyboard input is targeted at the verified window. Mouse flows locate visible la
 
 ## Evidence
 
-The headless helper prints its unique evidence directory under `.verification/headless/`. It retains `result.json` (revision, lock hash, command, exit status, timing and cleanup), `headless.json` (checks, dimensions, per-frame render/encoding timings), `actions.json`, `test.log`, and six PNGs. The virtual display currently uses 2x scaling, producing 2360x1640 pixels for a 1180x820 logical view; dimensions are checked against the reported scale. Inspect the initial list, empty-search and terminal frames when reviewing visual changes. Timing includes builds at the outer level; the flow's timing excludes compilation.
+The headless helper prints its unique evidence directory under `.verification/headless/`. It retains `result.json` (revision, lock hash, command, exit status, timing and cleanup), `headless.json` (checks, dimensions, per-frame render/encoding timings), `log-performance.json`, `actions.json`, `test.log`, and fourteen PNGs. The virtual display currently uses 2x scaling, producing 2360x1640 pixels for a 1180x820 logical view; dimensions are checked against the reported scale. Inspect the initial list, empty-search, terminal, project Logs and Compose operation frames when reviewing visual changes. Timing includes builds at the outer level; the flow's timing excludes compilation.
 
-Native runs print their unique evidence directory under `.verification/ferrydock/`. Both helpers accept `--evidence /absolute/new/directory` and refuse an existing directory. Evidence is outside `target/` and survives cleanup and `cargo clean`. Native artifacts include:
+Real Compose checks retain `result.json`, `test.log`, `launch.log`, `cleanup.log`, and isolated association settings under `.verification/compose/<run>/`. Require the test to pass and the script's scoped cleanup confirmation. Results prove worker/CLI/daemon behavior separately from headless rendering; do not claim native Compose clicks were exercised.
+
+The real Compose check also follows both fixture services through the production Docker API, corroborates stdout/stderr source identity, restarts the project, and force-recreates only the fixture's extra service to verify new-container log attachment. The result includes initial, restarted and recreated log samples. Recreation is a fixture setup action here, not a claimed FerryDock Recreate control.
+
+Native runs print their unique evidence directory under `.verification/ferrydock/`. Both helpers accept `--evidence /absolute/new/directory` and refuse an existing directory. Evidence is outside `target/` and survives resource cleanup and `cargo clean`. Headless PNGs use lossless adaptive filtering and balanced compression at full resolution. Both helpers keep the newest eight completed runs per default evidence folder; `--keep-runs N` overrides this and `--keep-runs 0` disables pruning. Active/incomplete runs, failed resource cleanup, explicit evidence paths, and runs containing `.keep` are preserved. Pin or export evidence referenced by durable proof notes before it ages out. Use `python3 scripts/verification_evidence.py --dry-run` to preview existing-run pruning and omit `--dry-run` to apply it. Native artifacts include:
 
 - `doctor-base.json` and `doctor-instance.json`: binary, daemon, process/window and fixture identity.
 - `actions.jsonl`: timestamped user keys, typing, control labels and observations.
@@ -86,9 +102,11 @@ For terminal proof, require both visible command output and an independent read-
 
 ## Cleanup
 
-Headless tests release entity handles before the context closes; GPUI's leak detector checks teardown. The wrapper waits for its owned Cargo/test process and terminates only that process group on timeout/interruption. It never removes evidence or performs Docker cleanup because no daemon worker/resources are created. Require `owned_process_exited: true` and overall `status: passed`; a flow that asserts successfully but fails teardown still fails.
+Headless tests release entity handles before the context closes; GPUI's leak detector checks teardown. The wrapper waits for its owned Cargo/test process and terminates only that process group on timeout/interruption. After writing the result it prunes older completed default-path evidence according to the retention limit. It performs no Docker cleanup because no daemon worker/resources are created. Require `owned_process_exited: true` and overall `status: passed`; a flow that asserts successfully but fails teardown still fails.
 
 The native helper cleans up in `finally` after success or failure. It terminates only its child application PID, validates ownership of every container in its random project, and runs Compose down only for that project. It confirms that no project containers or networks remain and keeps evidence. Require `cleanup.json` to contain `success: true`; a failed cleanup makes the run fail.
+
+The Compose check traps exit and runs down only for its uniquely named project, then verifies that its containers and network are absent. Retained settings and evidence are not removed. The fixture has no host mounts, ports or persistent volumes. A forcibly killed script requires scoped recovery using the project and endpoint in its retained result; never use global prune or another project's down command.
 
 If the helper is forcibly killed, use the retained `doctor-base.json` endpoint and `doctor-instance.json` PID/project to inspect ownership before manual cleanup. Confirm `/proc/<pid>/exe` still matches the recorded binary; never kill by process name. Confirm every matching container has both `dev.ferrydock.fixture=true` and the recorded Compose project label before scoped Compose down. Never run global prune, global `pkill`, or another project's down command. Preserve the evidence and record the recovery.
 
@@ -101,6 +119,7 @@ The per-user `/tmp/ferrydock-native-verification-<uid>.lock` is an advisory lock
 - [scripts/native.py](scripts/native.py): native front-door harness, doctor, evidence and owned cleanup. `--help` lists the interface.
 - [scripts/fixture.compose.yaml](scripts/fixture.compose.yaml): isolated probe with initial/live log markers and an interactive shell.
 - Project `scripts/verify-docker.sh`: separate Docker API integration checks. This does not replace native UI proof.
+- Project [scripts/verify-compose.sh](../../../scripts/verify-compose.sh): separate Compose association and worker/CLI/daemon checks, with isolated settings and scoped cleanup.
 - Project `scripts/measure-native.py`: separate launch/resource measurement. This does not prove feature interaction.
 
 After app changes, use `/maintain-verification-skill` to update entry points, exercise changed flows, and keep coverage claims honest.

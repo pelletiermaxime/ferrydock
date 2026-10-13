@@ -11,6 +11,8 @@ import time
 import tomllib
 import uuid
 
+from verification_evidence import keep_runs, prune_runs
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -18,6 +20,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, help="New evidence directory; existing paths are refused")
     parser.add_argument("--timeout", type=int, default=600, help="Build plus test timeout in seconds")
+    parser.add_argument("--keep-runs", type=keep_runs, default=8,
+                        help="Completed default-path runs to retain; 0 keeps all")
     args = parser.parse_args()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     evidence = (args.evidence or ROOT / ".verification/headless" / (stamp + "-" + uuid.uuid4().hex[:8])).resolve()
@@ -34,6 +38,7 @@ def main():
         raise RuntimeError("GPUI packages must share one pinned revision")
     report = {"status": "failed", "evidence": str(evidence), "command": command,
               "gpui_revision": next(iter(revisions)), "display": None, "wayland_display": None,
+              "custom_evidence": args.evidence is not None,
               "cargo_lock_sha256": hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest()}
     started = time.monotonic()
     error = None
@@ -68,8 +73,12 @@ def main():
                           owned_process_exited=process.poll() is not None,
                           retained_png_count=len(list(evidence.glob("*.png"))))
             (evidence / "result.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps({key: report[key] for key in
-                     ("status", "evidence", "wall_seconds", "retained_png_count", "error")}, indent=2))
+    summary = {key: report[key] for key in
+               ("status", "evidence", "wall_seconds", "retained_png_count", "error")}
+    if args.evidence is None:
+        summary["retention"] = prune_runs(ROOT / ".verification/headless", "headless",
+                                          args.keep_runs, current=evidence)
+    print(json.dumps(summary, indent=2))
     return 0 if report["status"] == "passed" else 1
 
 
