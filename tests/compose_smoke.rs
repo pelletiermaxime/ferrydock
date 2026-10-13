@@ -104,9 +104,10 @@ async fn compose_project_controls_and_association() -> Result<()> {
     assert_eq!(connection.endpoint, endpoint);
     let docker = docker::connect(&connection).await?;
     let containers = docker::snapshot(&docker).await?;
-    let owned = containers
+    let mut owned = containers
         .iter()
         .filter(|container| container.project.as_deref() == Some(&project))
+        .cloned()
         .collect::<Vec<_>>();
     assert_eq!(
         owned.len(),
@@ -274,11 +275,37 @@ async fn compose_project_controls_and_association() -> Result<()> {
             .await?
             .state
             .and_then(|state| state.started_at);
+        if action == compose::Action::Start {
+            // Remove one stopped fixture member to prove Start restores a
+            // missing service and subsequent checks follow its replacement.
+            docker.remove_container(&owned[0].id, None).await?;
+        }
         let (result, output) = operation(&backend, &mut events, &project, action, id).await?;
         result.map_err(anyhow::Error::msg)?;
         assert!(!output.is_empty(), "Real CLI output must be streamed");
+        // `up` may recreate containers when Compose detects configuration or
+        // image metadata changes. Check its current members, not stale IDs.
+        if action == compose::Action::Start {
+            owned = docker::snapshot(&docker)
+                .await?
+                .into_iter()
+                .filter(|container| container.project.as_deref() == Some(&project))
+                .collect();
+            assert_eq!(owned.len(), 2, "Start must restore both fixture services");
+            for service in ["probe", "extra"] {
+                assert!(
+                    owned
+                        .iter()
+                        .any(|container| { container.service.as_deref() == Some(service) }),
+                    "Start must restore the {service} service"
+                );
+            }
+        }
         for container in &owned {
-            let inspected = docker.inspect_container(&container.id, None).await?;
+            let inspected = docker
+                .inspect_container(&container.id, None)
+                .await
+                .with_context(|| format!("Inspect {} after {}", container.name, action.label()))?;
             let state = inspected.state.context("Fixture state")?;
             assert_eq!(state.running, Some(action != compose::Action::Stop));
             if action == compose::Action::Restart && container.id == owned[0].id {
