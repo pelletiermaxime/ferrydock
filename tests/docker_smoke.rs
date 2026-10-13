@@ -142,6 +142,74 @@ async fn docker_daily_loop_and_interactive_terminal() -> Result<()> {
             _ => {}
         }
     }
+    let populate = tokio::process::Command::new("docker")
+        .args([
+            "exec",
+            &id,
+            "sh",
+            "-c",
+            "i=0; while [ $i -lt 600 ]; do echo FERRY_HISTORY_$i; i=$((i+1)); done > /proc/1/fd/1",
+        ])
+        .status()
+        .await?;
+    assert!(populate.success());
+    backend.send(Command::Logs {
+        id: id.clone(),
+        generation: 40,
+    });
+    loop {
+        match receive(&mut events).await? {
+            Event::Log {
+                generation: 40,
+                data,
+            } => {
+                let text = String::from_utf8(data)?;
+                assert_eq!(text.matches("FERRY_HISTORY_").count(), 500);
+                assert!(text.contains("FERRY_HISTORY_100\n"));
+                assert!(text.contains("FERRY_HISTORY_599\n"));
+                break;
+            }
+            Event::LogsEnded {
+                generation: 40,
+                error,
+            } => bail!("Initial history failed: {error:?}"),
+            _ => {}
+        }
+    }
+    let append = tokio::process::Command::new("docker")
+        .args([
+            "exec",
+            &id,
+            "sh",
+            "-c",
+            "echo FERRY_AFTER_HISTORY > /proc/1/fd/1",
+        ])
+        .status()
+        .await?;
+    assert!(append.success());
+    loop {
+        match receive(&mut events).await? {
+            Event::Log {
+                generation: 40,
+                data,
+            } => {
+                let text = String::from_utf8(data)?;
+                assert!(
+                    !text.contains("FERRY_HISTORY_"),
+                    "Snapshot records must not be replayed"
+                );
+                if text.contains("FERRY_AFTER_HISTORY") {
+                    break;
+                }
+            }
+            Event::LogsEnded {
+                generation: 40,
+                error,
+            } => bail!("Live logs ended: {error:?}"),
+            _ => {}
+        }
+    }
+    println!("PASS initial 500-line history in one event and live resume without replay");
     let generation = 41;
     backend.send(Command::Terminal {
         id: id.clone(),

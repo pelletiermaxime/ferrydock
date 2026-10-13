@@ -1,4 +1,8 @@
-use std::{collections::HashSet, env, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use bollard::{
@@ -564,25 +568,116 @@ async fn stream_logs(
     events: mpsc::Sender<Event>,
     cancel: CancellationToken,
 ) {
+    // Load the finite history before painting it. Replaying history through the
+    // live stream makes Follow visibly walk down the output on every selection.
+    let started = chrono::Utc::now().timestamp() as i32;
+    let history_options = LogsOptionsBuilder::default()
+        .stdout(true)
+        .stderr(true)
+        .timestamps(true)
+        .tail("500")
+        .build();
+    let mut history_stream = docker.logs(&id, Some(history_options));
+    let mut history = LogHistory::default();
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            frame = history_stream.next() => match frame {
+                Some(Ok(frame)) => history.push(&frame.into_bytes()),
+                Some(Err(error)) => {
+                    let _ = events.send(Event::LogsEnded { generation, error: Some(error.to_string()) }).await;
+                    return;
+                }
+                None => break,
+            }
+        }
+    }
+    let since = history
+        .latest
+        .map_or(started, |timestamp| timestamp.timestamp() as i32);
+    let data = std::mem::take(&mut history.data);
+    tokio::select! {
+        _ = cancel.cancelled() => return,
+        result = events.send(Event::Log { generation, data }) => {
+            if result.is_err() { return; }
+        }
+    }
+    // Resume from the snapshot's timestamp so output produced between requests
+    // is retained. Docker's second-resolution `since` also replays history;
+    // remove those records, including duplicates at the exact boundary.
     let options = LogsOptionsBuilder::default()
         .follow(true)
         .stdout(true)
         .stderr(true)
         .timestamps(true)
-        .tail("500")
+        .since(since)
+        .tail("all")
         .build();
     let mut stream = docker.logs(&id, Some(options));
     let error = loop {
         tokio::select! {
             _ = cancel.cancelled() => break None,
             frame = stream.next() => match frame {
-                Some(Ok(frame)) => { if events.send(Event::Log { generation, data: frame.into_bytes().to_vec() }).await.is_err() { return; } }
+                Some(Ok(frame)) => {
+                    let data = history.live_data(&frame.into_bytes());
+                    if !data.is_empty() && events.send(Event::Log { generation, data }).await.is_err() { return; }
+                }
                 Some(Err(error)) => break Some(error.to_string()),
                 None => break None,
             }
         }
     };
     let _ = events.send(Event::LogsEnded { generation, error }).await;
+}
+
+#[derive(Default)]
+struct LogHistory {
+    data: Vec<u8>,
+    latest: Option<chrono::DateTime<chrono::FixedOffset>>,
+    boundary: HashMap<Vec<u8>, usize>,
+}
+
+impl LogHistory {
+    fn timestamp(record: &[u8]) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+        let end = record.iter().position(|byte| *byte == b' ')?;
+        chrono::DateTime::parse_from_rfc3339(std::str::from_utf8(&record[..end]).ok()?).ok()
+    }
+
+    fn push(&mut self, data: &[u8]) {
+        self.data.extend_from_slice(data);
+        for record in data.split_inclusive(|byte| *byte == b'\n') {
+            let Some(timestamp) = Self::timestamp(record) else {
+                continue;
+            };
+            if self.latest.is_none_or(|latest| timestamp > latest) {
+                self.latest = Some(timestamp);
+                self.boundary.clear();
+            }
+            if self.latest == Some(timestamp) {
+                *self.boundary.entry(record.to_vec()).or_default() += 1;
+            }
+        }
+    }
+
+    fn live_data(&mut self, data: &[u8]) -> Vec<u8> {
+        let mut output = Vec::new();
+        for record in data.split_inclusive(|byte| *byte == b'\n') {
+            if let (Some(timestamp), Some(latest)) = (Self::timestamp(record), self.latest) {
+                if timestamp < latest {
+                    continue;
+                }
+                if timestamp == latest
+                    && let Some(remaining) = self.boundary.get_mut(record)
+                    && *remaining > 0
+                {
+                    *remaining -= 1;
+                    continue;
+                }
+            }
+            output.extend_from_slice(record);
+        }
+        output
+    }
 }
 
 enum TerminalCommand {
@@ -671,4 +766,29 @@ async fn terminal_session(
     let _ = events
         .send(Event::TerminalEnded { generation, error })
         .await;
+}
+
+#[cfg(test)]
+mod log_history_tests {
+    use super::LogHistory;
+
+    #[test]
+    fn resume_keeps_gap_output_and_removes_snapshot_replay() {
+        let old = b"2026-10-13T05:00:00.100000000Z old\n";
+        let boundary = b"2026-10-13T05:00:00.900000000Z repeated\n";
+        let gap = b"2026-10-13T05:00:00.950000000Z between requests\n";
+        let same_time_new = b"2026-10-13T05:00:00.900000000Z new stderr\n";
+        let mut history = LogHistory::default();
+        history.push(old);
+        history.push(boundary);
+        history.push(boundary);
+        assert_eq!(history.data, [old.as_slice(), boundary, boundary].concat());
+        assert!(history.live_data(old).is_empty());
+        assert!(history.live_data(boundary).is_empty());
+        assert!(history.live_data(boundary).is_empty());
+        assert_eq!(history.live_data(same_time_new), same_time_new);
+        assert_eq!(history.live_data(gap), gap);
+        // Equal payloads with the same timestamp still preserve multiplicity.
+        assert_eq!(history.live_data(boundary), boundary);
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "ferrydock"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "A small native Docker workbench built with Rust and GPUI"
@@ -11,11 +11,11 @@ anyhow = "1"
 bollard = "=0.21.1"
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = "0.3"
-# Keep the GPUI crates on one immutable community-edition revision. This revision
-# includes Linux offscreen GPU rendering; headless test support is opt-in below.
-gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "43dacc568497c615c55a1ea0f77ab381c0d9865b", default-features = false, features = ["wayland", "x11", "windows-manifest"] }
-gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "43dacc568497c615c55a1ea0f77ab381c0d9865b", default-features = false, features = ["font-kit", "wayland", "x11"] }
-gpui_wgpu = { package = "gpui_ce_wgpu", git = "https://github.com/gpui-ce/gpui-ce", rev = "43dacc568497c615c55a1ea0f77ab381c0d9865b", optional = true, features = ["test-support"] }
+# GPUI Kit and direct engine consumers must share its selected Fast backend.
+gpui-kit = { version = "=0.7.3", features = ["gpui-fast", "tree-sitter"] }
+gpui = { package = "gpui-fast", version = "=0.1.7", default-features = false, features = ["wayland", "x11", "windows-manifest-provided-by-host"] }
+gpui_platform = { package = "gpui-fast-platform", version = "=0.1.7", default-features = false, features = ["font-kit", "wayland", "x11"] }
+gpui_wgpu = { package = "gpui-fast-wgpu", version = "=0.1.7", optional = true, features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,14 +23,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "process
 tokio-util = { version = "0.7", features = ["rt"] }
 
 [features]
-headless-tests = ["gpui/test-support", "gpui_platform/test-support", "dep:gpui_wgpu", "dep:image"]
+headless-tests = ["gpui/test-support", "gpui-kit/test-support", "gpui_platform/test-support", "dep:gpui_wgpu", "dep:image"]
 
 [profile.dev]
 debug = 0
 
 # Layout runs for every live log frame. GPUI instantiates Taffy's generic layout
 # code, so optimize both while leaving application code fast to compile.
-[profile.dev.package.gpui-ce]
+[profile.dev.package.gpui-fast]
 opt-level = 2
 
 [profile.dev.package.taffy]

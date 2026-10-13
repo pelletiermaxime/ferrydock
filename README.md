@@ -21,8 +21,14 @@ the terminal, and container details close at hand.
 - **Start, stop, and restart containers.** See progress and any errors in the
   detail panel. Associate Compose files to control a whole project and watch
   its operation output.
-- **Inspect container configuration.** View the full Docker inspect result as
-  JSON.
+- **Inspect container configuration.** Read syntax-highlighted JSON with line
+  numbers, text selection, folding, and built-in search. The view is read-only.
+- **Adjust the workspace.** Drag the divider between the container list and
+  detail panel. Action buttons show loading state, and notifications report
+  completed operations and copy feedback.
+- **Navigate container logs.** Use visible scrollbars for history and long
+  lines. Opening a container shows the newest retained output immediately,
+  then follows new lines without replaying the initial history.
 
 ## Get started
 
@@ -128,7 +134,11 @@ v2 must be installed, and the associated files must be available on this machine
 ## Keyboard shortcuts
 
 These shortcuts work when the container list has focus. In search, press
-**Escape** to return to the list; **Ctrl+A** clears the search field.
+**Escape** to return to the list; **Ctrl+A** selects the search text so typing
+replaces it, or Backspace clears it.
+
+Tab focuses controls; Enter or Space activates a focused button. In Inspect,
+Ctrl+F searches the JSON, Enter moves to the next match, and Escape closes search.
 
 | Shortcut | Action |
 | --- | --- |
@@ -188,7 +198,8 @@ when only `DISPLAY` is set. macOS and Windows support are planned.
 
 ## Contributing
 
-FerryDock is built with Rust and GPUI Community Edition. For build instructions,
+This experiment builds FerryDock with Rust and GPUI Kit. See the
+[trial findings](docs/gpui-kit-trial.md) for its scope and verification. For build instructions,
 checks, and UI verification, see the [development guide](docs/development.md).
 Recorded verification results are available in
 [VERIFICATION.md](VERIFICATION.md).

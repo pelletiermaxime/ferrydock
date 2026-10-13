@@ -13,29 +13,36 @@ fn main() {
             std::process::exit(1);
         }
     }
-    gpui_platform::application().run(|cx: &mut App| {
-        cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-        let bounds = Bounds::centered(None, size(px(1180.0), px(820.0)), cx);
-        cx.open_window(
-            WindowOptions::new()
-                .window_bounds(Some(WindowBounds::Windowed(bounds)))
-                .titlebar(Some(
-                    TitlebarOptions::default().title(Some("FerryDock".into())),
-                ))
-                .app_id(Some("dev.ferrydock.FerryDock".into()))
-                .window_min_size(Some(size(px(820.0), px(600.0)))),
-            |window, cx| {
-                let view = cx.new(ferrydock::app::FerryDock::new);
-                view.update(cx, |view, cx| view.focus(window, cx));
-                view
-            },
-        )
-        .expect("could not open FerryDock window");
-        cx.activate(true);
-    });
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(|cx: &mut App| {
+            ferrydock::app::init_ui(cx);
+            cx.on_window_closed(|cx, _| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+            let bounds = Bounds::centered(None, size(px(1180.0), px(820.0)), cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("FerryDock".into()),
+                        ..Default::default()
+                    }),
+                    app_id: Some("dev.ferrydock.FerryDock".into()),
+                    window_min_size: Some(size(px(820.0), px(600.0))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    let view = cx.new(|cx| ferrydock::app::FerryDock::new(window, cx));
+                    view.update(cx, |view, cx| view.focus(window, cx));
+                    view
+                },
+            )
+            .expect("could not open FerryDock window");
+            cx.activate(true);
+        });
 }

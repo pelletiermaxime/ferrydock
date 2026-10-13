@@ -33,11 +33,13 @@ def main():
     command = ["cargo", "test", "--lib", "--features", "headless-tests", "--locked", "--offline",
                "headless_tests::headless_gpu_user_flow", "--", "--nocapture", "--test-threads=1"]
     manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
-    revisions = {manifest["dependencies"][name]["rev"] for name in ("gpui", "gpui_platform", "gpui_wgpu")}
+    revisions = {manifest["dependencies"][name]["version"] for name in ("gpui", "gpui_platform", "gpui_wgpu")}
     if len(revisions) != 1:
-        raise RuntimeError("GPUI packages must share one pinned revision")
+        raise RuntimeError("GPUI packages must share one pinned snapshot version")
     report = {"status": "failed", "evidence": str(evidence), "command": command,
-              "gpui_revision": next(iter(revisions)), "display": None, "wayland_display": None,
+              "gpui_snapshot": next(iter(revisions)),
+              "gpui_engine": manifest["dependencies"]["gpui"]["package"],
+              "display": None, "wayland_display": None,
               "custom_evidence": args.evidence is not None,
               "cargo_lock_sha256": hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest()}
     started = time.monotonic()

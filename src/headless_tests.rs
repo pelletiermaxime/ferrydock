@@ -14,10 +14,12 @@ use std::{
 };
 
 use gpui::{
-    AppContext, Entity, HeadlessAppContext, InputEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, WindowHandle, px, rgb, size,
+    AppContext, Entity, Focusable, HeadlessAppContext, InputEvent, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, WindowHandle, px, size,
 };
 
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::test::TestWindowExt;
 use image::{
     ImageEncoder, RgbaImage,
     codecs::png::{CompressionType, FilterType, PngEncoder},
@@ -25,12 +27,35 @@ use image::{
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+trait HeadlessObservation {
+    fn debug_bounds(
+        &mut self,
+        window: gpui::AnyWindowHandle,
+        selector: &str,
+    ) -> anyhow::Result<Option<gpui::Bounds<gpui::Pixels>>>;
+}
+
+impl HeadlessObservation for HeadlessAppContext {
+    fn debug_bounds(
+        &mut self,
+        window: gpui::AnyWindowHandle,
+        selector: &str,
+    ) -> anyhow::Result<Option<gpui::Bounds<gpui::Pixels>>> {
+        self.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window
+                .try_find(gpui::SharedString::from(selector.to_owned()))
+                .map(|target| target.bounds())
+        })
+    }
+}
+
 struct Harness {
     // Rust drops fields in declaration order. Release this external handle
     // before the context shuts down and checks for leaked entities.
     view: Entity<FerryDock>,
     cx: HeadlessAppContext,
-    window: WindowHandle<FerryDock>,
+    window: WindowHandle<gpui_kit::base::Root>,
     events: mpsc::Sender<Event>,
     commands: mpsc::UnboundedReceiver<Command>,
     evidence: PathBuf,
@@ -63,24 +88,30 @@ impl Harness {
             });
         std::fs::create_dir_all(&evidence).unwrap();
         let platform = gpui_platform::current_platform(true);
-        let mut cx =
-            HeadlessAppContext::with_platform(platform.text_system(), Arc::new(()), || {
-                // CE's default factory still returns None on Linux. Never fall back
+        let mut cx = HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(gpui_kit::assets::Assets),
+            || {
+                // Never fall back
                 // to a no-op renderer: GPU initialization failure must fail the test.
-                Some(Box::new(
+                Ok(Some(Box::new(
                     gpui_wgpu::WgpuHeadlessRenderer::new().expect("headless GPU renderer"),
-                ))
-            });
+                )))
+            },
+        );
+        cx.update(super::init_ui);
         let (backend, commands) = Backend::fixture();
         let (events, receiver) = mpsc::channel(256);
+        let mut content = None;
         let window = cx
             .open_window(size(px(1180.0), px(820.0)), |window, cx| {
-                let view = cx.new(|cx| FerryDock::with_backend(backend, receiver, cx));
+                let view = cx.new(|cx| FerryDock::with_backend(backend, receiver, window, cx));
                 view.update(cx, |view, cx| view.focus(window, cx));
-                view
+                content = Some(view.clone());
+                cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
             })
             .unwrap();
-        let view = cx.read_window(&window, |view, _| view).unwrap();
+        let view = content.unwrap();
         cx.run_until_parked();
         Self {
             cx,
@@ -99,6 +130,105 @@ impl Harness {
         self.cx.read_entity(&self.view, |view, _| f(view))
     }
 
+    fn notification_count(&mut self) -> usize {
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.notifications(cx).len()
+            })
+            .unwrap()
+    }
+
+    fn settle_ui(&mut self, milliseconds: u64) {
+        for _ in 0..milliseconds.div_ceil(50) {
+            // GPUI's painted animations use wall-clock frame time, while the
+            // notification lifecycle uses the fixture executor's clock.
+            std::thread::sleep(Duration::from_millis(50));
+            self.cx.advance_clock(Duration::from_millis(50));
+            self.cx.run_until_parked();
+            self.cx
+                .update_window(self.window.into(), |_, window, cx| window.render_frame(cx))
+                .unwrap();
+        }
+    }
+
+    fn click_tab(&mut self, bar: &'static str, index: usize) {
+        self.actions
+            .push(json!({"input": "tab-click", "bar": bar, "index": index}));
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.within(bar).click(index, cx);
+            })
+            .unwrap();
+        self.cx.run_until_parked();
+        self.settle_ui(300);
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                assert_eq!(window.within(bar).find(index).selected(), Some(true));
+            })
+            .unwrap();
+    }
+
+    fn inspection_value(&self) -> SharedString {
+        self.cx
+            .read_entity(&self.view, |view, cx| view.inspection.read(cx).value())
+    }
+
+    fn dock_height(&self) -> f32 {
+        self.cx.read_entity(&self.view, |view, cx| {
+            f32::from(view.dock.read(cx).sizes()[1])
+        })
+    }
+
+    fn drag_dock(&mut self, delta: f32) {
+        self.actions
+            .push(json!({"input": "dock-drag", "delta": delta}));
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let bounds = window.find("detail-pane").bounds();
+                let from = gpui::point(bounds.center().x, bounds.origin.y);
+                window.drag(from, from + gpui::point(px(0.0), px(delta)), cx);
+            })
+            .unwrap();
+        self.cx.run_until_parked();
+    }
+
+    fn compose_values(&self) -> [SharedString; 4] {
+        self.cx.read_entity(&self.view, |view, cx| {
+            let form = view.compose_form.as_ref().expect("Open Compose form");
+            [
+                form.directory.read(cx).value(),
+                form.lists[0].read(cx).value(),
+                form.lists[1].read(cx).value(),
+                form.lists[2].read(cx).value(),
+            ]
+        })
+    }
+
+    fn assert_compose_focus(&mut self, index: usize) {
+        let view = self.view.clone();
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                let form = view
+                    .read(cx)
+                    .compose_form
+                    .as_ref()
+                    .expect("Open Compose form");
+                let handle = if index == 0 {
+                    form.directory.focus_handle(cx)
+                } else {
+                    form.lists[index - 1].focus_handle(cx)
+                };
+                assert!(
+                    handle.is_focused(window),
+                    "Compose field {index} must own focus"
+                );
+            })
+            .unwrap();
+    }
+
     fn deliver(&mut self, event: Event) {
         self.events.try_send(event).unwrap();
         self.cx.advance_clock(Duration::from_millis(40));
@@ -109,7 +239,7 @@ impl Harness {
         self.actions.push(json!({"input": "key", "key": key}));
         self.cx
             .update_window(self.window.into(), |_, window, cx| {
-                window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
+                window.press(key, cx);
             })
             .unwrap();
         self.cx.run_until_parked();
@@ -119,9 +249,7 @@ impl Harness {
         self.actions.push(json!({"input": "text", "text": text}));
         self.cx
             .update_window(self.window.into(), |_, window, cx| {
-                for ch in text.chars() {
-                    window.dispatch_keystroke(Keystroke::parse(&ch.to_string()).unwrap(), cx);
-                }
+                window.input(text, cx);
             })
             .unwrap();
         self.cx.run_until_parked();
@@ -149,6 +277,8 @@ impl Harness {
                     .to_platform_input(),
                     cx,
                 );
+                // Commit hover-dependent hitboxes before pressing a control.
+                window.render_frame(cx);
                 window.dispatch_event(
                     MouseDownEvent {
                         position,
@@ -343,13 +473,23 @@ fn headless_gpu_user_flow() {
             .is_none()
     );
     assert!(
-        !h.cx
-            .glyph_bounds(h.window.into(), gpui::rgb_to_hsla(rgb(TEXT)))
-            .unwrap()
-            .is_empty(),
+        initial
+            .pixels()
+            .filter(|pixel| pixel.0[..3] == [(TEXT >> 16) as u8, (TEXT >> 8) as u8, TEXT as u8])
+            .count()
+            > 8,
         "Real font glyphs must be painted"
     );
 
+    h.click("search");
+    assert!(
+        h.cx.update_window(h.window.into(), |_, window, cx| {
+            h.view.read(cx).search_focus.is_focused(window)
+        })
+        .unwrap(),
+        "Clicking the Input must focus its editor"
+    );
+    h.key("escape");
     h.key("ctrl-f");
     h.type_text("no-matching-container");
     assert_eq!(
@@ -379,6 +519,38 @@ fn headless_gpu_user_flow() {
     );
 
     h.key("ctrl-a");
+    assert_eq!(
+        h.observe(|v| v.filter.clone()),
+        "no-matching-container",
+        "Select All must preserve the value until it is replaced"
+    );
+    h.type_text("dock");
+    h.key("home");
+    h.type_text("pre-");
+    assert_eq!(
+        h.observe(|v| v.filter.clone()),
+        "pre-dock",
+        "Typing at Home must insert at the beginning"
+    );
+    h.key("shift-right");
+    h.type_text("D");
+    assert_eq!(
+        h.observe(|v| v.filter.clone()),
+        "pre-Dock",
+        "Typing must replace the selected character"
+    );
+    h.key("end");
+    h.type_text("é");
+    assert_eq!(h.observe(|v| v.filter.clone()), "pre-Docké");
+    h.key("backspace");
+    assert_eq!(
+        h.observe(|v| v.filter.clone()),
+        "pre-Dock",
+        "Backspace must delete the complete Unicode character"
+    );
+    h.capture("kit-input-editing");
+
+    h.key("ctrl-a");
     h.type_text("headless-fixture");
     h.key("escape");
     h.key("down");
@@ -405,20 +577,212 @@ fn headless_gpu_user_flow() {
     h.click("follow");
     assert!(!h.observe(|v| v.log_follow));
     h.capture("logs-paused");
+    h.deliver(Event::Log {
+        generation,
+        data: (0..200)
+            .map(|index| {
+                format!(
+                    "SCROLLBAR ROW {index:03} {}\n",
+                    "long log output ".repeat(20)
+                )
+            })
+            .collect::<String>()
+            .into_bytes(),
+    });
+    h.capture("logs-scrollbar-top");
+    let viewport =
+        h.cx.debug_bounds(h.window.into(), "container-log-viewport")
+            .unwrap()
+            .expect("Rendered container log viewport");
+    h.actions
+        .push(json!({"input": "log-scrollbar-drag", "axis": "vertical"}));
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        let from = gpui::point(viewport.right() - px(6.0), viewport.origin.y + px(12.0));
+        let to = gpui::point(from.x, viewport.bottom() - px(20.0));
+        window.drag(from, to, cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    h.settle_ui(300);
+    assert!(
+        h.observe(|v| v.log_scroll.0.borrow().base_handle.offset().y < px(-1000.0)),
+        "Dragging the vertical scrollbar must reveal later log rows"
+    );
+    h.actions
+        .push(json!({"input": "log-scrollbar-drag", "axis": "horizontal"}));
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        let from = gpui::point(viewport.origin.x + px(12.0), viewport.bottom() - px(6.0));
+        let to = gpui::point(viewport.right() - px(20.0), from.y);
+        window.drag(from, to, cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    h.settle_ui(300);
+    assert!(
+        h.observe(|v| v.log_scroll.0.borrow().base_handle.offset().x < px(-100.0)),
+        "Dragging the horizontal scrollbar must reveal long log records"
+    );
+    h.capture("logs-scrollbar-dragged");
     h.click("follow");
     assert!(h.observe(|v| v.log_follow));
+    h.capture("logs-scrollbar-following");
+    assert_eq!(h.observe(|v| v.log_scroll.is_scrolled_to_end()), Some(true));
+
+    let initial_dock_height = h.dock_height();
+    h.drag_dock(60.0);
+    assert!(
+        h.dock_height() < initial_dock_height - 40.0,
+        "Kit divider must resize the dock through pointer input"
+    );
+    h.drag_dock(250.0);
+    assert!(
+        (h.dock_height() - 200.0).abs() < 2.0,
+        "Dock minimum height must be enforced"
+    );
+    h.capture("kit-dock-resized");
+    h.drag_dock(h.dock_height() - initial_dock_height);
+    assert!((h.dock_height() - initial_dock_height).abs() < 3.0);
+
+    h.click_tab("container-tabs", 2);
+    assert!(h.observe(|view| view.tab == Tab::Inspect));
+    let generation = h.observe(|view| view.generation);
+    let inspection = serde_json::to_string_pretty(&json!({
+        "Id": "fixture-probe-running",
+        "Config": {"Image": "alpine:3.23", "Env": ["VISIBLE=fixture-only"]},
+        "HostConfig": {"NetworkMode": "bridge"}
+    }))
+    .unwrap();
+    h.deliver(Event::Inspection {
+        generation,
+        result: Ok(inspection.clone()),
+    });
+    assert_eq!(h.inspection_value(), inspection);
+    let json_image = h.capture("kit-inspect-json");
+    let view = h.view.clone();
+    let body =
+        h.cx.update_window(h.window.into(), |_, _, cx| {
+            view.read(cx)
+                .inspection
+                .read(cx)
+                .text_bounds()
+                .expect("Painted editor text bounds")
+        })
+        .unwrap();
+    let colored = json_image
+        .enumerate_pixels()
+        .filter(|(x, y, pixel)| {
+            let inside = *x >= (f32::from(body.origin.x) * 2.0) as u32
+                && *x < (f32::from(body.right()) * 2.0) as u32
+                && *y >= (f32::from(body.origin.y) * 2.0) as u32
+                && *y < (f32::from(body.bottom()) * 2.0) as u32;
+            inside && pixel.0[..3].iter().max().unwrap() - pixel.0[..3].iter().min().unwrap() > 50
+        })
+        .count();
+    assert!(
+        colored > 200,
+        "JSON syntax colors must be painted inside the actual editor body"
+    );
+    h.key("ctrl-a");
+    h.type_text("must-not-edit-inspection");
+    assert_eq!(
+        h.inspection_value(),
+        inspection,
+        "Inspect must remain read-only"
+    );
+    h.key("ctrl-f");
+    h.type_text("Image");
+    h.cx.read_entity(&h.view, |view, cx| {
+        let editor = view.inspection.read(cx);
+        let search = editor.search_session();
+        assert!(search.open);
+        assert!(
+            !search.replace_mode,
+            "Read-only search must not expose replacement"
+        );
+        assert_eq!(search.query, "Image");
+        assert_eq!(search.matcher.len(), 1);
+    });
+    h.capture("kit-inspect-search");
+    h.key("escape");
+    h.click_tab("container-tabs", 0);
+    assert!(h.observe(|view| view.tab == Tab::Logs));
+
+    h.drain_commands();
+    h.click("refresh");
+    h.drain_commands();
+    // Toolbar clicks preserve text focus; keyboard traversal focuses the button.
+    h.key("tab");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("refresh").focused(),
+            Some(true),
+            "Native button must own focus for activation"
+        );
+    })
+    .unwrap();
+    for key in ["enter", "space"] {
+        h.key(key);
+        let commands = h.drain_commands();
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| matches!(command, Command::Refresh))
+                .count(),
+            1,
+            "Refresh activation through {key} must fire once"
+        );
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Terminal { .. })),
+            "Button activation must not leak to the list shortcut"
+        );
+    }
 
     h.drain_commands();
     h.click("primary-action");
     assert!(h.drain_commands().iter().any(|command| matches!(command,
         Command::Action { id, action: Action::Stop } if id == "fixture-probe-running")));
     h.capture("stop-requested");
+    h.click("primary-action");
+    assert!(
+        h.drain_commands().is_empty(),
+        "Disabled loading button must not repeat the action"
+    );
     h.deliver(Event::ActionFinished {
         id: "fixture-probe-running".into(),
         result: Ok(()),
     });
+    assert_eq!(h.notification_count(), 1);
+    h.settle_ui(500);
+    h.capture("kit-action-notification");
+    h.click("close");
+    h.settle_ui(1000);
+    assert_eq!(
+        h.notification_count(),
+        0,
+        "Notification close control must dismiss feedback"
+    );
+    h.deliver(Event::ComposeSettingsError(
+        "Fixture settings error remains visible".into(),
+    ));
+    h.settle_ui(500);
+    h.cx.advance_clock(Duration::from_secs(6));
+    h.cx.run_until_parked();
+    h.settle_ui(300);
+    assert_eq!(
+        h.notification_count(),
+        1,
+        "Error feedback must remain until manually dismissed"
+    );
+    h.capture("kit-error-notification");
+    h.click("close");
+    h.settle_ui(1000);
+    assert_eq!(h.notification_count(), 0);
 
-    // Escape left the main view focused; Enter opens an embedded session.
+    // Select the row before the list's Enter shortcut.
+    h.click("row-fixture-probe-running");
     h.key("enter");
     assert!(h.observe(|v| v.tab == Tab::Terminal));
     let terminal_generation = h.observe(|v| v.terminal_generation);
@@ -525,14 +889,16 @@ fn headless_gpu_user_flow() {
             .is_none()
     );
     h.click("project-log-copy");
-    assert!(h.observe(|v| {
-        v.message
-            .as_ref()
-            .unwrap()
-            .0
-            .contains("project logs copied")
-    }));
+    assert_eq!(
+        h.notification_count(),
+        1,
+        "Copy feedback must use a Kit notification"
+    );
     h.capture("project-logs-filtered");
+    h.click_tab("project-tabs", 1);
+    assert!(h.observe(|view| view.project_tab == super::ProjectTab::Operations));
+    h.click_tab("project-tabs", 0);
+    assert!(h.observe(|view| view.project_tab == super::ProjectTab::Logs));
     h.click("project-service-all");
     h.click("project-log-follow");
     assert!(h.observe(|v| v.project_log_follow));
@@ -567,6 +933,29 @@ fn headless_gpu_user_flow() {
     assert!(commands.iter().any(
         |command| matches!(command, Command::Logs { id, .. } if id == "fixture-probe-running")
     ));
+    // The worker publishes the complete initial history in one event. Its first
+    // painted frame must already contain the tail, without an earlier top frame.
+    h.deliver(Event::Log {
+        generation: h.observe(|v| v.generation),
+        data: (0..500)
+            .map(|index| format!("2026-10-13T05:00:00.{index:09}Z INITIAL HISTORY {index:03}\n"))
+            .collect::<String>()
+            .into_bytes(),
+    });
+    h.capture("logs-open-at-bottom");
+    assert_eq!(h.observe(|v| v.log_scroll.is_scrolled_to_end()), Some(true));
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "container-log-line-499")
+            .unwrap()
+            .is_some(),
+        "The newest initial log record must appear in the first frame"
+    );
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "container-log-line-0")
+            .unwrap()
+            .is_none(),
+        "Initial history must not paint from the top before reaching the tail"
+    );
     h.key("ctrl-4");
     assert_eq!(
         h.observe(|v| v.selected_project.clone()).as_deref(),
@@ -579,19 +968,72 @@ fn headless_gpu_user_flow() {
         "Unassociated project must not run"
     );
     h.click("compose-configure");
+    h.assert_compose_focus(0);
+    let initial_directory = h.compose_values()[0].clone();
     h.key("ctrl-a");
+    assert_eq!(
+        h.compose_values()[0],
+        initial_directory,
+        "Select All must not clear the directory"
+    );
     h.type_text("/fixture/associated");
+    h.key("home");
+    h.type_text("/temporary");
+    assert_eq!(h.compose_values()[0], "/temporary/fixture/associated");
+    h.key("ctrl-z");
+    assert_eq!(
+        h.compose_values()[0],
+        "/fixture/associated",
+        "Undo must restore the directory"
+    );
+    h.key("end");
+    h.type_text("é");
+    h.key("backspace");
+    assert_eq!(h.compose_values()[0], "/fixture/associated");
     h.key("tab");
+    h.assert_compose_focus(1);
     h.key("ctrl-a");
     h.type_text("base.yaml");
     h.key("enter");
     h.type_text("override.yaml");
+    h.key("home");
+    h.key("shift-right");
+    h.type_text("O");
+    assert_eq!(
+        h.compose_values()[1],
+        "base.yaml\nOverride.yaml",
+        "Textarea must replace selected text at the caret"
+    );
+    h.key("ctrl-z");
+    assert_eq!(h.compose_values()[1], "base.yaml\noverride.yaml");
+    h.key("shift-tab");
+    h.assert_compose_focus(0);
     h.key("tab");
+    h.assert_compose_focus(1);
+    h.key("tab");
+    h.assert_compose_focus(2);
     h.type_text(".env.dev");
     h.key("tab");
+    h.assert_compose_focus(3);
     h.type_text("dev");
+    h.key("tab");
+    h.assert_compose_focus(0);
+    h.key("shift-tab");
+    h.assert_compose_focus(3);
+    h.click("compose-field-1");
+    h.assert_compose_focus(1);
+    h.key("ctrl-a");
+    assert_eq!(h.compose_values()[1], "base.yaml\noverride.yaml");
     h.capture("compose-association");
     h.click("compose-save");
+    let saving_values = h.compose_values();
+    h.type_text("must-not-change-while-saving");
+    h.key("escape");
+    assert_eq!(
+        h.compose_values(),
+        saving_values,
+        "Saving must disable input and cancellation"
+    );
     let config = h
         .drain_commands()
         .into_iter()
@@ -611,6 +1053,19 @@ fn headless_gpu_user_flow() {
         project: config.project.clone(),
         result: Ok(config),
     });
+    h.drain_commands();
+    h.click("compose-configure");
+    h.key("ctrl-a");
+    h.type_text("/discarded-edit");
+    h.key("escape");
+    assert!(
+        h.observe(|view| view.compose_form.is_none()),
+        "Escape must cancel an editable form"
+    );
+    assert!(
+        h.drain_commands().is_empty(),
+        "Cancellation must not save changes"
+    );
     h.click("compose-start");
     let operation = h
         .drain_commands()
@@ -701,7 +1156,7 @@ fn headless_gpu_user_flow() {
         }
     )));
 
-    h.click("project-tab-logs");
+    h.click_tab("project-tabs", 0);
     let generation = h.observe(|v| v.project_log_generation);
     let ingestion_started = Instant::now();
     for chunk in (0..1500).collect::<Vec<_>>().chunks(64) {
@@ -806,7 +1261,7 @@ fn headless_gpu_user_flow() {
     .unwrap();
 
     let report = json!({
-        "status": "passed", "renderer": "GPUI-CE WgpuHeadlessRenderer",
+        "status": "passed", "renderer": "GPUI Kit gpui-pre WgpuHeadlessRenderer",
         "display": null, "wayland_display": null, "docker_worker_started": false,
         "logical_width": 1180, "logical_height": 820,
         "pixel_width": terminal_image.width(), "pixel_height": terminal_image.height(),
@@ -814,10 +1269,16 @@ fn headless_gpu_user_flow() {
         "changed_pixels_after_search_lower_bound": changed_pixels, "screenshots": h.screenshots,
         "frame_timings": h.frame_timings,
         "log_performance": performance,
-        "checks": ["fixture discovery", "keyboard search", "empty matches", "restored selection",
+        "checks": ["fixture discovery", "search pointer focus", "keyboard search", "Kit Input select all and replacement", "Kit Input caret navigation and selection", "Kit Input Unicode backspace", "empty matches", "restored selection",
+            "Kit Button Tab focus and Enter Space activation without shortcut leakage", "Kit Button disabled loading action guard",
+            "Kit container and project TabBar pointer selection", "Kit Resizable pointer drag and minimum height",
+            "Kit Inspect read-only typing guard", "Kit Inspect JSON syntax glyph colors", "Kit Inspect search without replacement",
+            "Kit success notification and visible close control", "Kit error notification persists beyond success timeout",
             "container ANSI glyph colors and split sequences", "project ANSI glyph colors with neutral metadata and plain copy", "Compose ANSI colors and carriage-return progress replacement",
             "log follow pointer toggle", "stop command at Docker boundary", "terminal ANSI rendering", "terminal input routing",
-            "Compose association keyboard form", "ordered files, environment files and profiles", "unassociated and conflicting actions blocked",
+            "Compose association keyboard form", "Kit Compose caret selection and Unicode editing", "Kit Compose undo",
+            "Kit Compose pointer focus and Tab Shift-Tab wraparound", "Kit Compose disabled editing while saving", "Kit Compose Escape cancellation",
+            "ordered files, environment files and profiles", "unassociated and conflicting actions blocked",
             "Compose Start Stop Restart requests", "streamed operation output and retained failure",
             "project log request without association", "combined service prefixes", "project service filter rendered rows",
             "project log follow pause and copy feedback", "recreated member log rendering", "return to container log routing"]

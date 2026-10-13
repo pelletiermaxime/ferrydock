@@ -13,7 +13,7 @@ Find containers, see their state and Compose project grouping, and select one to
 ## How to get to it (user POV)
 
 - Launch FerryDock; the main list is the initial view.
-- Click Search or press Ctrl+F, then type. Escape/Enter leaves search; Ctrl+A in search clears the filter.
+- Click Search or press Ctrl+F, then type. Escape/Enter leaves search; Ctrl+A selects the search text. Typing replaces the selection, or Backspace clears it.
 - Click the Running only / All containers button in the header.
 - Click a container row or use Up/Down with the main view focused.
 - Click Refresh in the header or press Ctrl+R outside terminal/search focus. Scroll the list for additional rows.
@@ -22,7 +22,7 @@ Find containers, see their state and Compose project grouping, and select one to
 
 Preconditions: headless checks need cached dependencies and a usable Linux WGPU driver; native checks additionally need the skill's native Doctor and its owned Docker fixture/window.
 
-- **Headless development check:** `python3 scripts/verify-headless.py` supplies snapshots through the Docker event channel, dispatches Ctrl+F/text/Escape/Down through GPUI, and captures initial, empty-search and filtered frames. Assertions check selected fixture identity, zero/nonzero matching rows and more than 1,000 changed pixels after search. This proves rendering/search/selection behavior; the all/running toggle and real daemon discovery are outside this headless flow.
+- **Headless development check:** `python3 scripts/verify-headless.py` supplies snapshots through the Docker event channel, clicks the actual Input to verify focus, dispatches Ctrl+F/text/Escape/Down through GPUI, and captures initial, empty-search, Input-editing and filtered frames. Assertions cover Select All without clearing, insertion at Home, selected-character replacement, End and Unicode Backspace, selected fixture identity, zero/nonzero matching rows and more than 1,000 changed pixels after search. This proves rendering/search/selection behavior; the all/running toggle, native clipboard and real daemon discovery are outside this headless flow.
 
 Native commands below record exact keys/clicks in `actions.jsonl`.
 

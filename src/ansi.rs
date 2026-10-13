@@ -42,8 +42,8 @@ impl Style {
             foreground = Some(background.unwrap_or(BACKGROUND));
         }
         HighlightStyle {
-            color: foreground.map(|color| gpui::rgb_to_hsla(rgb(color))),
-            background_color: background.map(|color| gpui::rgb_to_hsla(rgb(color))),
+            color: foreground.map(|color| rgb(color).into()),
+            background_color: background.map(|color| rgb(color).into()),
             font_weight: self.bold.then_some(FontWeight::BOLD),
             font_style: self.italic.then_some(FontStyle::Italic),
             underline: self.underline.then_some(UnderlineStyle {
@@ -56,7 +56,6 @@ impl Style {
                 color: None,
             }),
             fade_out: self.dim.then_some(0.45),
-            ..Default::default()
         }
     }
 }

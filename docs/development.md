@@ -49,9 +49,10 @@ desktop, use `env -u WAYLAND_DISPLAY cargo run --locked`; this override is
 limited to that child process. Backend selection does not retry X11 after a
 Wayland connection failure.
 
-All GPUI crates are pinned to Community Edition Git revision
-`43dacc568497c615c55a1ea0f77ab381c0d9865b`. Its Linux renderer uses wgpu and
-supports offscreen GPU screenshots for tests.
+FerryDock pins GPUI Kit to `0.7.3` with its `gpui-fast` feature enabled and all
+direct GPUI engine/platform/WGPU packages to matching Fast version `0.1.7`. Its Linux
+renderer uses wgpu and supports offscreen GPU screenshots for tests. The
+[trial findings](gpui-kit-trial.md) record the compatibility changes.
 
 ## Headless UI verification
 
@@ -64,7 +65,7 @@ python3 scripts/verify-headless.py
 Run verification commands from the repository root. This harness runs the real
 FerryDock view and WGPU renderer with `DISPLAY` and `WAYLAND_DISPLAY` removed.
 It dispatches GPUI keyboard and pointer events, asserts behavior, and retains
-fourteen GPU-rendered PNGs, input actions, frame timings, and a structured result
+twenty-three GPU-rendered PNGs, input actions, frame timings, and a structured result
 under `.verification/headless/<run>/`. No desktop window or Docker worker is
 started. Fixture data enters through the Docker event channel; outgoing Stop
 and terminal-input commands are checked at that boundary.
@@ -84,7 +85,8 @@ python3 scripts/verification_evidence.py --dry-run
 python3 scripts/verification_evidence.py
 ```
 
-The flow covers discovery/grouping, search/empty matches/restored selection,
+The flow covers discovery/grouping, search pointer focus, Select All, caret
+navigation, selection replacement, Unicode deletion, empty matches/restored selection,
 log-follow clicks, Stop requests, terminal ANSI output, and keyboard input
 routing. It captures screenshots and checks painted glyphs/image changes. It
 does not compare against golden images or prove compositor/clipboard behavior.
@@ -249,8 +251,8 @@ For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag -a v0.2.1 -m "FerryDock 0.2.1"
-git push --atomic origin main v0.2.1
+git tag -a v0.3.0 -m "FerryDock 0.3.0"
+git push --atomic origin main v0.3.0
 ```
 
 The tag must match the Cargo version and have a release-notes file. The publish

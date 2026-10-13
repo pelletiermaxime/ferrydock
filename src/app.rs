@@ -4,6 +4,19 @@ use std::{
 };
 
 use gpui::{prelude::*, *};
+use gpui_kit::base::{FocusTrapElement, TestSupportExt};
+use gpui_kit::component::{
+    Disableable, IconName, Selectable, Sizable, WindowExt as _,
+    button::Button,
+    input::{
+        Editor, EditorState, Escape as InputEscape, IndentInline, Input,
+        InputEvent as SearchInputEvent, InputState, OutdentInline, Textarea, TextareaState,
+    },
+    notification::{Notification, NotificationDelivery},
+    resizable::{ResizableState, resizable_panel, v_resizable},
+    scroll::{Scrollbar, ScrollbarMode},
+    tab::{Tab as KitTab, TabBar},
+};
 
 use crate::{
     ansi::Buffer as StyledLogBuffer,
@@ -21,6 +34,23 @@ const BORDER: u32 = 0x34433c;
 const ACCENT: u32 = 0x74d7b1;
 const SELECTED: u32 = 0x234136;
 const ERROR: u32 = 0xffa4a4;
+
+pub fn init_ui(cx: &mut App) {
+    use gpui_kit::component::{Theme, ThemeMode};
+    gpui_kit::init(cx);
+    Theme::change(ThemeMode::Dark, None, cx);
+    Theme::update(cx, |theme| {
+        theme.colors.background = rgb(BG).into();
+        theme.colors.foreground = rgb(TEXT).into();
+        theme.colors.muted_foreground = rgb(MUTED).into();
+        theme.colors.border = rgb(BORDER).into();
+        theme.colors.primary = rgb(ACCENT).into();
+        theme.colors.ring = rgb(ACCENT).into();
+        theme.colors.selection = rgb(SELECTED).into();
+    });
+}
+
+struct FeedbackNotification;
 
 enum ResourceRow {
     Heading(GroupKey, String),
@@ -48,8 +78,8 @@ impl Tab {
 
 struct ComposeForm {
     project: String,
-    fields: [String; 4],
-    active: usize,
+    directory: Entity<InputState>,
+    lists: [Entity<TextareaState>; 3],
     saving: bool,
     error: Option<String>,
 }
@@ -85,15 +115,14 @@ pub struct FerryDock {
     log_status: String,
     log_follow: bool,
     log_scroll: UniformListScrollHandle,
-    inspection: String,
+    inspection: Entity<EditorState>,
     busy: HashMap<String, String>,
-    message: Option<(String, bool)>,
     running_only: bool,
     filter: String,
+    search_input: Entity<InputState>,
     search_focus: FocusHandle,
     focus: FocusHandle,
-    dock_height: f32,
-    resize_origin: Option<(f32, f32)>,
+    dock: Entity<ResizableState>,
     reopen_logs: bool,
     projects: Vec<ComposeProject>,
     selected_project: Option<String>,
@@ -117,29 +146,48 @@ impl FerryDock {
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         self.focus.focus(window, cx);
     }
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (backend, events) = Backend::start();
-        Self::with_backend(backend, events, cx)
+        Self::with_backend(backend, events, window, cx)
     }
 
     fn with_backend(
         backend: Backend,
         events: tokio::sync::mpsc::Receiver<Event>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.spawn(async move |this, cx| {
+        let search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search containers…  Ctrl+F"));
+        let search_focus = search_input.focus_handle(cx);
+        cx.subscribe(&search_input, |this, input, event, cx| {
+            if matches!(event, SearchInputEvent::Change) {
+                this.filter = input.read(cx).value().to_string();
+                cx.notify();
+            }
+        })
+        .detach();
+        let inspection = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language("json")
+                .folding(true)
+                .soft_wrap(false)
+        });
+        let dock = cx.new(|_| ResizableState::default());
+        cx.observe(&dock, |_, _, cx| cx.notify()).detach();
+        cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(33))
                     .await;
                 if this
-                    .update(cx, |this, cx| {
+                    .update_in(cx, |this, window, cx| {
                         let mut changed = false;
                         let started = Instant::now();
                         for _ in 0..64 {
                             match this.events.try_recv() {
                                 Ok(event) => {
-                                    this.handle_event(event, cx);
+                                    this.handle_event(event, window, cx);
                                     changed = true;
                                 }
                                 Err(_) => break,
@@ -175,15 +223,14 @@ impl FerryDock {
             log_status: "Select a container to view its logs".into(),
             log_follow: true,
             log_scroll: UniformListScrollHandle::default(),
-            inspection: String::new(),
+            inspection,
             busy: HashMap::new(),
-            message: None,
             running_only: true,
             filter: String::new(),
-            search_focus: cx.focus_handle(),
+            search_input,
+            search_focus,
             focus: cx.focus_handle(),
-            dock_height: 340.0,
-            resize_origin: None,
+            dock,
             reopen_logs: true,
             projects: Vec::new(),
             selected_project: None,
@@ -210,7 +257,7 @@ impl FerryDock {
             .and_then(|id| self.containers.iter().find(|container| &container.id == id))
     }
 
-    fn select(&mut self, id: String, cx: &mut Context<Self>) {
+    fn select(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let returning_from_project = self.selected_project.is_some();
         if self.selected_project.is_some() {
             self.backend.send(Command::CloseProjectLogs);
@@ -231,7 +278,10 @@ impl FerryDock {
         self.selected = Some(id.clone());
         self.generation += 1;
         self.logs = StyledLogBuffer::with_timestamps();
-        self.inspection = "Loading container configuration…".into();
+        self.log_scroll = UniformListScrollHandle::default();
+        self.inspection.update(cx, |editor, cx| {
+            editor.set_value("Loading container configuration…", window, cx)
+        });
         self.log_status = "Connecting to logs…".into();
         self.log_follow = true;
         self.backend.send(Command::Logs {
@@ -249,7 +299,7 @@ impl FerryDock {
         cx.notify();
     }
 
-    fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    fn handle_event(&mut self, event: Event, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             Event::ProjectLogBatch { generation, lines }
                 if generation == self.project_log_generation && self.selected_project.is_some() =>
@@ -276,7 +326,7 @@ impl FerryDock {
             }
             Event::ComposeProjects(projects) => self.projects = projects,
             Event::ComposeSettingsError(error) => {
-                self.message = Some((format!("Compose configuration: {error}"), true))
+                Self::notify(format!("Compose configuration: {error}"), true, window, cx)
             }
             Event::ComposeConfigured { project, result } => match result {
                 Ok(config) => {
@@ -294,8 +344,12 @@ impl FerryDock {
                     {
                         self.compose_form = None;
                     }
-                    self.message =
-                        Some((format!("Compose configuration saved for {project}"), false));
+                    Self::notify(
+                        format!("Compose configuration saved for {project}"),
+                        false,
+                        window,
+                        cx,
+                    );
                 }
                 Err(error) => {
                     if let Some(form) = &mut self.compose_form
@@ -326,16 +380,22 @@ impl FerryDock {
                 if let Some(current) = self.compose_operations.get_mut(&project)
                     && current.id == operation
                 {
+                    let error = result.is_err();
+                    let message = result
+                        .as_ref()
+                        .map(|()| format!("Compose {} completed", current.action.label()))
+                        .unwrap_or_else(|error| error.clone());
                     current.running = false;
                     current.result = Some(result);
                     self.reopen_logs = true;
                     self.backend.send(Command::Refresh);
+                    Self::notify(message, error, window, cx);
                 }
             }
             Event::Connected(connection) => {
                 self.connection = Some(connection);
                 self.connection_error = None;
-                self.message = None;
+                window.remove_notification::<FeedbackNotification>(cx);
                 self.reopen_logs = true;
                 if let Some(project) = self.selected_project.clone() {
                     self.begin_project_logs(project);
@@ -391,7 +451,8 @@ impl FerryDock {
                     self.backend.send(Command::CloseTerminal);
                     self.terminal = None;
                     self.logs = StyledLogBuffer::with_timestamps();
-                    self.inspection.clear();
+                    self.inspection
+                        .update(cx, |editor, cx| editor.set_value("", window, cx));
                     self.generation += 1;
                     let next = self
                         .containers
@@ -402,7 +463,7 @@ impl FerryDock {
                     if let Some(id) = next
                         && self.selected_project.is_none()
                     {
-                        self.select(id, cx);
+                        self.select(id, window, cx);
                     }
                 } else {
                     let after = self
@@ -451,8 +512,9 @@ impl FerryDock {
                     .unwrap_or_else(|| "Log stream ended · reconnect using Refresh logs".into());
             }
             Event::Inspection { generation, result } if generation == self.generation => {
-                self.inspection =
-                    result.unwrap_or_else(|error| format!("Inspection failed: {error}"));
+                let text = result.unwrap_or_else(|error| format!("Inspection failed: {error}"));
+                self.inspection
+                    .update(cx, |editor, cx| editor.set_value(text, window, cx));
             }
             Event::ActionStarted { id, action } => {
                 self.busy
@@ -461,13 +523,13 @@ impl FerryDock {
             Event::ActionFinished { id, result } => {
                 let action = self.busy.remove(&id).unwrap_or_else(|| "Operation".into());
                 let success = result.is_ok();
-                self.message = Some(match result {
-                    Ok(()) => (
-                        format!("{} completed", action.trim_end_matches(" in progress…")),
-                        false,
-                    ),
-                    Err(error) => (error, true),
-                });
+                let message = result.err().unwrap_or_default();
+                let message = if success {
+                    format!("{} completed", action.trim_end_matches(" in progress…"))
+                } else {
+                    message
+                };
+                Self::notify(message, !success, window, cx);
                 if success && self.selected.as_ref() == Some(&id) {
                     self.reopen_logs = true;
                 }
@@ -530,7 +592,7 @@ impl FerryDock {
             rows: 24,
         });
         self.tab = Tab::Terminal;
-        self.dock_height = self.dock_height.max(460.0);
+        self.expand_dock(460.0, window, cx);
         cx.notify();
     }
 
@@ -556,13 +618,15 @@ impl FerryDock {
             if let Some(terminal) = &self.terminal {
                 terminal.update(cx, |view, cx| view.focus(window, cx));
             }
+        } else if tab == Tab::Inspect {
+            self.inspection.focus_handle(cx).focus(window, cx);
         } else {
             self.focus.focus(window, cx);
         }
         cx.notify();
     }
 
-    fn action(&mut self, action: Action, cx: &mut Context<Self>) {
+    fn action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         let Some(container) = self.selected_container() else {
             return;
         };
@@ -588,7 +652,7 @@ impl FerryDock {
         }
         self.busy
             .insert(id.clone(), format!("{} in progress…", action.label()));
-        self.message = None;
+        window.remove_notification::<FeedbackNotification>(cx);
         self.backend.send(Command::Action { id, action });
         cx.notify();
     }
@@ -611,7 +675,7 @@ impl FerryDock {
         self.project_log_follow = true;
         self.compose_form = None;
         self.tab = Tab::Compose;
-        self.dock_height = self.dock_height.max(380.0);
+        self.expand_dock(380.0, window, cx);
         self.focus.focus(window, cx);
         cx.notify();
     }
@@ -648,18 +712,26 @@ impl FerryDock {
         };
         self.compose_form = Some(ComposeForm {
             project: project.name.clone(),
-            fields: [
-                config.directory.to_string_lossy().into_owned(),
+            directory: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .default_value(config.directory.to_string_lossy().into_owned())
+            }),
+            lists: [
                 paths(&config.files),
                 paths(&config.env_files),
                 config.profiles.join("\n"),
-            ],
-            active: 0,
+            ]
+            .map(|value| cx.new(|cx| TextareaState::new(window, cx).rows(2).default_value(value))),
             saving: false,
             error: None,
         });
-        self.dock_height = self.dock_height.max(500.0);
-        self.compose_focus.focus(window, cx);
+        self.expand_dock(500.0, window, cx);
+        self.compose_form
+            .as_ref()
+            .unwrap()
+            .directory
+            .focus_handle(cx)
+            .focus(window, cx);
         cx.notify();
     }
 
@@ -678,10 +750,12 @@ impl FerryDock {
         };
         let config = ComposeConfig {
             project: form.project.clone(),
-            directory: form.fields[0].clone().into(),
-            files: paths(&form.fields[1]),
-            env_files: paths(&form.fields[2]),
-            profiles: form.fields[3]
+            directory: form.directory.read(cx).value().to_string().into(),
+            files: paths(&form.lists[0].read(cx).value()),
+            env_files: paths(&form.lists[1].read(cx).value()),
+            profiles: form.lists[2]
+                .read(cx)
+                .value()
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
@@ -692,42 +766,6 @@ impl FerryDock {
         form.saving = true;
         form.error = None;
         self.backend.send(Command::ConfigureCompose { config });
-        cx.notify();
-    }
-
-    fn compose_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(form) = &mut self.compose_form else {
-            return;
-        };
-        if form.saving {
-            cx.stop_propagation();
-            return;
-        }
-        let key = &event.keystroke;
-        match key.key.as_str() {
-            "escape" => {
-                self.compose_form = None;
-                self.focus.focus(window, cx);
-            }
-            "tab" => form.active = (form.active + if key.modifiers.shift { 3 } else { 1 }) % 4,
-            "backspace" => {
-                form.fields[form.active].pop();
-            }
-            "enter" if form.active > 0 => form.fields[form.active].push('\n'),
-            "a" if key.modifiers.control => form.fields[form.active].clear(),
-            "v" if key.modifiers.control => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    form.fields[form.active].push_str(&text.replace('\r', ""));
-                }
-            }
-            _ if !key.modifiers.control && !key.modifiers.alt => {
-                if let Some(text) = &key.key_char {
-                    form.fields[form.active].push_str(text);
-                }
-            }
-            _ => {}
-        }
-        cx.stop_propagation();
         cx.notify();
     }
 
@@ -781,33 +819,18 @@ impl FerryDock {
     }
 
     fn search_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let key = &event.keystroke;
-        match key.key.as_str() {
-            "escape" | "enter" => self.focus.focus(window, cx),
-            "backspace" => {
-                self.filter.pop();
-            }
-            "v" if key.modifiers.control => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    self.filter.push_str(&text.replace(['\r', '\n'], " "));
-                }
-            }
-            "a" if key.modifiers.control => self.filter.clear(),
-            _ if !key.modifiers.control && !key.modifiers.alt => {
-                if let Some(text) = &key.key_char {
-                    self.filter.push_str(text);
-                }
-            }
-            _ => {}
+        if matches!(event.keystroke.key.as_str(), "escape" | "enter") {
+            self.focus.focus(window, cx);
+            cx.stop_propagation();
         }
-        cx.stop_propagation();
-        cx.notify();
     }
 
     fn root_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = &event.keystroke;
         match key.key.as_str() {
-            "enter" if self.selected_project.is_none() => self.open_terminal(window, cx),
+            "enter" if self.focus.is_focused(window) && self.selected_project.is_none() => {
+                self.open_terminal(window, cx)
+            }
             "f" if key.modifiers.control => {
                 self.search_focus.focus(window, cx);
                 cx.stop_propagation();
@@ -828,7 +851,7 @@ impl FerryDock {
                 }
                 cx.stop_propagation();
             }
-            "up" | "down" => {
+            "up" | "down" if self.focus.is_focused(window) => {
                 let items = groups(&self.containers, self.running_only, &self.filter)
                     .into_values()
                     .flatten()
@@ -843,7 +866,7 @@ impl FerryDock {
                     (current + 1).min(items.len().saturating_sub(1))
                 };
                 if let Some(container) = items.get(next) {
-                    self.select(container.id.clone(), cx);
+                    self.select(container.id.clone(), window, cx);
                 }
                 cx.stop_propagation();
             }
@@ -851,34 +874,53 @@ impl FerryDock {
         }
     }
 
+    fn notify(message: impl Into<SharedString>, error: bool, window: &mut Window, cx: &mut App) {
+        let message = message.into();
+        let notification = if error {
+            Notification::error(message).autohide(false)
+        } else {
+            Notification::success(message)
+        };
+        window.push_notification(
+            notification
+                .id::<FeedbackNotification>()
+                .delivery(NotificationDelivery::InApp),
+            cx,
+        );
+    }
+
+    fn expand_dock(&mut self, height: f32, window: &mut Window, cx: &mut Context<Self>) {
+        self.dock.update(cx, |dock, cx| {
+            if dock.sizes().get(1).copied().unwrap_or(px(340.0)) < px(height) {
+                dock.resize_panel(1, px(height), window, cx);
+            }
+        });
+    }
+
     fn button(
         id: impl Into<SharedString>,
         text: impl Into<SharedString>,
         active: bool,
         disabled: bool,
-    ) -> Stateful<Div> {
+    ) -> Button {
         let id = id.into();
-        div()
-            .id(id.clone())
-            .debug_selector(move || id.to_string())
-            .px_3()
-            .py_1()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(BORDER))
+        let tooltip = match id.as_ref() {
+            "refresh" => Some("Refresh containers (Ctrl+R)"),
+            "copy-logs" | "project-log-copy" => Some("Copy all retained logs"),
+            "compose-configure" => Some("Review Compose files and project settings"),
+            "shell-auto" => Some("Try Bash, then fall back to sh"),
+            _ => None,
+        };
+        Button::new(id)
+            .small()
+            .outline()
+            .label(text)
+            .selected(active)
+            .disabled(disabled)
             .bg(rgb(if active { SELECTED } else { PANEL }))
             .text_color(rgb(if active { ACCENT } else { TEXT }))
-            .text_size(px(12.0))
-            .cursor(if disabled {
-                CursorStyle::Arrow
-            } else {
-                CursorStyle::PointingHand
-            })
             .when(disabled, |button| button.opacity(0.45))
-            .when(!disabled, |button| {
-                button.hover(|style| style.bg(rgb(SELECTED)))
-            })
-            .child(text.into())
+            .when_some(tooltip, |button, tooltip| button.tooltip(tooltip))
     }
 
     fn resources(&self, cx: &mut Context<Self>) -> UniformList {
@@ -942,6 +984,7 @@ impl FerryDock {
                                 .h(px(56.0))
                                 .w_full()
                                 .id(SharedString::from(format!("project-{}", project.label())))
+                                .test_support()
                                 .debug_selector({
                                     let label = project.label().to_owned();
                                     move || format!("project-{label}")
@@ -980,6 +1023,7 @@ impl FerryDock {
                             let busy = this.busy.get(&container.id).cloned();
                             div()
                                 .id(SharedString::from(format!("row-{}", container.id)))
+                                .test_support()
                                 .debug_selector({
                                     let id = container.id.clone();
                                     move || format!("row-{id}")
@@ -998,7 +1042,7 @@ impl FerryDock {
                                 })
                                 .cursor_pointer()
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.select(id.clone(), cx);
+                                    this.select(id.clone(), window, cx);
                                     this.focus.focus(window, cx);
                                 }))
                                 .child(
@@ -1103,6 +1147,8 @@ impl FerryDock {
                         div()
                             .h(px(18.0))
                             .whitespace_nowrap()
+                            .id(SharedString::from(format!("container-log-line-{index}")))
+                            .test_support()
                             .debug_selector(move || format!("container-log-line-{index}"))
                             .child(text)
                     })
@@ -1151,9 +1197,9 @@ impl FerryDock {
                     )
                     .child(
                         Self::button("copy-logs", "Copy logs", false, false).on_click(cx.listener(
-                            |this, _, _, cx| {
+                            |this, _, window, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(this.logs.text()));
-                                this.message = Some(("Retained logs copied".into(), false));
+                                Self::notify("Retained logs copied", false, window, cx);
                                 cx.notify();
                             },
                         )),
@@ -1185,7 +1231,24 @@ impl FerryDock {
                         })),
                     ),
             )
-            .child(lines)
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .id("container-log-viewport")
+                    .test_support()
+                    .debug_selector(|| "container-log-viewport".to_owned())
+                    .child(lines)
+                    .child(
+                        Scrollbar::new(&self.log_scroll)
+                            .id("container-log-scrollbar")
+                            .mode(ScrollbarMode::Always),
+                    ),
+            )
             .child(
                 div()
                     .px_3()
@@ -1319,7 +1382,7 @@ impl FerryDock {
         }
         let Some(container) = self.selected_container() else {
             return div()
-                .h(px(self.dock_height))
+                .size_full()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1338,27 +1401,13 @@ impl FerryDock {
             Action::Start
         };
         let mut detail = div()
-            .h(px(self.dock_height))
-            .flex_shrink_0()
+            .size_full()
+            .min_h_0()
             .flex()
             .flex_col()
             .bg(rgb(BG))
             .border_t_1()
             .border_color(rgb(BORDER));
-        detail = detail.child(
-            div()
-                .id("dock-resize")
-                .h(px(6.0))
-                .cursor(CursorStyle::ResizeUpDown)
-                .hover(|style| style.bg(rgb(ACCENT)))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                        this.resize_origin = Some((f32::from(event.position.y), this.dock_height));
-                        cx.notify();
-                    }),
-                ),
-        );
         detail =
             detail.child(
                 div()
@@ -1383,7 +1432,13 @@ impl FerryDock {
                     )
                     .child(
                         Self::button("primary-action", primary.label(), false, unavailable)
-                            .on_click(cx.listener(move |this, _, _, cx| this.action(primary, cx))),
+                            .loading(self.busy.contains_key(&container.id))
+                            .when(self.busy.contains_key(&container.id), |button| {
+                                button.icon(IconName::Loader)
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.action(primary, window, cx)
+                            })),
                     )
                     .child(
                         Self::button(
@@ -1392,48 +1447,33 @@ impl FerryDock {
                             false,
                             unavailable || !container.running(),
                         )
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
                             if this.selected_container().is_some_and(Container::running) {
-                                this.action(Action::Restart, cx);
+                                this.action(Action::Restart, window, cx);
                             }
                         })),
                     ),
             );
-        let mut tabs = div()
-            .flex()
-            .gap_5()
+        let items = [Tab::Logs, Tab::Terminal, Tab::Inspect];
+        let tabs = TabBar::new("container-tabs")
+            .small()
+            .underline()
             .px_4()
-            .border_b_1()
-            .border_color(rgb(BORDER));
-        for tab in [Tab::Logs, Tab::Terminal, Tab::Inspect] {
-            tabs = tabs.child(
-                div()
-                    .id(tab.name())
-                    .py_2()
-                    .border_b_2()
-                    .border_color(rgb(if self.tab == tab { ACCENT } else { BG }))
-                    .text_color(rgb(if self.tab == tab { ACCENT } else { MUTED }))
-                    .text_size(px(13.0))
-                    .cursor_pointer()
-                    .child(tab.name())
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.switch_tab(tab, window, cx)),
-                    ),
-            );
-        }
+            .selected_index(items.iter().position(|tab| *tab == self.tab).unwrap_or(0))
+            .children(items.map(|tab| KitTab::new().label(tab.name())))
+            .on_click(cx.listener(move |this, index: &usize, window, cx| {
+                this.switch_tab(items[*index], window, cx)
+            }));
         detail.child(tabs).child(
             div().flex_1().min_h_0().child(match self.tab {
                 Tab::Logs => self.logs_view(cx).into_any_element(),
                 Tab::Terminal => self.terminal_view(cx).into_any_element(),
                 Tab::Inspect => div()
                     .id("inspection")
+                    .test_support()
+                    .debug_selector(|| "inspection".to_string())
                     .size_full()
-                    .overflow_y_scroll()
-                    .overflow_x_scroll()
-                    .p_3()
-                    .font_family("DejaVu Sans Mono")
-                    .text_size(px(12.0))
-                    .child(self.inspection.clone())
+                    .child(Editor::new(&self.inspection).readonly(true).h_full())
                     .into_any_element(),
                 Tab::Compose => div().into_any_element(),
             }),
@@ -1466,34 +1506,25 @@ impl FerryDock {
             (compose::Action::Stop, "compose-stop"),
             (compose::Action::Restart, "compose-restart"),
         ] {
+            let loading = self
+                .compose_operations
+                .get(name)
+                .is_some_and(|operation| operation.running && operation.action == action);
             toolbar = toolbar.child(
                 Self::button(id, action.label(), false, disabled)
+                    .loading(loading)
+                    .when(loading, |button| button.icon(IconName::Loader))
                     .on_click(cx.listener(move |this, _, _, cx| this.compose_action(action, cx))),
             );
         }
         let mut pane = div()
-            .h(px(self.dock_height))
-            .flex_shrink_0()
+            .size_full()
+            .min_h_0()
             .flex()
             .flex_col()
             .bg(rgb(BG))
             .border_t_1()
             .border_color(rgb(BORDER))
-            .child(
-                div()
-                    .id("compose-dock-resize")
-                    .h(px(6.0))
-                    .cursor(CursorStyle::ResizeUpDown)
-                    .hover(|style| style.bg(rgb(ACCENT)))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                            this.resize_origin =
-                                Some((f32::from(event.position.y), this.dock_height));
-                            cx.notify();
-                        }),
-                    ),
-            )
             .child(toolbar);
         if let Some(form) = &self.compose_form {
             let mut controls = div()
@@ -1512,6 +1543,8 @@ impl FerryDock {
                         true,
                         form.saving || self.connection.is_none(),
                     )
+                    .loading(form.saving)
+                    .when(form.saving, |button| button.icon(IconName::Loader))
                     .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
                 )
                 .child(
@@ -1535,8 +1568,34 @@ impl FerryDock {
             }
             pane = pane.child(controls);
             let mut fields = div().id("compose-form").flex_1().min_h_0().overflow_y_scroll().p_4().flex().flex_col().gap_2()
-                .track_focus(&self.compose_focus).on_key_down(cx.listener(Self::compose_key))
-                .child(div().text_size(px(11.0)).text_color(rgb(MUTED)).child("Review label suggestions. Tab: next field · Ctrl+A: replace field · Ctrl+V: paste · Escape: cancel"));
+                .track_focus(&self.compose_focus)
+                .capture_action(cx.listener(|this, _: &IndentInline, window, cx| {
+                    window.focus_next(cx);
+                    if !this.compose_focus.contains_focused(window, cx)
+                        && let Some(form) = &this.compose_form
+                    {
+                        form.directory.focus_handle(cx).focus(window, cx);
+                    }
+                    cx.stop_propagation();
+                }))
+                .capture_action(cx.listener(|this, _: &OutdentInline, window, cx| {
+                    window.focus_prev(cx);
+                    if !this.compose_focus.contains_focused(window, cx)
+                        && let Some(form) = &this.compose_form
+                    {
+                        form.lists[2].focus_handle(cx).focus(window, cx);
+                    }
+                    cx.stop_propagation();
+                }))
+                .capture_action(cx.listener(|this, _: &InputEscape, window, cx| {
+                    if !this.compose_form.as_ref().is_some_and(|form| form.saving) {
+                        this.compose_form = None;
+                        this.focus.focus(window, cx);
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                }))
+                .child(div().text_size(px(11.0)).text_color(rgb(MUTED)).child("Review label suggestions. Tab: next field · Ctrl+A: select all · Ctrl+V: paste · Escape: cancel"));
             for (index, label) in [
                 "Project directory (absolute path)",
                 "Compose files (one per line, in override order)",
@@ -1546,66 +1605,48 @@ impl FerryDock {
             .into_iter()
             .enumerate()
             {
+                let input = if index == 0 {
+                    Input::new(&form.directory)
+                        .small()
+                        .disabled(form.saving)
+                        .aria_label(label)
+                        .into_any_element()
+                } else {
+                    Textarea::new(&form.lists[index - 1])
+                        .small()
+                        .disabled(form.saving)
+                        .aria_label(label)
+                        .into_any_element()
+                };
                 fields = fields.child(div().text_size(px(12.0)).child(label)).child(
                     div()
                         .id(SharedString::from(format!("compose-field-{index}")))
+                        .test_support()
                         .debug_selector(move || format!("compose-field-{index}"))
-                        .border_1()
-                        .border_color(rgb(if form.active == index { ACCENT } else { BORDER }))
-                        .rounded_md()
-                        .px_3()
-                        .py_2()
                         .text_size(px(12.0))
                         .font_family("DejaVu Sans Mono")
-                        .cursor(CursorStyle::IBeam)
-                        .child(format!(
-                            "{}{}",
-                            form.fields[index],
-                            if form.active == index { "▏" } else { "" }
-                        ))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if let Some(form) = &mut this.compose_form {
-                                form.active = index;
-                            }
-                            this.compose_focus.focus(window, cx);
-                            cx.notify();
-                        })),
+                        .child(input),
                 );
             }
-            return pane.child(fields);
+            return pane.child(fields.focus_trap("compose-fields", &self.compose_focus));
         }
         pane = pane.child(
-            div()
-                .flex()
-                .gap_2()
-                .px_4()
-                .py_2()
-                .border_b_1()
-                .border_color(rgb(BORDER))
-                .child(
-                    Self::button(
-                        "project-tab-logs",
-                        "Logs",
-                        self.project_tab == ProjectTab::Logs,
-                        false,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.project_tab = ProjectTab::Logs;
-                        cx.notify();
-                    })),
-                )
-                .child(
-                    Self::button(
-                        "project-tab-operations",
-                        "Operations",
-                        self.project_tab == ProjectTab::Operations,
-                        false,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.project_tab = ProjectTab::Operations;
-                        cx.notify();
-                    })),
-                ),
+            TabBar::new("project-tabs")
+                .small()
+                .segmented()
+                .selected_index(usize::from(self.project_tab == ProjectTab::Operations))
+                .children([
+                    KitTab::new().label("Logs"),
+                    KitTab::new().label("Operations"),
+                ])
+                .on_click(cx.listener(|this, index: &usize, _, cx| {
+                    this.project_tab = if *index == 0 {
+                        ProjectTab::Logs
+                    } else {
+                        ProjectTab::Operations
+                    };
+                    cx.notify();
+                })),
         );
         if self.project_tab == ProjectTab::Logs {
             return pane.child(self.project_logs_view(name, cx));
@@ -1662,6 +1703,8 @@ impl FerryDock {
                             div()
                                 .h(px(18.0))
                                 .whitespace_nowrap()
+                                .id(SharedString::from(format!("compose-log-line-{index}")))
+                                .test_support()
                                 .debug_selector(move || format!("compose-log-line-{index}"))
                                 .child(text)
                         })
@@ -1732,11 +1775,11 @@ impl FerryDock {
             )
             .child(
                 Self::button("project-log-copy", "Copy logs", false, false).on_click(cx.listener(
-                    |this, _, _, cx| {
+                    |this, _, window, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(
                             this.project_logs.text(this.project_service.as_deref()),
                         ));
-                        this.message = Some(("Retained project logs copied".into(), false));
+                        Self::notify("Retained project logs copied", false, window, cx);
                         cx.notify();
                     },
                 )),
@@ -1833,13 +1876,17 @@ impl FerryDock {
                                 .h(px(18.0))
                                 .whitespace_nowrap()
                                 .text_color(rgb(if line.error { ERROR } else { TEXT }))
+                                .id(SharedString::from(format!("project-log-line-{index}")))
+                                .test_support()
                                 .debug_selector(move || format!("project-log-line-{index}"))
                                 .child(line.render(if line.error { ERROR } else { TEXT }))
+                                .into_any_element()
                         } else {
                             div()
                                 .h(px(18.0))
                                 .text_color(rgb(MUTED))
                                 .child("Waiting for log output from this project's services…")
+                                .into_any_element()
                         }
                     })
                     .collect::<Vec<_>>()
@@ -1874,7 +1921,7 @@ impl FerryDock {
 }
 
 impl Render for FerryDock {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let running = self
             .containers
             .iter()
@@ -1891,8 +1938,6 @@ impl Render for FerryDock {
             .as_ref()
             .map(|connection| connection.endpoint.clone())
             .unwrap_or_default();
-        let height = f32::from(window.viewport_size().height);
-        self.dock_height = self.dock_height.min((height - 220.0).max(200.0));
         let mut sidebar = div()
             .w(px(155.0))
             .flex_shrink_0()
@@ -1961,7 +2006,7 @@ impl Render for FerryDock {
             );
         let search = div()
             .id("search")
-            .track_focus(&self.search_focus)
+            .test_support()
             .border_1()
             .border_color(rgb(BORDER))
             .rounded_md()
@@ -1969,15 +2014,8 @@ impl Render for FerryDock {
             .py_1()
             .w(px(240.0))
             .text_size(px(12.0))
-            .text_color(rgb(if self.filter.is_empty() { MUTED } else { TEXT }))
-            .cursor(CursorStyle::IBeam)
-            .on_click(cx.listener(|this, _, window, cx| this.search_focus.focus(window, cx)))
-            .on_key_down(cx.listener(Self::search_key))
-            .child(if self.filter.is_empty() {
-                "Search containers…  Ctrl+F".into()
-            } else {
-                format!("{}▏", self.filter)
-            });
+            .capture_key_down(cx.listener(Self::search_key))
+            .child(Input::new(&self.search_input).small().appearance(false));
         let mut main = div().flex_1().min_w_0().h_full().flex().flex_col().child(
             div()
                 .flex()
@@ -2018,27 +2056,33 @@ impl Render for FerryDock {
                     .child(format!("{error} · retrying every 5 seconds")),
             );
         }
-        if let Some((message, error)) = &self.message {
-            main =
-                main.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .px_4()
-                        .py_2()
-                        .text_size(px(12.0))
-                        .text_color(rgb(if *error { ERROR } else { ACCENT }))
-                        .child(div().flex_1().child(message.clone()))
-                        .child(Self::button("dismiss", "Dismiss", false, false).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.message = None;
-                                cx.notify();
-                            }),
-                        )),
-                );
-        }
-        main = main.child(self.resources(cx)).child(self.detail(cx));
+        main = main.child(
+            v_resizable("workspace-split")
+                .with_state(&self.dock)
+                .child(
+                    resizable_panel().size_range(px(80.0)..Pixels::MAX).child(
+                        div()
+                            .id("containers-pane")
+                            .test_support()
+                            .debug_selector(|| "containers-pane".to_string())
+                            .size_full()
+                            .flex()
+                            .flex_col()
+                            .child(self.resources(cx)),
+                    ),
+                )
+                .child(
+                    resizable_panel()
+                        .size(px(340.0))
+                        .size_range(px(200.0)..Pixels::MAX)
+                        .child(
+                            self.detail(cx)
+                                .id("detail-pane")
+                                .test_support()
+                                .debug_selector(|| "detail-pane".to_string()),
+                        ),
+                ),
+        );
         div()
             .size_full()
             .flex()
@@ -2049,20 +2093,6 @@ impl Render for FerryDock {
             .text_size(px(14.0))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::root_key))
-            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
-                if let Some((origin, height)) = this.resize_origin {
-                    this.dock_height = (height + origin - f32::from(event.position.y))
-                        .clamp(200.0, (height + 400.0).max(200.0));
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.resize_origin = None;
-                    cx.notify();
-                }),
-            )
             .child(header)
             .child(div().flex_1().min_h_0().flex().child(sidebar).child(main))
             .child(

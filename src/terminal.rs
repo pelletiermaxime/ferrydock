@@ -430,16 +430,15 @@ impl Render for TerminalView {
                             let sample = TextRun {
                                 len: 1,
                                 font: font.clone(),
-                                color: rgb_to_hsla(rgb(FOREGROUND)),
+                                color: rgb(FOREGROUND).into(),
                                 background_color: None,
                                 underline: None,
                                 strikethrough: None,
-                                letter_spacing: None,
                             };
                             this.cell_width = f32::from(
                                 window
                                     .text_system()
-                                    .shape_line("M".into(), px(FONT_SIZE), &[sample])
+                                    .shape_line("M".into(), px(FONT_SIZE), &[sample], None)
                                     .width,
                             );
                             let columns = ((f32::from(bounds.size.width) - 2.0 * PADDING)
@@ -521,17 +520,16 @@ impl Render for TerminalView {
                                 runs[row as usize].push(TextRun {
                                     len: value.len(),
                                     font: cell_font,
-                                    color: rgb_to_hsla(rgb(foreground)),
+                                    color: rgb(foreground).into(),
                                     background_color: None,
                                     underline: cell.flags.contains(Flags::UNDERLINE).then_some(
                                         UnderlineStyle {
-                                            color: Some(rgb_to_hsla(rgb(foreground))),
+                                            color: Some(rgb(foreground).into()),
                                             thickness: px(1.0),
                                             wavy: false,
                                         },
                                     ),
                                     strikethrough: None,
-                                    letter_spacing: None,
                                 });
                                 text[row as usize].push_str(&value);
                             }
@@ -550,6 +548,7 @@ impl Render for TerminalView {
                                             text.into(),
                                             px(FONT_SIZE),
                                             &runs,
+                                            None,
                                         ),
                                     )
                                 })
