@@ -88,14 +88,32 @@ impl StyledLine {
 
     /// Render against the actual surface, including inverse/hidden ANSI text.
     pub fn render_on(&self, prefix: &str, fallback: u32, background: u32) -> StyledText {
+        self.render_with_source_on(prefix, fallback, fallback, background)
+    }
+
+    /// Color source metadata independently of any styles in the log payload.
+    pub fn render_with_source_on(
+        &self,
+        prefix: &str,
+        source_color: u32,
+        fallback: u32,
+        background: u32,
+    ) -> StyledText {
         let offset = prefix.len();
-        StyledText::new(format!("{prefix}{}", self.text)).with_highlights(self.spans.iter().map(
-            |(range, style)| {
+        let source = (offset > 0).then_some((
+            0..offset,
+            HighlightStyle {
+                color: Some(rgb(source_color).into()),
+                ..Default::default()
+            },
+        ));
+        StyledText::new(format!("{prefix}{}", self.text)).with_highlights(source.into_iter().chain(
+            self.spans.iter().map(|(range, style)| {
                 (
                     range.start + offset..range.end + offset,
                     style.highlight(fallback, background),
                 )
-            },
+            }),
         ))
     }
 }
@@ -153,7 +171,9 @@ impl Row {
 
     fn snapshot(&self) -> StyledLine {
         let mut line = StyledLine::default();
-        for cell in &self.cells {
+        // Keep the Docker prefix internally for cursor/erase operations, while
+        // displaying and copying only the application's own output.
+        for cell in &self.cells[self.prefix_len..] {
             let start = line.text.len();
             line.text.push(cell.character);
             if cell.style == Style::default() {
@@ -399,7 +419,7 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn with_timestamps() -> Self {
+    pub fn for_docker_logs() -> Self {
         let mut buffer = Self::default();
         buffer.decoder.state.timestamp_prefixes = true;
         buffer
@@ -467,23 +487,36 @@ mod tests {
     }
 
     #[test]
-    fn only_injected_timestamps_are_neutral_not_application_dates() {
+    fn only_injected_timestamps_are_hidden_not_application_dates() {
         let timestamp = "2026-10-12T23:30:00.000000001Z";
-        let mut container = Buffer::with_timestamps();
+        let mut container = Buffer::for_docker_logs();
         container
             .push(format!("\x1b[32mfirst\n{timestamp} {timestamp} application date\n").as_bytes());
-        assert_eq!(container.lines[1].spans[0].0.start, timestamp.len() + 1);
+        assert_eq!(container.lines[1].spans[0].0.start, 0);
+        assert_eq!(
+            container.lines[1].text,
+            format!("{timestamp} application date")
+        );
         let mut operation = Buffer::default();
         operation.push(format!("\x1b[32m{timestamp} application date\n").as_bytes());
         assert_eq!(operation.lines[0].spans[0].0.start, 0);
         let mut project = Decoder::default();
         let line = project.record(&format!("\x1b[32m{timestamp} application date"));
         assert_eq!(line.spans[0].0.start, 0);
-        let mut progress = Buffer::with_timestamps();
+        let mut progress = Buffer::for_docker_logs();
         progress.push(format!("{timestamp} \x1b[32mbuilding 10%").as_bytes());
         progress.push(b"\r\x1b[2Kdone\x1b[0m\n");
-        assert_eq!(progress.text(), format!("{timestamp} done"));
-        assert_eq!(progress.lines[0].spans[0].0.start, timestamp.len() + 1);
+        assert_eq!(progress.text(), "done");
+        assert_eq!(progress.lines[0].spans[0].0.start, 0);
+    }
+
+    #[test]
+    fn docker_timestamp_and_utf8_can_be_split_across_chunks() {
+        let mut buffer = Buffer::for_docker_logs();
+        buffer.push(b"2026-10-12T23:");
+        buffer.push(b"30:00.000000001Z 2026-10-12 23:30:00 caf\xc3");
+        buffer.push(b"\xa9\n2026-10-12T23:30:01Z plain message\n");
+        assert_eq!(buffer.text(), "2026-10-12 23:30:00 café\nplain message");
     }
 
     #[test]

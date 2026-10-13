@@ -12,8 +12,8 @@ the terminal, and container details close at hand.
 
 - **Find containers quickly.** Browse Compose projects and standalone containers,
   search by name, image, service, or project, and switch between running and all
-  containers.
-- **Follow live logs.** Read timestamped output with ANSI colours and styles, pause automatic scrolling, copy
+  containers. A small colour marker beside each name matches its label in project logs.
+- **Follow live logs.** Read output with ANSI colours and styles, pause automatic scrolling, copy
   logs, and reconnect the stream. Combine a Compose project's service logs in
   one view and filter them by service.
 - **Open a terminal inside a container.** Use Bash or sh with colors, scrollback,
@@ -49,12 +49,12 @@ Download a package from [GitHub Releases](https://github.com/pelletiermaxime/fer
 The release is for **Linux x86-64**, built on Ubuntu 24.04; it requires
 glibc 2.39 or newer.
 
-The examples below use `0.4.1`; replace it with the version you downloaded.
+The examples below use `0.5.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.4.1_amd64.deb
+sudo apt install ./ferrydock_0.5.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -62,11 +62,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.4.1-linux-x86_64.AppImage`:
+`ferrydock-0.5.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.4.1-linux-x86_64.AppImage
-./ferrydock-0.4.1-linux-x86_64.AppImage
+chmod +x ferrydock-0.5.0-linux-x86_64.AppImage
+./ferrydock-0.5.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -75,7 +75,7 @@ Wayland libraries and Vulkan/EGL graphics driver stack, and Docker. If FUSE
 mounting is unavailable, run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.4.1-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.5.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify all three downloads.
 
@@ -117,14 +117,19 @@ Enter files in override order, one per line, and include the environment files
 and profiles you normally use. Save the association to enable **Start**, **Stop**,
 and **Restart**. **Configuration** lets you edit it later.
 
-The project's **Logs** tab combines output from all its containers, with
-timestamps and a service/container prefix on each line. Use the searchable service picker to choose **All services** or
+The project's **Logs** tab combines output from all its containers, with a coloured
+service/container prefix on each line that matches the container's list marker.
+Use the searchable service picker to choose **All services** or
 one service, pause/resume following, and copy the
 filtered retained output. Logs work directly from Docker labels without a file
 association. The view picks up restarted or recreated services automatically.
 **Operations** keeps Start/Stop/Restart output separate from application logs.
-Colours remain scoped to each container. Copied logs contain readable text
-with their source labels and timestamps, without ANSI escape sequences.
+Source colours stay stable during the session, including after filtering or
+recreating a container with the same name, and adapt to light and dark themes.
+The twelve-colour palette cycles for larger lists. Application ANSI styles remain
+scoped to each container. Displayed and copied logs preserve application-written
+dates and omit Docker's additional timestamp prefix. Copied project logs keep
+their source labels without ANSI escape sequences.
 
 Start creates or starts project services without building images. Stop and
 Restart operate on the configured project's services. The dock streams Compose
@@ -209,8 +214,7 @@ when only `DISPLAY` is set. macOS and Windows support are planned.
 
 FerryDock is built with Rust and GPUI Kit. See the
 [development guide](docs/development.md) for architecture, build instructions,
-checks, and releases, and the [verification summary](VERIFICATION.md) for
-recorded evidence and coverage limits.
+checks, verification coverage, and releases.
 
 ## License
 

@@ -15,7 +15,7 @@ SPEC.loader.exec_module(VERIFIER)
 
 class VerificationCleanupTests(unittest.TestCase):
     def finish_run(self, app, kill_error=None, child_exists=False, fixture_error=None,
-                   remaining='', log_error=None):
+                   remaining='', log_error=None, desktop=None):
         run = Mock(side_effect=fixture_error if fixture_error else [
             SimpleNamespace(stdout='', stderr=''),
             SimpleNamespace(stdout=remaining, stderr=''),
@@ -35,7 +35,7 @@ class VerificationCleanupTests(unittest.TestCase):
                     app=app, child_pid=12345, app_log=app_log, run=run,
                     compose=['docker', 'compose', '--project-name', 'owned'],
                     endpoint='unix:///test.sock', project='owned',
-                    evidence=evidence, lock=lock, result=result,
+                    evidence=evidence, lock=lock, result=result, desktop=desktop,
                 )
             saved = json.loads((evidence / 'result.json').read_text())
         self.assertEqual(run.call_args_list[0].args[0][-3:],
@@ -99,6 +99,63 @@ class VerificationCleanupTests(unittest.TestCase):
         self.assertTrue(saved['cleanup_success'])
         self.assertEqual(saved['process_cleanup_error'], 'cannot close log')
         self.assertEqual(saved['status'], 'failed')
+
+    def test_input_shutdown_failure_still_cleans_fixture_and_writes_report(self):
+        desktop = Mock()
+        desktop.close.side_effect = RuntimeError('cannot stop owned input daemon')
+        saved = self.finish_run(self.debugger(), desktop=desktop)
+        desktop.close.assert_called_once()
+        self.assertTrue(saved['owned_process_exited'])
+        self.assertTrue(saved['cleanup_success'])
+        self.assertEqual(saved['status'], 'failed')
+        self.assertEqual(saved['input_cleanup_error'], 'cannot stop owned input daemon')
+
+
+class NativeDesktopTests(unittest.TestCase):
+    def test_wayland_session_does_not_keep_x11_fallback(self):
+        env = {'WAYLAND_DISPLAY': 'wayland-0', 'XDG_RUNTIME_DIR': '/run/user/1000',
+               'DISPLAY': ':0'}
+        backend, child = VERIFIER.desktop_environment('auto', ':0', env)
+        self.assertEqual(backend, 'wayland')
+        self.assertNotIn('DISPLAY', child)
+        self.assertEqual(env['DISPLAY'], ':0')
+        backend, child = VERIFIER.desktop_environment('x11', ':0', env)
+        self.assertEqual(backend, 'x11')
+        self.assertNotIn('WAYLAND_DISPLAY', child)
+        with self.assertRaisesRegex(RuntimeError, 'Wayland requires'):
+            VERIFIER.desktop_environment('wayland', ':0', {'DISPLAY': ':0'})
+
+    def desktop(self, directory):
+        desktop = VERIFIER.NativeDesktop('wayland', {}, Path(directory), Path('/test/binary'))
+        desktop.pid, desktop.window = 12345, '{owned-window}'
+        desktop.alive = Mock()
+        return desktop
+
+    def test_focus_or_owner_change_refuses_virtual_keyboard_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for active, owner in [('{other-window}', '12345'), ('{owned-window}', '99999')]:
+                with self.subTest(active=active, owner=owner):
+                    desktop = self.desktop(directory)
+                    desktop.run = Mock(side_effect=[SimpleNamespace(stdout=active), SimpleNamespace(stdout=owner)])
+                    with self.assertRaisesRegex(AssertionError, 'refuse input'):
+                        desktop.type('fixture-only-search')
+                    self.assertEqual(desktop.run.call_count, 2)
+                    self.assertFalse(any(call.args[0][0] == 'ydotool' for call in desktop.run.call_args_list))
+
+    def test_empty_wayland_discovery_waits_for_owned_surface(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = self.desktop(directory)
+            desktop.window = None
+            desktop.run = Mock(side_effect=[
+                SimpleNamespace(returncode=0, stdout=''),
+                SimpleNamespace(returncode=0, stdout='{owned-window}\n'),
+                SimpleNamespace(returncode=0, stdout=''),
+            ])
+            with patch.object(VERIFIER.time, 'sleep'):
+                desktop.attach(Mock(), 12345)
+            self.assertEqual(desktop.window, '{owned-window}')
+            self.assertEqual(desktop.run.call_args_list[-1].args[0],
+                             ['kdotool', 'windowactivate', '{owned-window}'])
 
 
 if __name__ == '__main__':

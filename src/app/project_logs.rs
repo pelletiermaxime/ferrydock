@@ -231,7 +231,8 @@ impl FerryDock {
                                 .id(SharedString::from(format!("project-log-line-{index}")))
                                 .test_support()
                                 .debug_selector(move || format!("project-log-line-{index}"))
-                                .child(line.render_on(
+                                .child(line.render_source_on(
+                                    this.containers.source_colors.color(&line.name, colors.logs),
                                     if line.error {
                                         colors.error
                                     } else {

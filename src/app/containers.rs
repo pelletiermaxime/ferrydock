@@ -21,6 +21,7 @@ use gpui_kit::component::{menu::DropdownMenu, toolbar::Toolbar};
 use std::collections::HashMap;
 
 pub(super) struct Containers {
+    pub(super) source_colors: crate::source_colors::SourceColors,
     pub(super) items: Vec<Container>,
     pub(super) selected: Option<String>,
     pub(super) inspection: Entity<EditorState>,
@@ -39,6 +40,7 @@ impl Containers {
         inspection: Entity<EditorState>,
     ) -> Self {
         Self {
+            source_colors: Default::default(),
             items: Vec::new(),
             selected: None,
             inspection,
@@ -82,7 +84,7 @@ impl FerryDock {
         }
         self.containers.selected = Some(id.clone());
         self.container_logs.generation += 1;
-        self.container_logs.buffer = StyledLogBuffer::with_timestamps();
+        self.container_logs.buffer = StyledLogBuffer::for_docker_logs();
         self.container_logs.scroll = UniformListScrollHandle::default();
         self.containers.inspection.update(cx, |editor, cx| {
             editor.set_value("Loading container configuration…", window, cx)

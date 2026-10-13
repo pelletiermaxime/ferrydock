@@ -52,6 +52,16 @@ impl Record {
     pub fn render_on(&self, fallback: u32, background: u32) -> gpui::StyledText {
         self.styled.render_on(&self.prefix, fallback, background)
     }
+
+    pub fn render_source_on(
+        &self,
+        source_color: u32,
+        fallback: u32,
+        background: u32,
+    ) -> gpui::StyledText {
+        self.styled
+            .render_with_source_on(&self.prefix, source_color, fallback, background)
+    }
 }
 
 #[derive(Default)]
@@ -62,7 +72,7 @@ pub struct History {
 }
 impl History {
     pub fn push(&mut self, mut line: Line) {
-        let (timestamp, body) = crate::ansi::split_timestamp(&line.text);
+        let (_, body) = crate::ansi::split_timestamp(&line.text);
         let styled = if line.error {
             Decoder::default().record(body)
         } else {
@@ -71,8 +81,8 @@ impl History {
                 .or_default()
                 .record(body)
         };
-        let prefix = format!("[{} / {}] {timestamp}", line.service, line.name);
-        line.text = format!("{timestamp}{}", styled.text);
+        let prefix = format!("[{} / {}] ", line.service, line.name);
+        line.text = styled.text.clone();
         *self.services.entry(line.service.clone()).or_default() += 1;
         self.lines.push_back(Record {
             line,
@@ -261,7 +271,7 @@ pub async fn follow(
             })
             .count();
         let status = format!(
-            "{} project containers · {active} live streams · timestamps · up to 1,500 lines · merged as received",
+            "{} project containers · {active} live streams · up to 1,500 lines · merged as received",
             members.len()
         );
         if status != last_status {
@@ -439,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn ansi_state_is_per_container_and_copy_keeps_neutral_metadata() {
+    fn ansi_state_is_per_container_and_copy_omits_docker_timestamp() {
         let mut history = History::default();
         let line = |id: &str, text: &str| Line {
             container: id.into(),
@@ -459,12 +469,19 @@ mod tests {
         assert_eq!(history.lines[2].styled.spans[0].0, 0..11);
         let copy = history.text(None);
         assert!(!copy.contains('\x1b'));
-        assert!(copy.contains("[replica / a] 2026-10-12T23:30:00.000000001Z green"));
+        assert!(copy.contains("[replica / a] green"));
+        assert!(!copy.contains("2026-10-12T23:30:00.000000001Z"));
         history.push(Line {
             error: true,
             ..line("a", "Logs unavailable")
         });
         assert!(history.lines[3].styled.spans.is_empty());
+        history.push(line("b", "2026-10-12T23:30:00Z application date"));
+        assert!(
+            history
+                .text(None)
+                .contains("[replica / b] 2026-10-12T23:30:00Z application date")
+        );
         for _ in 0..1500 {
             history.push(line("b", "retained"));
         }

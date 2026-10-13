@@ -3,6 +3,7 @@ use super::FerryDock;
 use super::ui::{empty_state, palette};
 use crate::model::{Container, GroupKey, groups};
 use gpui::{prelude::*, *};
+use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{
     Sizable, empty::EmptyContent, list::ListItem, menu::ContextMenuExt, spinner::Spinner, tag::Tag,
 };
@@ -241,6 +242,26 @@ impl FerryDock {
                                         .flex()
                                         .items_center()
                                         .gap_3()
+                                        .child(
+                                            div()
+                                                .id(SharedString::from(format!(
+                                                    "source-color-{}",
+                                                    container.id
+                                                )))
+                                                .test_support()
+                                                .debug_selector({
+                                                    let id = container.id.clone();
+                                                    move || format!("source-color-{id}")
+                                                })
+                                                .w(px(4.0))
+                                                .h(px(28.0))
+                                                .flex_shrink_0()
+                                                .rounded_full()
+                                                .bg(rgb(this
+                                                    .containers
+                                                    .source_colors
+                                                    .color(&container.name, colors.logs))),
+                                        )
                                         .child(
                                             div()
                                                 .flex_1()

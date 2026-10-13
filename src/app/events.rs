@@ -25,6 +25,7 @@ impl FerryDock {
                     && self.projects.selected.is_some() =>
             {
                 for line in lines {
+                    self.containers.source_colors.register(&line.name);
                     self.project_logs.history.push(line);
                 }
                 if self.project_logs.follow {
@@ -35,6 +36,7 @@ impl FerryDock {
                 if generation == self.project_logs.generation
                     && self.projects.selected.is_some() =>
             {
+                self.containers.source_colors.register(&line.name);
                 self.project_logs.history.push(line);
                 if self.project_logs.follow {
                     self.project_logs.scroll.scroll_to_bottom();
@@ -160,6 +162,16 @@ impl FerryDock {
                 }
             }
             Event::Snapshot(containers) => {
+                // Discovery order is stable on the first snapshot; later additions
+                // never change existing colors, even when Docker IDs are replaced.
+                let mut names = containers
+                    .iter()
+                    .map(|container| container.name.as_str())
+                    .collect::<Vec<_>>();
+                names.sort_unstable();
+                for name in names {
+                    self.containers.source_colors.register(name);
+                }
                 let before = self
                     .selected_container()
                     .map(|container| container.state.clone());
@@ -180,7 +192,7 @@ impl FerryDock {
                     self.backend.send(Command::CloseLogs);
                     self.backend.send(Command::CloseTerminal);
                     self.terminal.view = None;
-                    self.container_logs.buffer = StyledLogBuffer::with_timestamps();
+                    self.container_logs.buffer = StyledLogBuffer::for_docker_logs();
                     self.containers
                         .inspection
                         .update(cx, |editor, cx| editor.set_value("", window, cx));
@@ -206,7 +218,7 @@ impl FerryDock {
                             && (after.as_deref() == Some("running") || self.container_logs.reopen)
                         {
                             self.container_logs.generation += 1;
-                            self.container_logs.buffer = StyledLogBuffer::with_timestamps();
+                            self.container_logs.buffer = StyledLogBuffer::for_docker_logs();
                             self.backend.send(Command::Logs {
                                 id: id.clone(),
                                 generation: self.container_logs.generation,
@@ -233,8 +245,7 @@ impl FerryDock {
             }
             Event::Log { generation, data } if generation == self.container_logs.generation => {
                 self.container_logs.buffer.push(&data);
-                self.container_logs.status =
-                    "Live · timestamps enabled · up to 1,500 lines retained".into();
+                self.container_logs.status = "Live · up to 1,500 lines retained".into();
                 if self.container_logs.follow {
                     self.container_logs.scroll.scroll_to_bottom();
                 }

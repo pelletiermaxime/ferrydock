@@ -154,7 +154,7 @@ UI behavior; real operations require the separate integration checks:
 | --- | --- |
 | `bash scripts/verify-docker.sh` | Real discovery/logs, Start/Stop/Restart, interactive shell I/O, PTY resize, ANSI parsing, full-screen vi, shell exit, missing Bash |
 | `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, streamed failures, restart/recreation log recovery, bounded batches |
-| `python3 scripts/verify-log-performance.py --display :0` | Owned X11/XWayland window and ten disposable containers; CPU/RSS and search under live log load |
+| `python3 scripts/verify-log-performance.py` | Owned native window (Wayland preferred) and ten disposable containers; CPU/RSS and search under live log load |
 
 Docker checks create unique Compose fixtures on the existing daemon and remove
 only their containers and networks. They may pull `alpine:3.23`; the image cache
@@ -167,6 +167,20 @@ performance. `--ansi` emits coloured UTF-8 records; `--profile` captures UI-thre
 stacks through GDB. The helper takes desktop focus and must not overlap another
 native-input run. Measurements depend on host, build profile, and workload;
 capture/OCR overhead is reported separately.
+
+The default `--backend auto` selects native Wayland when `WAYLAND_DISPLAY` is
+set, otherwise X11. Use `--backend wayland` to require Wayland, or
+`--backend x11 --display :0` for an explicit XWayland comparison. A missing
+Wayland prerequisite fails the run instead of silently switching backends.
+The demonstrated Wayland adapter requires KDE/KWin, `kdotool`, `qdbus6`,
+Spectacle, `ydotool`, `ydotoold`, and access to `/dev/uinput`; other compositors
+need a separate adapter. It starts its own temporary keyboard daemon/socket,
+checks window PID and focus before input/capture, and removes those resources
+along with its application and Docker fixture. It does not change system input
+permissions. X11 uses `xdotool` and ImageMagick. Both backends use Tesseract.
+The result records the actual backend, child display environment, input/capture
+methods, and input cleanup. Search timings include backend-specific automation
+overhead, so compare CPU/RSS separately from input/capture timings.
 
 For desktop feature checks, use the project-local
 [verify-ferrydock skill](../.agents/skills/verify-ferrydock/SKILL.md) and its
@@ -181,8 +195,17 @@ python3 .agents/skills/verify-ferrydock/scripts/native.py run --feature terminal
 The helper owns its application window and disposable fixture, verifies
 selection before input, and performs scoped cleanup. It requires an accessible
 X11 display, `xdotool`, ImageMagick, Tesseract, and Python with Pillow. Use the
-actual display on your workstation. See [VERIFICATION.md](../VERIFICATION.md)
-for recorded results and the native paths still awaiting proof.
+actual display on your workstation. See the
+[verification feature map](../.agents/skills/verify-ferrydock/features/README.md)
+for entry points and the coverage boundaries of each flow.
+
+Headless checks establish GPUI input and GPU rendering using fixture worker
+events. Docker and Compose integration checks establish daemon/CLI behavior
+separately. Neither proves native desktop input or operating-system clipboard
+behavior. The native log-load helper covers log reading and search on its
+supported backend; service-filter/pause clicks and clipboard behavior need
+separate native proof. A scripted helper or CI definition alone is not evidence
+that a flow passed. Report the actual checks exercised for each change.
 
 Headless evidence lives under `.verification/headless/`, Compose results under
 `.verification/compose/`, native feature results under `.verification/ferrydock/`,
@@ -230,14 +253,18 @@ captures rendered UI, and verifies keyboard search input through OCR. The
 AppImage check has no Docker socket and does not prove Docker operations,
 native Wayland, FUSE mounting, or hardware GPU compatibility. Its screenshots,
 logs, and result are retained in the `appimage-proof` workflow artifact.
-Native UI coverage is recorded in [VERIFICATION.md](../VERIFICATION.md).
+See the [verification feature map](../.agents/skills/verify-ferrydock/features/README.md)
+for native UI entry points and coverage boundaries. Keep individual run reports
+with their ignored `.verification/` evidence; a local consolidated report may
+be kept at `.verification/VERIFICATION.md`. Include relevant validation results
+in PR descriptions and retain CI evidence as workflow artifacts.
 
 For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag -a v0.4.1 -m "FerryDock 0.4.1"
-git push --atomic origin main v0.4.1
+git tag -a v0.5.0 -m "FerryDock 0.5.0"
+git push --atomic origin main v0.5.0
 ```
 
 Replace the example version with the version being released. The tag must match
@@ -249,7 +276,7 @@ To package a locally built release on an Ubuntu 24.04 x86-64 host, install
 build the binary and run:
 
 ```sh
-bash scripts/package-linux.sh v0.4.1
+bash scripts/package-linux.sh v0.5.0
 ```
 
 Output goes to `target/packages/`. Local builds on newer distributions may

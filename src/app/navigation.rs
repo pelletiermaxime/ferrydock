@@ -15,7 +15,7 @@ impl FerryDock {
                 self.project_logs.generation += 1;
                 if let Some(id) = &self.containers.selected {
                     self.container_logs.generation += 1;
-                    self.container_logs.buffer = StyledLogBuffer::with_timestamps();
+                    self.container_logs.buffer = StyledLogBuffer::for_docker_logs();
                     self.backend.send(Command::Logs {
                         id: id.clone(),
                         generation: self.container_logs.generation,

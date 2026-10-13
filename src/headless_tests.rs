@@ -463,12 +463,19 @@ fn headless_gpu_user_flow() {
     });
     let initial = h.capture("containers-and-logs");
     h.require_glyph_color(&initial, "container-log-line-0", crate::ansi::PALETTE[2]);
-    h.require_glyph_color(&initial, "container-log-line-0", TEXT);
+    assert_eq!(
+        h.observe(|v| v.container_logs.buffer.lines[0].text.clone()),
+        "HEADLESS GPU FIXTURE READY"
+    );
+    let probe_color = h.observe(|v| {
+        v.containers
+            .source_colors
+            .color("headless-fixture-probe-1", 0x171d21)
+    });
+    h.require_glyph_color(&initial, "source-color-fixture-probe-running", probe_color);
     h.require_glyph_color(&initial, "container-log-line-1", TEXT);
     h.require_glyph_color(&initial, "container-log-line-2", crate::ansi::PALETTE[2]);
-    assert!(h.observe(
-        |v| v.container_logs.buffer.lines[2].text == "2026-10-12T23:30:00.000000003Z done"
-    ));
+    assert!(h.observe(|v| v.container_logs.buffer.lines[2].text == "done"));
     assert!(
         !h.observe(|v| v.container_logs.buffer.text())
             .contains('\x1b')
@@ -513,6 +520,16 @@ fn headless_gpu_user_flow() {
     h.capture("settings-light");
     h.click("settings");
     let light = h.capture("containers-light");
+    let light_source_color = h.observe(|v| {
+        v.containers
+            .source_colors
+            .color("headless-fixture-probe-1", light_colors.logs)
+    });
+    h.require_glyph_color(
+        &light,
+        "source-color-fixture-probe-running",
+        light_source_color,
+    );
     h.require_glyph_color(&light, "container-log-line-1", light_colors.text);
     h.require_glyph_color(
         &light,
@@ -1100,7 +1117,7 @@ fn headless_gpu_user_flow() {
     }
     h.deliver(Event::ProjectLogsStatus {
         generation,
-        status: "3 project containers · 2 live streams · timestamps · merged as received".into(),
+        status: "3 project containers · 2 live streams · merged as received".into(),
     });
     h.click("project-more");
     h.capture("project-action-menu");
@@ -1113,12 +1130,57 @@ fn headless_gpu_user_flow() {
         "project-log-line-0",
         crate::ansi::PALETTE[2],
     );
-    h.require_glyph_color(&project_image, "project-log-line-0", TEXT);
+    let worker_color = h.observe(|v| {
+        v.containers
+            .source_colors
+            .color("headless-fixture-worker-1", 0x101819)
+    });
+    assert_ne!(probe_color, worker_color);
+    h.require_glyph_color(&project_image, "project-log-line-0", probe_color);
+    h.require_glyph_color(&project_image, "project-log-line-1", worker_color);
+    h.require_glyph_color(
+        &project_image,
+        "source-color-fixture-probe-running",
+        probe_color,
+    );
+    h.require_glyph_color(&project_image, "source-color-fixture-worker", worker_color);
     h.require_glyph_color(&project_image, "project-log-line-1", TEXT);
     assert!(
         !h.observe(|v| v.project_logs.history.text(None))
             .contains('\x1b')
     );
+    assert!(
+        !h.observe(|v| v.project_logs.history.text(None))
+            .contains(".00000000")
+    );
+    h.click("settings");
+    h.click("theme-light");
+    h.click("settings");
+    let project_light = h.capture("project-logs-light");
+    let light_background =
+        h.cx.update_window(h.window.into(), |_, _, cx| super::ui::palette(cx).logs)
+            .unwrap();
+    let light_probe = h.observe(|v| {
+        v.containers
+            .source_colors
+            .color("headless-fixture-probe-1", light_background)
+    });
+    let light_worker = h.observe(|v| {
+        v.containers
+            .source_colors
+            .color("headless-fixture-worker-1", light_background)
+    });
+    h.require_glyph_color(&project_light, "project-log-line-0", light_probe);
+    h.require_glyph_color(&project_light, "project-log-line-1", light_worker);
+    h.require_glyph_color(
+        &project_light,
+        "source-color-fixture-probe-running",
+        light_probe,
+    );
+    h.require_glyph_color(&project_light, "source-color-fixture-worker", light_worker);
+    h.click("settings");
+    h.click("theme-reset");
+    h.click("settings");
     h.click("project-service-filter");
     h.type_text("probe");
     h.key("enter");
@@ -1142,7 +1204,8 @@ fn headless_gpu_user_flow() {
         1,
         "Copy feedback must use a Kit notification"
     );
-    h.capture("project-logs-filtered");
+    let filtered = h.capture("project-logs-filtered");
+    h.require_glyph_color(&filtered, "project-log-line-0", probe_color);
     h.click_tab("project-tabs", 1);
     assert!(h.observe(|view| view.projects.tab == super::projects::ProjectTab::Operations));
     h.click_tab("project-tabs", 0);
@@ -1173,7 +1236,13 @@ fn headless_gpu_user_flow() {
             .text(None)
             .contains("Worker recreated and live")
     }));
-    h.capture("project-logs-recreated");
+    let recreated = h.capture("project-logs-recreated");
+    h.require_glyph_color(&recreated, "project-log-line-2", worker_color);
+    h.require_glyph_color(
+        &recreated,
+        "source-color-fixture-worker-recreated",
+        worker_color,
+    );
     h.click("row-fixture-probe-running");
     let commands = h.drain_commands();
     assert!(
@@ -1194,10 +1263,10 @@ fn headless_gpu_user_flow() {
     });
     assert_eq!(
         h.observe(|v| v.container_logs.buffer.text()),
-        format!("{timestamp} done"),
-        "Returning from project tabs must preserve injected timestamps across ANSI progress updates"
+        "done",
+        "Returning from project tabs must keep Docker timestamps hidden across ANSI progress updates"
     );
-    h.capture("container-timestamps-after-project-tab");
+    h.capture("container-logs-after-project-tab");
     h.key("ctrl-4");
     h.key("ctrl-1");
     h.drain_commands();
@@ -1548,9 +1617,9 @@ fn headless_gpu_user_flow() {
             "Kit container and project TabBar pointer selection", "Kit Resizable pointer drag and minimum height",
             "Kit Inspect read-only typing guard", "Kit Inspect JSON syntax glyph colors", "Kit Inspect search without replacement",
             "Kit success notification and visible close control", "Kit error notification persists beyond success timeout",
-            "container ANSI glyph colors and split sequences", "project ANSI glyph colors with neutral metadata and plain copy", "Compose ANSI colors and carriage-return progress replacement",
+            "container ANSI glyph colors and split sequences", "matching container markers and distinct project source colors", "source markers readable in Light theme", "project ANSI payload styles and plain copy without Docker timestamps", "Compose ANSI colors and carriage-return progress replacement",
             "log follow pointer toggle", "stop command at Docker boundary", "terminal ANSI rendering", "terminal input routing",
-            "disconnection ignores stale terminal, log and inspection events", "project tab return preserves container timestamps",
+            "disconnection ignores stale terminal, log and inspection events", "project tab return keeps Docker timestamps hidden",
             "Compose association keyboard form", "Kit Compose caret selection and Unicode editing", "Kit Compose undo",
             "Kit Compose pointer focus and Tab Shift-Tab wraparound", "Kit Compose disabled editing while saving", "Kit Compose Escape cancellation",
             "ordered files, environment files and profiles", "unassociated and conflicting actions blocked",

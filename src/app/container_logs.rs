@@ -21,7 +21,7 @@ impl Default for ContainerLogs {
     fn default() -> Self {
         Self {
             generation: 0,
-            buffer: StyledLogBuffer::with_timestamps(),
+            buffer: StyledLogBuffer::for_docker_logs(),
             status: "Select a container to view its logs".into(),
             follow: true,
             scroll: UniformListScrollHandle::default(),
@@ -137,7 +137,7 @@ impl FerryDock {
                                 && this.connection.is_some()
                             {
                                 this.container_logs.generation += 1;
-                                this.container_logs.buffer = StyledLogBuffer::with_timestamps();
+                                this.container_logs.buffer = StyledLogBuffer::for_docker_logs();
                                 this.backend.send(Command::Logs {
                                     id: id.clone(),
                                     generation: this.container_logs.generation,
