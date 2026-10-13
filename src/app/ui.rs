@@ -9,6 +9,11 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::notification::NotificationDelivery;
 
+#[cfg(target_os = "macos")]
+pub(crate) const MONOSPACE_FONT: &str = "Menlo";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const MONOSPACE_FONT: &str = "DejaVu Sans Mono";
+
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
     pub background: u32,

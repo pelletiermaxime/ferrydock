@@ -79,7 +79,7 @@ impl FerryDock {
         .flex_1()
         .min_h_0()
         .p_3()
-        .font_family("DejaVu Sans Mono")
+        .font_family(super::ui::MONOSPACE_FONT)
         .text_size(px(12.0));
         div()
             .flex()

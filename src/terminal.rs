@@ -420,7 +420,7 @@ impl Render for TerminalView {
                     move |bounds, window, cx| {
                         view.update(cx, |this, cx| {
                             this.bounds = bounds;
-                            let font = font("DejaVu Sans Mono");
+                            let font = font(crate::app::ui::MONOSPACE_FONT);
                             let sample = TextRun {
                                 len: 1,
                                 font: font.clone(),

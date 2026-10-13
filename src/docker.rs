@@ -16,7 +16,6 @@ use bollard::{
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use tokio::{
     io::AsyncWriteExt,
-    process::Command as Process,
     sync::{mpsc, watch},
     time,
 };
@@ -241,7 +240,7 @@ impl Drop for Backend {
 async fn context_output(args: &[&str]) -> Result<String> {
     let output = time::timeout(
         Duration::from_secs(8),
-        Process::new("docker")
+        crate::docker_cli::command()
             .args(args)
             .kill_on_drop(true)
             .output(),

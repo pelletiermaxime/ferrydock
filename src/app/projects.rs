@@ -377,7 +377,7 @@ impl FerryDock {
                         .test_support()
                         .debug_selector(move || format!("compose-field-{index}"))
                         .text_size(px(12.0))
-                        .font_family("DejaVu Sans Mono")
+                        .font_family(super::ui::MONOSPACE_FONT)
                         .child(input),
                 );
             }
@@ -473,7 +473,7 @@ impl FerryDock {
             .track_scroll(&operation.output_scroll)
             .flex_1()
             .min_h_0()
-            .font_family("DejaVu Sans Mono")
+            .font_family(super::ui::MONOSPACE_FONT)
             .text_size(px(12.0));
             body = body
                 .child(

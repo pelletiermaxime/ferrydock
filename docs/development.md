@@ -125,6 +125,43 @@ desktop, use `env -u WAYLAND_DISPLAY cargo run --locked`; this override is
 limited to that child process. Backend selection does not retry X11 after a
 Wayland connection failure.
 
+## Build on macOS
+
+The macOS package targets Apple Silicon and macOS 15 or newer. Install Rust
+through rustup and Xcode, select the Xcode developer directory with
+`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`, and complete
+Xcode's first-launch setup. GPUI's native Mac backend needs the Metal compiler
+from Xcode. Use the pinned toolchain and locked dependency graph:
+
+```sh
+MACOSX_DEPLOYMENT_TARGET=15.0 cargo build --release --locked --target aarch64-apple-darwin
+./target/aarch64-apple-darwin/release/ferrydock
+bash scripts/package-macos.sh
+```
+
+Packaging runs on an Apple Silicon Mac and writes
+`target/packages/ferrydock-<version>-macos-arm64.dmg` and `SHA256SUMS`.
+It creates an app bundle, ad hoc signs the app and DMG, verifies signatures,
+then mounts the finished DMG to check its app, architecture, signed binary,
+and install files. Non-system dylib dependencies fail packaging so they cannot
+silently escape the bundle. The package contains an Applications shortcut,
+license, and instructions for approving the unnotarized app's first launch.
+No signing certificate, Apple account, or notarization secrets are required.
+
+`packaging/macos/FerryDock.icns` is generated from the existing Linux SVG icon.
+To regenerate it on Linux with `rsvg-convert` and Python's Pillow installed:
+
+```sh
+rsvg-convert -w 1024 -h 1024 packaging/linux/dev.ferrydock.FerryDock.svg -o /tmp/ferrydock-icon.png
+python3 -c "from PIL import Image; Image.open('/tmp/ferrydock-icon.png').save('packaging/macos/FerryDock.icns', format='ICNS')"
+```
+
+Finder does not inherit a terminal's PATH. Mac Docker context lookup and Compose
+commands append user Docker, Homebrew, and Docker Desktop CLI directories only
+to their child environments, preserving inherited PATH priority. Log and
+terminal views use the system Menlo font on macOS. Existing Control shortcuts
+and settings paths are retained.
+
 ## Verification
 
 Run checks from the repository root:
@@ -228,8 +265,17 @@ Docker and Compose integration fixtures, and the headless UI flow with Mesa's
 software GPU driver. Headless and Compose evidence are retained as workflow
 artifacts for seven days.
 
+The reusable [macOS workflow](../.github/workflows/macos.yml) runs alongside
+Linux CI on the `macos-15` Apple Silicon runner. It runs Clippy and unit tests,
+builds the release binary, and packages/verifies the ad hoc signed DMG. The
+`macos-arm64-packages` artifact is available on successful CI runs. These checks
+do not launch the native Mac UI, connect to Docker Desktop, or exercise
+Gatekeeper approval. The existing headless/native verification helpers are
+Linux-only; their passing results do not prove macOS runtime behavior.
+
 [Release](../.github/workflows/release.yml) runs when a `v*` tag is pushed. It
-reuses the test workflow, then builds Linux x86-64 packages on Ubuntu 24.04:
+reuses the test workflow, including macOS packaging, then builds Linux x86-64
+packages on Ubuntu 24.04:
 
 - A `.tar.gz` archive containing the binary, license, install guide, and desktop
   launcher.
@@ -241,7 +287,10 @@ reuses the test workflow, then builds Linux x86-64 packages on Ubuntu 24.04:
   Vulkan/EGL graphics driver stack remain host requirements. Wayland libraries
   must match the host drivers; an older bundled client library can prevent newer
   Mesa drivers from loading.
-- `SHA256SUMS` for all three packages.
+- The macOS workflow supplies the Apple Silicon `.dmg`.
+- The publish job verifies each platform's checksums and generates one
+  `SHA256SUMS` covering all four downloads. It requires both Linux and macOS
+  checks/packages to succeed before creating the release.
 
 The workflow installs the Debian package and checks both binaries in a clean
 Ubuntu container before publishing the GitHub Release. This startup check

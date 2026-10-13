@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use tokio::{io::AsyncReadExt, process::Command, sync::mpsc};
+use tokio::{io::AsyncReadExt, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{docker::Event, model::Container};
@@ -226,7 +226,7 @@ pub async fn run(
     cancel: CancellationToken,
 ) -> Result<()> {
     let config = config.validated()?;
-    let mut command = Command::new("docker");
+    let mut command = crate::docker_cli::command();
     command
         .args(config.args(&endpoint, action))
         .current_dir(&config.directory)

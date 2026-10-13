@@ -1,6 +1,6 @@
 # FerryDock
 
-A native desktop app for managing your Docker containers on Linux.
+A native desktop app for managing your Docker containers on Linux and macOS.
 
 Find a container, follow its logs, open a shell, and start or stop it from one
 window. FerryDock groups containers by Docker Compose project and keeps logs,
@@ -38,16 +38,28 @@ the terminal, and container details close at hand.
 
 ## Get started
 
-FerryDock is in early development. The current version supports **Linux with
-Wayland or X11/XWayland** and a **local Docker daemon**. You need a working graphics
-driver and permission to access Docker from your user account. FerryDock uses
-your existing Docker installation.
+FerryDock is in early development. Packages target **Linux x86-64 with
+Wayland or X11/XWayland** and **Apple Silicon Macs running macOS 15 or newer**,
+with a **local Docker daemon**. macOS packages are previews pending native
+desktop verification. You need a working graphics driver and access to Docker
+from your user account. FerryDock uses your existing Docker installation.
 
 ### Install
 
 Download a package from [GitHub Releases](https://github.com/pelletiermaxime/ferrydock/releases/latest).
-The release is for **Linux x86-64**, built on Ubuntu 24.04; it requires
-glibc 2.39 or newer.
+macOS packages are included starting with the next release after `0.5.0`.
+
+For **Apple Silicon macOS**, download `ferrydock-<version>-macos-arm64.dmg`,
+open it, and drag **FerryDock.app** into **Applications**. Start Docker Desktop
+or another Docker daemon using a local Unix socket context, then open FerryDock.
+Docker Compose v2 is needed for project controls. Intel Mac packages are not provided.
+
+Mac builds are **ad hoc signed and not notarized**. If macOS blocks the first
+launch, try opening FerryDock, then go to **System Settings → Privacy & Security
+→ Open Anyway** and confirm **Open**. See [Apple's instructions](https://support.apple.com/102445).
+
+The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
+or newer.
 
 The examples below use `0.5.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
@@ -77,18 +89,21 @@ mounting is unavailable, run it with `--appimage-extract-and-run`.
 Alternatively, extract
 `ferrydock-0.5.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
-includes a `SHA256SUMS` file to verify all three downloads.
+includes a `SHA256SUMS` file to verify its downloads. On macOS, use
+`shasum -a 256 <downloaded-file>` and compare the result with its entry in
+`SHA256SUMS`.
 
-To build from source instead, install Rust and the
-[Linux build dependencies](docs/development.md#build-on-linux), then run:
+To build from source instead, install Rust and the dependencies for
+[Linux](docs/development.md#build-on-linux) or
+[macOS](docs/development.md#build-on-macos), then run:
 
 ```sh
 cargo build --release --locked
 ./target/release/ferrydock
 ```
 
-Launch it from a terminal in your desktop session so it can use your display
-and Docker environment.
+On Linux, launch it from a terminal in your desktop session so it can use your
+display and Docker environment.
 
 ### Your first container
 
@@ -172,7 +187,10 @@ scroll with the mouse wheel or **Shift+PageUp / Shift+PageDown**.
 
 FerryDock uses `DOCKER_CONTEXT` if set, then `DOCKER_HOST`, then your active Docker
 CLI context. Local Unix socket connections are supported, including rootless
-Docker contexts. The context and endpoint are displayed in the app.
+Docker and Docker Desktop contexts. The context and endpoint are displayed in the app.
+On macOS, Finder launches also search `~/.docker/bin`, Homebrew's bin directories,
+and Docker Desktop's app bundle for the CLI and its credential helpers. The
+keyboard shortcuts use Control on both platforms.
 
 To launch with a particular local context:
 

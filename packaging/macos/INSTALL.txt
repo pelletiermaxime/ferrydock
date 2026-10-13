@@ -1,0 +1,17 @@
+FerryDock @VERSION@ for Apple Silicon (arm64), macOS @MINIMUM_MACOS@ or newer
+
+Open the DMG and drag FerryDock.app into Applications. Start Docker Desktop
+(or another Docker daemon with a local Unix socket context), then launch
+FerryDock from Applications. Docker Compose v2 is needed for project controls.
+
+This preview build is ad hoc signed, with no Apple Developer ID or notarization.
+macOS may block the first launch. After trying to open FerryDock, go to
+System Settings > Privacy & Security > Open Anyway, then confirm Open.
+See https://support.apple.com/102445 for Apple's instructions.
+
+FerryDock searches your PATH, ~/.docker/bin, Homebrew's bin directories,
+and Docker Desktop's application bundle for Docker. Your existing Docker
+context is used; SSH and TCP/TLS contexts are not supported.
+
+Settings and Compose associations are stored in ~/.config/ferrydock unless
+XDG_CONFIG_HOME is set. The existing keyboard shortcuts use Control.
