@@ -160,26 +160,30 @@ impl LogBuffer {
     pub fn push(&mut self, data: &[u8]) {
         self.utf8.extend_from_slice(data);
         let mut text = String::new();
+        let mut consumed = 0;
         loop {
-            match std::str::from_utf8(&self.utf8) {
+            match std::str::from_utf8(&self.utf8[consumed..]) {
                 Ok(decoded) => {
                     text.push_str(decoded);
-                    self.utf8.clear();
+                    consumed = self.utf8.len();
                     break;
                 }
                 Err(error) => {
                     let valid = error.valid_up_to();
-                    text.push_str(std::str::from_utf8(&self.utf8[..valid]).unwrap());
-                    self.utf8.drain(..valid);
+                    text.push_str(
+                        std::str::from_utf8(&self.utf8[consumed..consumed + valid]).unwrap(),
+                    );
+                    consumed += valid;
                     if let Some(length) = error.error_len() {
                         text.push('�');
-                        self.utf8.drain(..length);
+                        consumed += length;
                     } else {
                         break;
                     }
                 }
             }
         }
+        self.utf8.drain(..consumed);
         // Cap individual lines as well as history, including programs that
         // continuously write without a newline.
         for part in text.split_inclusive('\n') {
@@ -218,6 +222,18 @@ impl LogBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_utf8_recovers_without_losing_a_split_character() {
+        let mut logs = LogBuffer::default();
+        logs.push(b"valid\xff\xfe\xc3(");
+        logs.push(b" caf\xc3");
+        logs.push(b"\xa9\n");
+        assert_eq!(logs.lines[0], "valid���( café");
+        assert!(logs.utf8.is_empty());
+        logs.push(&[vec![0xff; 10_000], b"\n".to_vec()].concat());
+        assert_eq!(logs.lines[1], "�".repeat(10_000));
+    }
 
     #[test]
     fn logs_decode_split_characters_and_bound_history() {

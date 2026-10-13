@@ -23,7 +23,7 @@ For native-window verification, build the shipping configuration before testing 
 cargo build --release --locked
 ```
 
-The Linux desktop needs an accessible X11 display, Docker Engine with a local Unix socket, Docker Compose, `xdotool`, ImageMagick's `magick`, Tesseract with English data, and Python 3 with Pillow. GPUI's system build dependencies are listed in the project README. This workstation was observed on display `:0`; use the actual display on another workstation. The application normally selects native Wayland when available. This X11-specific harness removes `WAYLAND_DISPLAY` only from its child environment so its window ownership and input checks still work; it does not prove native Wayland integration.
+The Linux desktop needs an accessible X11 display, Docker Engine with a local Unix socket, Docker Compose, `xdotool`, ImageMagick's `magick`, Tesseract with English data, and Python 3 with Pillow. GPUI's system build dependencies are listed in [the development guide](../../../docs/development.md#build-on-linux). Commands use `:0` as an example; use your actual display. The application normally selects native Wayland when available. This X11-specific harness removes `WAYLAND_DISPLAY` only from its child environment so its window ownership and input checks still work; it does not prove native Wayland integration.
 
 ```sh
 python3 .agents/skills/verify-ferrydock/scripts/native.py doctor --display :0
@@ -50,6 +50,8 @@ Run `python3 scripts/verify-headless.py` for the mapped development flow. It see
 
 The PNGs are visual evidence and the test checks meaningful image changes; there is no golden-image comparison yet. Clipboard/compositor behavior, other terminal entry points and the full feature inventory remain outside this flow. It can run while the user works on their desktop because it sends no desktop input. A verifier subagent can run this command and return `result.json`, relevant failures from `test.log`, and screenshot paths without editing the app or inventing coverage.
 
+The appearance flow also uses the Kit Settings page, changes FerryDock/Dark/Light through visible controls, resets the default, checks isolated preference persistence, and verifies Light log/terminal glyphs and session/focus preservation. Container/project popup menus and right-click Inspect, the running-only Checkbox, shell RadioGroup disabled state, and searchable service Select are input-driven. See [features/appearance.md](features/appearance.md).
+
 The Kit control flow additionally traverses to a real Button with Tab and activates
 it through Enter/Space, checks loading/disabled action protection, clicks both
 TabBars by their native scoped integer IDs, and drags Resizable using measured
@@ -58,8 +60,6 @@ inside actual editor text bounds, reject editing, and drive the built-in search.
 Notifications are in-app; their close control is revealed by hover. The harness
 commits hover hitboxes before a click and settles both painted animation time and
 the simulated lifecycle clock before asserting dismissal or persistence.
-
-For FerryDock verifier delegation, the user's preferred configuration is `gpt-6-luna` with `high` reasoning effort. Use a fresh bounded verifier agent with these settings; an existing agent created with `low` effort keeps its original setting. Have it run the existing checks and inspect screenshots without editing app code. Report concrete visible defects and distinguish normal scroll viewport clipping from content overlapping another pane. Do not automatically broaden the task into implementation or unrelated verification.
 
 The same headless flow also clicks a project heading, edits the Compose association form through keyboard events, and asserts ordered files, environment files and profiles. It checks disabled unassociated/conflicting controls, outgoing Start/Stop/Restart requests, and live/failure output using fixture events. Inspect all three Compose screenshots when this feature changes. No Compose subprocess is launched by headless tests.
 
@@ -79,7 +79,8 @@ For native desktop integration, choose one mapped flow; each invocation owns a n
 
 The embedded-terminal flow is the exercised baseline. Mouse-dependent flows
 currently stop safely at hover calibration on the observed multi-monitor
-desktop; inspect is source-backed and has not been run. Read [PROOF.md](PROOF.md)
+desktop; Inspect has headless proof but its native helper has not been run. Read
+[the verification summary](../../../VERIFICATION.md)
 before selecting broader coverage. Do not treat these additional commands as
 passing checks until the native display path has been demonstrated.
 
@@ -97,7 +98,7 @@ Keyboard input is targeted at the verified window. Mouse flows locate visible la
 
 ## Evidence
 
-The headless helper prints its unique evidence directory under `.verification/headless/`. It retains `result.json` (engine package/version, lock hash, command, exit status, timing and cleanup), `headless.json` (checks, dimensions, per-frame render/encoding timings), `log-performance.json`, `actions.json`, `test.log`, and twenty-three PNGs. The virtual display currently uses 2x scaling, producing 2360x1640 pixels for a 1180x820 logical view; dimensions are checked against the reported scale. Inspect the initial list, empty-search, Kit Input editing, log scrollbars, resized dock, Inspect JSON/search, notifications, terminal, project Logs and Compose operation frames when reviewing visual changes. Timing includes builds at the outer level; the flow's timing excludes compilation.
+The headless helper prints its unique evidence directory under `.verification/headless/`. It retains `result.json` (engine package/version, lock hash, command, exit status, timing and cleanup), `headless.json` (checks, dimensions, per-frame render/encoding timings), `log-performance.json`, `actions.json`, `test.log`, and all PNGs listed by the flow. The virtual display currently uses 2x scaling, producing 2360x1640 pixels for a 1180x820 logical view; dimensions are checked against the reported scale. Inspect the initial list, empty-search, Kit Input editing, log scrollbars, resized dock, Inspect JSON/search, notifications, terminal, project Logs and Compose operation frames when reviewing visual changes. Timing includes builds at the outer level; the flow's timing excludes compilation.
 
 Real Compose checks retain `result.json`, `test.log`, `launch.log`, `cleanup.log`, and isolated association settings under `.verification/compose/<run>/`. Require the test to pass and the script's scoped cleanup confirmation. Results prove worker/CLI/daemon behavior separately from headless rendering; do not claim native Compose clicks were exercised.
 

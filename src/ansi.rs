@@ -29,20 +29,27 @@ pub struct Style {
 }
 
 impl Style {
-    fn highlight(self, fallback: u32) -> HighlightStyle {
+    fn highlight(self, fallback: u32, canvas_background: u32) -> HighlightStyle {
         let mut foreground = self.foreground;
         let mut background = self.background;
         if self.inverse {
             (foreground, background) = (
-                Some(background.unwrap_or(BACKGROUND)),
+                Some(background.unwrap_or(canvas_background)),
                 Some(foreground.unwrap_or(fallback)),
             );
         }
         if self.hidden {
-            foreground = Some(background.unwrap_or(BACKGROUND));
+            foreground = Some(background.unwrap_or(canvas_background));
         }
         HighlightStyle {
-            color: foreground.map(|color| rgb(color).into()),
+            color: foreground.map(|color| {
+                rgb(if self.hidden {
+                    color
+                } else {
+                    display_color(color, background.unwrap_or(canvas_background))
+                })
+                .into()
+            }),
             background_color: background.map(|color| rgb(color).into()),
             font_weight: self.bold.then_some(FontWeight::BOLD),
             font_style: self.italic.then_some(FontStyle::Italic),
@@ -76,16 +83,46 @@ impl StyledLine {
 
     /// Prefix metadata is neutral; only the application's output gets ANSI styles.
     pub fn render(&self, prefix: &str, fallback: u32) -> StyledText {
+        self.render_on(prefix, fallback, BACKGROUND)
+    }
+
+    /// Render against the actual surface, including inverse/hidden ANSI text.
+    pub fn render_on(&self, prefix: &str, fallback: u32, background: u32) -> StyledText {
         let offset = prefix.len();
         StyledText::new(format!("{prefix}{}", self.text)).with_highlights(self.spans.iter().map(
             |(range, style)| {
                 (
                     range.start + offset..range.end + offset,
-                    style.highlight(fallback),
+                    style.highlight(fallback, background),
                 )
             },
         ))
     }
+}
+
+/// Keep ANSI hues readable on light surfaces. Dark surfaces preserve the
+/// original palette; application-specified dark ANSI backgrounds do too.
+pub(crate) fn display_color(mut foreground: u32, background: u32) -> u32 {
+    fn luminance(color: u32) -> f32 {
+        let channel = |shift: u32| {
+            let value = ((color >> shift) & 255u32) as f32 / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    }
+    let background = luminance(background);
+    if background <= 0.5 {
+        return foreground;
+    }
+    while (background + 0.05) / (luminance(foreground) + 0.05) < 4.5 {
+        let channel = |shift: u32| (((foreground >> shift) & 255u32) as f32 * 0.85) as u32;
+        foreground = (channel(16) << 16) | (channel(8) << 8) | channel(0);
+    }
+    foreground
 }
 
 #[derive(Clone, Copy)]
@@ -304,19 +341,14 @@ impl Handler for State {
     }
 }
 
-fn color_rgb(color: Color) -> Option<u32> {
-    match color {
-        Color::Spec(color) => {
-            Some((u32::from(color.r) << 16) | (u32::from(color.g) << 8) | u32::from(color.b))
-        }
-        Color::Named(NamedColor::Foreground | NamedColor::Background) => None,
-        Color::Named(color) => PALETTE.get(color as usize).copied().or(Some(FOREGROUND)),
-        Color::Indexed(index) if index < 16 => Some(PALETTE[index as usize]),
-        Color::Indexed(index) if index >= 232 => {
+pub(crate) fn indexed_color(index: u8) -> u32 {
+    match index {
+        0..=15 => PALETTE[index as usize],
+        232..=255 => {
             let value = 8 + u32::from(index - 232) * 10;
-            Some((value << 16) | (value << 8) | value)
+            (value << 16) | (value << 8) | value
         }
-        Color::Indexed(index) => {
+        _ => {
             let index = index - 16;
             let scale = |value: u8| {
                 if value == 0 {
@@ -325,8 +357,19 @@ fn color_rgb(color: Color) -> Option<u32> {
                     55 + u32::from(value) * 40
                 }
             };
-            Some((scale(index / 36) << 16) | (scale(index / 6 % 6) << 8) | scale(index % 6))
+            (scale(index / 36) << 16) | (scale(index / 6 % 6) << 8) | scale(index % 6)
         }
+    }
+}
+
+fn color_rgb(color: Color) -> Option<u32> {
+    match color {
+        Color::Spec(color) => {
+            Some((u32::from(color.r) << 16) | (u32::from(color.g) << 8) | u32::from(color.b))
+        }
+        Color::Named(NamedColor::Foreground | NamedColor::Background) => None,
+        Color::Named(color) => PALETTE.get(color as usize).copied().or(Some(FOREGROUND)),
+        Color::Indexed(index) => Some(indexed_color(index)),
     }
 }
 
@@ -387,6 +430,28 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ansi_colors_remain_readable_and_hidden_text_uses_the_current_surface() {
+        let green = PALETTE[2];
+        assert_eq!(display_color(green, BACKGROUND), green);
+        let light_green = display_color(green, 0xffffff);
+        assert!(light_green < green);
+        assert_eq!(display_color(0x161616, 0xffffff), 0x161616);
+        let hidden = Style {
+            hidden: true,
+            ..Style::default()
+        }
+        .highlight(0x161616, 0xffffff);
+        assert_eq!(hidden.color, Some(rgb(0xffffff).into()));
+        let inverted = Style {
+            inverse: true,
+            ..Style::default()
+        }
+        .highlight(0x161616, 0xffffff);
+        assert_eq!(inverted.color, Some(rgb(0xffffff).into()));
+        assert_eq!(inverted.background_color, Some(rgb(0x161616).into()));
+    }
 
     #[test]
     fn split_sequences_utf8_resets_and_plain_copy() {

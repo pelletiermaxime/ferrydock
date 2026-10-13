@@ -15,7 +15,7 @@ Watch all Compose service/container streams from one project workspace.
 ## How to get to it (user POV)
 
 - Click a Compose project heading. Logs opens by default; no file association is required.
-- Watch source-prefixed lines, choose a service button or All services, and toggle Following/Follow paused.
+- Watch source-prefixed lines, choose a service from the searchable picker or All services, and toggle Following/Follow paused.
 - Copy logs copies the currently filtered retained output; Refresh logs starts a new tail.
 - Operations opens the project's action output. Start/Stop/Restart automatically select Operations; return to Logs to watch services.
 - Selecting a container row returns to its individual log stream. Drag the dock divider to adjust the workspace.
@@ -31,7 +31,7 @@ Unit checks prove retry replay counts (including identical same-timestamp lines)
 
 The headless all/filtered frames use a green probe payload and neutral worker payload, with actual screenshot pixel checks scoped to log-row bounds. Unit checks separately verify style continuation per container ID, isolation between replicas of one service, resets, neutral source metadata, clean copy and decoder cleanup after a source disappears and its records expire. The raw transport/replay cursor still consumes original records; ANSI styling is applied in the cached UI history.
 
-The headless flow also fills 1,500 retained records and feeds a 10,000-line batch burst. Check `log-performance.json`, latest-line bounds and frames 13/14: work must stay below 80 rendered rows, follow must reach the tail, and controls must respond. The production Compose check emits 10,000 real records and requires bounded batches with no lost lines. Unit checks separately prove batch order and payload bounds.
+The headless flow also fills 1,500 retained records and feeds a 10,000-line batch burst. Check `log-performance.json`, latest-line bounds and the project-logs-busy/project-logs-batched-busy frames: work must stay below 80 rendered rows, follow must reach the tail, and controls must respond. The production Compose check emits 10,000 real records and requires bounded batches with no lost lines. Unit checks separately prove batch order and payload bounds.
 
 For native load, run `cargo build --locked` and `python3 scripts/verify-log-performance.py --display :0` (or select a freshly built release with `--binary target/release/ferrydock`). It owns ten disposable containers and an X11/XWayland window, validates scope, measures CPU and memory, checks search while logs stream, preserves PNGs/OCR/results, and performs scoped cleanup. It takes focus and must not overlap another native-input session. Require all success/cleanup flags in its result; distinguish capture/OCR overhead from application latency.
 

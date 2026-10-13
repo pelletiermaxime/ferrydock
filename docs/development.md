@@ -7,6 +7,82 @@ are cancelled when selection changes or the window closes.
 
 For the user guide, see the [README](../README.md).
 
+## Application structure
+
+`src/app.rs` composes the GPUI application and wires its worker channel. Feature
+state, controls, and rendering belong to the modules under `src/app/`:
+
+| Module | Responsibility |
+| --- | --- |
+| `containers.rs` | Discovery/search state, selection, container actions, and the container detail panel |
+| `container_list.rs` | Virtualized resource groups and Kit ListItem rows, tags, and empty states |
+| `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
+| `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
+| `projects.rs` | Compose associations, editable forms, operation state, and project controls |
+| `project_logs.rs` | Combined project log history, service filtering, follow/scroll state, and rendering; streaming remains in `src/project_logs.rs` |
+| `navigation.rs` | Keyboard shortcuts and transitions between feature panels |
+| `events.rs` | Worker event dispatch and shared session/selection invariants |
+| `shell.rs` | Window layout and placement of feature panels |
+| `ui.rs` | Semantic palette, shared controls, empty states, notifications, and dock sizing |
+| `appearance.rs` | Persistent theme preference, Kit Settings page, and focus restoration |
+| `resource_menu.rs` | Container/project popup menus, sharing the guarded feature actions |
+
+Each feature owns a state type with its startup defaults. The application keeps
+shared connection, focus, and navigation state, along with those feature states.
+Feature methods still operate on the same GPUI entity so existing cross-feature
+selection and session rules have one authoritative application state. Module
+internals use `pub(super)` visibility.
+
+Add new features in their own modules with a state type, controls, and view. Wire
+them into the application and worker protocol at the shared boundaries. Keep
+feature policy out of the application constructor and window layout. If event
+dispatch starts collecting substantial feature-specific logic, move that logic
+into handlers in the owning module. Extract a separate GPUI entity when a panel
+needs an independent lifecycle, rather than splitting components merely to meet
+a line count.
+
+## UI components and appearance
+
+Use GPUI Kit for standard controls, navigation, forms, feedback, and settings.
+Keep the virtualized ANSI log views and Alacritty terminal rendering specialized.
+Inspect uses Kit's read-only JSON editor with syntax highlighting and search.
+Initialize Kit and its assets before constructing the application's Root view.
+
+Kit's `gpui-fast` feature and all direct GPUI engine/platform/WGPU dependencies
+must select the same backend so their public types remain compatible. The
+versions and features are pinned in [Cargo.toml](../Cargo.toml); `tree-sitter`
+enables the JSON grammar, and `windows-manifest-provided-by-host` avoids
+supplying a second Windows manifest alongside Kit.
+
+Appearance uses Kit's semantic theme tokens. Settings offers FerryDock's
+charcoal/mint default, Dark, and Light. Update all views from the same palette,
+including log and terminal defaults; preserve explicit ANSI backgrounds and
+keep bright text readable on Light surfaces.
+
+Preferences are saved in `$XDG_CONFIG_HOME/ferrydock/appearance.json`, falling
+back to `~/.config/ferrydock/appearance.json`, separately from Compose settings.
+Missing or invalid preferences fall back to FerryDock; read/save errors appear
+in Settings. A failed save leaves the chosen theme active for that session.
+Verification uses an isolated preference file.
+
+## Docker and Compose boundaries
+
+Identify Compose membership from project/service labels and scope saved
+associations by Docker endpoint and project name. Labels and file suggestions
+cannot reconstruct the original environment and profile choices. Persist
+explicit associations so projects remain available without containers.
+
+Run Compose v2 with structured arguments, preserving ordered files, environment
+files, profiles, and the displayed endpoint. Stream output, retain failures,
+and reject conflicting container/project operations. Cancelling or closing
+terminates the tracked process; it does not roll back Docker effects.
+
+For future Rebuild/Down and resource pages, keep service and project action
+scope explicit. Standalone containers have no implied build recipe. Down must
+preserve volumes by default; volume removal and volume cleanup require an
+explicit choice. Account for references from stopped containers when presenting
+volume removal, and reconcile daemon state after operations.
+
 ## Build on Linux
 
 Install Rust through rustup and the native build dependencies. The toolchain is
@@ -49,177 +125,82 @@ desktop, use `env -u WAYLAND_DISPLAY cargo run --locked`; this override is
 limited to that child process. Backend selection does not retry X11 after a
 Wayland connection failure.
 
-FerryDock pins GPUI Kit to `0.7.3` with its `gpui-fast` feature enabled and all
-direct GPUI engine/platform/WGPU packages to matching Fast version `0.1.7`. Its Linux
-renderer uses wgpu and supports offscreen GPU screenshots for tests. The
-[trial findings](gpui-kit-trial.md) record the compatibility changes.
+## Verification
 
-## Headless UI verification
-
-For the everyday UI development loop:
-
-```sh
-python3 scripts/verify-headless.py
-```
-
-Run verification commands from the repository root. This harness runs the real
-FerryDock view and WGPU renderer with `DISPLAY` and `WAYLAND_DISPLAY` removed.
-It dispatches GPUI keyboard and pointer events, asserts behavior, and retains
-twenty-three GPU-rendered PNGs, input actions, frame timings, and a structured result
-under `.verification/headless/<run>/`. No desktop window or Docker worker is
-started. Fixture data enters through the Docker event channel; outgoing Stop
-and terminal-input commands are checked at that boundary.
-
-Headless PNGs use lossless adaptive filtering and balanced compression at full
-resolution. The headless and native helpers automatically keep the newest eight
-completed runs in their own default evidence folders. Active/incomplete runs,
-failed resource cleanup, explicit `--evidence` paths, and runs with a `.keep`
-file are preserved. Use `--keep-runs N` to change the limit or `--keep-runs 0`
-to disable pruning. Historical links to automatically pruned runs may expire;
-pin or export evidence that needs to remain available.
-
-To preview or apply the same retention policy to existing headless/native runs:
-
-```sh
-python3 scripts/verification_evidence.py --dry-run
-python3 scripts/verification_evidence.py
-```
-
-The flow covers discovery/grouping, search pointer focus, Select All, caret
-navigation, selection replacement, Unicode deletion, empty matches/restored selection,
-log-follow clicks, Stop requests, terminal ANSI output, and keyboard input
-routing. It captures screenshots and checks painted glyphs/image changes. It
-does not compare against golden images or prove compositor/clipboard behavior.
-
-A Linux GPU/driver usable by WGPU is required. Renderer failure fails the run.
-The optional `headless-tests` feature enables this harness; normal builds keep
-test support disabled. The first build is slower; subsequent runs reuse it.
-This verifies UI behavior and rendered output. The Docker integration check
-below verifies actual container operations and shell execution.
-
-## Code and Docker checks
+Run checks from the repository root:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --lib --locked
-bash scripts/verify-docker.sh
-bash scripts/verify-compose.sh
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+python3 scripts/verify-headless.py
 ```
 
-The Docker verification script creates a uniquely named Compose project using
-`alpine:3.23`, tests only that fixture, and removes its containers and network
-on exit. It may download that image; the cached image remains. It does not prune
-resources or operate on existing user containers. The integration test refuses
-containers without both its fixture label and dedicated name prefix.
+The headless flow uses the real FerryDock view, WGPU renderer, and GPUI keyboard
+and pointer events. It needs Python 3.11+, cached Cargo dependencies, and a
+usable Linux graphics driver. It removes display variables only from its child
+and supplies fixture events at the Docker worker boundary. No desktop window
+or Docker worker starts. The optional `headless-tests` feature stays disabled
+in normal builds.
 
-The integration check covers real Compose-label discovery, logs,
-start/stop/restart, shell input, PTY resize, ANSI parsing, a full-screen `vi`
-edit, shell exit, and a missing-Bash error. Unit tests cover split UTF-8,
-bounded logs, replicas/filtering, terminal parser state, and terminal
-input/output protocol.
+Coverage includes search/editing, resource menus, themes and persistence,
+log scrolling/ANSI rendering, Inspect search/read-only behavior, resizing,
+notifications, terminal input routing, Compose forms/requests, stale-event
+guards, and bounded history under a 10,000-record burst. Fixture requests prove
+UI behavior; real operations require the separate integration checks:
 
-The Compose check uses a separate uniquely named two-service project, ordered
-base/override files, an environment file, and an explicit profile. It drives
-the production worker commands for association and Start/Stop/Restart, checks
-real Docker state and streamed success/failure output, and tests that ambient Compose variables
-cannot change the saved invocation. Settings are isolated under its evidence
-directory in `.verification/compose/`; containers and the network are removed
-on exit. It does not drive a native desktop window.
+| Command | Boundary exercised |
+| --- | --- |
+| `bash scripts/verify-docker.sh` | Real discovery/logs, Start/Stop/Restart, interactive shell I/O, PTY resize, ANSI parsing, full-screen vi, shell exit, missing Bash |
+| `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, streamed failures, restart/recreation log recovery, bounded batches |
+| `python3 scripts/verify-log-performance.py --display :0` | Owned X11/XWayland window and ten disposable containers; CPU/RSS and search under live log load |
 
-The headless flow also drives the Compose association form, disabled controls,
-project operation requests, and live/failure output through actual GPUI input.
-Its fixture events do not execute Compose. Together these checks cover the UI
-and real process boundary without requiring desktop automation for each change.
+Docker checks create unique Compose fixtures on the existing daemon and remove
+only their containers and networks. They may pull `alpine:3.23`; the image cache
+remains. Compose settings are isolated under the evidence directory. Fixtures
+have no host mounts, published ports, or persistent volumes.
 
-Project logs use Docker API streams for the selected project's labelled
-containers, with membership updates from the existing snapshot watcher.
-Service filters operate on a shared 1,500-line history. Per-container timestamp
-cursors suppress replayed lines on stream retry; new container IDs get their
-own stream and initial tail. The Compose integration fixture also proves mixed
-stdout/stderr, resumed logs after restart and new membership after recreation.
-Headless checks cover service-filter rendering, follow/pause, copy feedback,
-recreated-member output and routing back to individual container logs. Native
-clipboard behavior remains outside the headless proof.
+Build with `cargo build --locked` before the native performance helper; use
+`--binary target/release/ferrydock` after a release build to measure shipping
+performance. `--ansi` emits coloured UTF-8 records; `--profile` captures UI-thread
+stacks through GDB. The helper takes desktop focus and must not overlap another
+native-input run. Measurements depend on host, build profile, and workload;
+capture/OCR overhead is reported separately.
 
-Both log views use virtual lists that lay out only visible rows. The project
-worker batches records for up to 50 ms, with at most 256 records and 64 KiB per
-batch (a single larger bounded record is allowed). The UI drains events within
-an 8 ms budget per poll. The headless flow fills the 1,500-line history, then
-feeds a 10,000-line burst; `log-performance.json` records actual rendered rows,
-follow position and input responsiveness. The Compose check independently
-emits 10,000 real log records and verifies bounded batches without lost records;
-the batch unit test separately proves record order and payload bounds.
-
-`src/ansi.rs` uses the VTE processor already supplied by Alacritty to decode
-output incrementally. Container logs and operation output retain a styled
-buffer; project history keeps a decoder per container ID and caches each
-completed record's text/style ranges. Source prefixes and Docker timestamps
-stay neutral. Copy text contains no escape sequences. The raw transport
-`model::LogBuffer` is unchanged so timestamp replay cursors still see the
-original source records. Removed, expired source decoders are released during
-snapshot reconciliation; quiet live containers retain their colour state.
-
-Supported formatting includes standard/bright, indexed and RGB colours,
-backgrounds, bold, italic, underline, strike, dim and inverse. Basic single-line
-carriage-return, backspace and erase-in-line updates work in streamed container
-and operation buffers. This is a record viewer, not a terminal screen: full-screen
-cursor control and wide-character cursor editing are outside its contract.
-Individual lines are bounded to 64 KiB, with at most 512 styled spans per line;
-excess styling falls back to neutral text. Styling is parsed at ingestion,
-and only visible cached rows are rendered, including Compose operation output.
-Tests cover split escapes/UTF-8, resets, stream isolation, plain copy, progress
-replacement, bounds and actual coloured pixels within GPU-rendered log rows.
-
-For native log-load measurements, build the development binary and run:
+For desktop feature checks, use the project-local
+[verify-ferrydock skill](../.agents/skills/verify-ferrydock/SKILL.md) and its
+[feature map](../.agents/skills/verify-ferrydock/features/README.md):
 
 ```sh
-cargo build --locked
-python3 scripts/verify-log-performance.py --display :0
-```
-
-This owns an X11/XWayland window and ten disposable fixture containers producing
-roughly 500 lines per second. It takes desktop focus, measures process/thread
-CPU and RSS, checks search under load, retains screenshots/results under
-`.verification/log-performance/`, and removes only its fixture and process.
-Use `--binary target/release/ferrydock` after a release build for shipping
-performance. Add `--ansi` to emit real coloured UTF-8 fixture records under the
-same load. Capture timings bound when the visible result was obtained;
-separate OCR time is verification overhead. Search capture time includes
-synthetic typing at the established 20 ms cadence. It does not drive native
-Wayland. GPUI and Taffy are optimized in the development
-profile because unoptimized layout work can dominate live frames; FerryDock
-itself stays unoptimized for fast rebuilds. `--profile` launches the owned child
-under GDB and captures three UI-thread stack samples in `application.log`.
-
-## Native UI verification
-
-Recorded results and coverage limits are in
-[VERIFICATION.md](../VERIFICATION.md).
-
-The project-local
-[verify-ferrydock skill](../.agents/skills/verify-ferrydock/SKILL.md) provides
-the headless workflow, a native-window harness, an incremental
-[feature map](../.agents/skills/verify-ferrydock/features/README.md), and
-[execution evidence notes](../.agents/skills/verify-ferrydock/PROOF.md).
-It lives in `.agents/skills/verify-ferrydock` for Codex discovery.
-
-```sh
+cargo build --release --locked
 python3 .agents/skills/verify-ferrydock/scripts/native.py doctor --display :0
 python3 .agents/skills/verify-ferrydock/scripts/native.py run --feature terminal --display :0
 ```
 
-The helper launches its own app and a disposable Compose fixture, verifies
-selection before input, and retains screenshots/transcripts under
-`.verification/ferrydock/` after scoped cleanup. It requires X11 desktop access,
-`xdotool`, ImageMagick, Tesseract, and Python with Pillow. Use the actual display
-on another workstation. Consult the feature map for exercised entry points and
-mouse/display limitations; use `/maintain-verification-skill` as the app evolves.
+The helper owns its application window and disposable fixture, verifies
+selection before input, and performs scoped cleanup. It requires an accessible
+X11 display, `xdotool`, ImageMagick, Tesseract, and Python with Pillow. Use the
+actual display on your workstation. See [VERIFICATION.md](../VERIFICATION.md)
+for recorded results and the native paths still awaiting proof.
+
+Headless evidence lives under `.verification/headless/`, Compose results under
+`.verification/compose/`, native feature results under `.verification/ferrydock/`,
+and load measurements under `.verification/log-performance/`. A passing result
+requires successful owned-process/fixture cleanup as applicable. Evidence is
+local and ignored by Git.
+
+Headless/native helpers keep the newest eight completed default-path runs.
+Active runs, failed cleanup, explicit `--evidence` directories, and `.keep`-pinned
+runs are preserved. `--keep-runs N` changes retention; `--keep-runs 0` disables
+pruning. Preview existing-run pruning with
+`python3 scripts/verification_evidence.py --dry-run`; omit `--dry-run` to apply it.
+Pin or export evidence used by durable reports.
 
 ## CI and releases
 
 [Tests](../.github/workflows/ci.yml) runs on pushes to `main`, pull requests,
-and manual dispatches. It checks formatting, Clippy, unit tests, the disposable
+and manual dispatches. It checks formatting, Clippy, Rust and Python tests, the disposable
 Docker and Compose integration fixtures, and the headless UI flow with Mesa's
 software GPU driver. Headless and Compose evidence are retained as workflow
 artifacts for seven days.
@@ -245,17 +226,18 @@ captures rendered UI, and verifies keyboard search input through OCR. The
 AppImage check has no Docker socket and does not prove Docker operations,
 native Wayland, FUSE mounting, or hardware GPU compatibility. Its screenshots,
 logs, and result are retained in the `appimage-proof` workflow artifact.
-Native UI coverage is recorded separately above.
+Native UI coverage is recorded in [VERIFICATION.md](../VERIFICATION.md).
 
 For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag -a v0.3.0 -m "FerryDock 0.3.0"
-git push --atomic origin main v0.3.0
+git tag -a v0.4.0 -m "FerryDock 0.4.0"
+git push --atomic origin main v0.4.0
 ```
 
-The tag must match the Cargo version and have a release-notes file. The publish
+Replace the example version with the version being released. The tag must match
+the Cargo version and have a release-notes file. The publish
 job is the only job with write access to repository contents.
 
 To package a locally built release on an Ubuntu 24.04 x86-64 host, install
@@ -263,7 +245,7 @@ To package a locally built release on an Ubuntu 24.04 x86-64 host, install
 build the binary and run:
 
 ```sh
-bash scripts/package-linux.sh v0.2.0
+bash scripts/package-linux.sh v0.4.0
 ```
 
 Output goes to `target/packages/`. Local builds on newer distributions may
@@ -288,6 +270,6 @@ Use a new evidence directory for each run; the verifier refuses an existing one.
 
 ## Dependency licenses
 
-FerryDock is [MIT licensed](../LICENSE). GPUI-CE, Bollard, and Alacritty's terminal
-library retain their own Apache-2.0 licenses. No upstream sources are vendored
-or patched.
+FerryDock is [MIT licensed](../LICENSE). Dependencies retain their own licenses;
+package manifests and bundled library copyright notices are authoritative.
+No upstream sources are vendored or patched.

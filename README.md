@@ -26,6 +26,12 @@ the terminal, and container details close at hand.
 - **Adjust the workspace.** Drag the divider between the container list and
   detail panel. Action buttons show loading state, and notifications report
   completed operations and copy feedback.
+- **Choose your theme.** Open **Settings** from the sidebar or toolbar to choose
+  **FerryDock**, **Dark**, or **Light**. The original charcoal and mint FerryDock
+  theme remains the default. Changes apply immediately and are remembered on
+  this computer; **Use FerryDock theme** restores the default.
+- **Use resource menus.** Right-click a container or project, or use **More** in
+  its detail toolbar, for navigation, configuration, and available actions.
 - **Navigate container logs.** Use visible scrollbars for history and long
   lines. Opening a container shows the newest retained output immediately,
   then follows new lines without replaying the initial history.
@@ -43,11 +49,12 @@ Download a package from [GitHub Releases](https://github.com/pelletiermaxime/fer
 The release is for **Linux x86-64**, built on Ubuntu 24.04; it requires
 glibc 2.39 or newer.
 
-On Ubuntu 24.04 or a compatible Debian-based distribution, download
-`ferrydock_0.2.0_amd64.deb` and install it:
+The examples below use `0.4.0`; replace it with the version you downloaded.
+On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
+package:
 
 ```sh
-sudo apt install ./ferrydock_0.2.0_amd64.deb
+sudo apt install ./ferrydock_0.4.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -55,11 +62,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.2.0-linux-x86_64.AppImage`:
+`ferrydock-0.4.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.2.0-linux-x86_64.AppImage
-./ferrydock-0.2.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.4.0-linux-x86_64.AppImage
+./ferrydock-0.4.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -68,7 +75,7 @@ Vulkan/EGL graphics driver stack, and Docker. If FUSE mounting is unavailable,
 run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.2.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.4.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify all three downloads.
 
@@ -88,7 +95,7 @@ and Docker environment.
 1. Start Docker and launch FerryDock. The active Docker context appears in the
    window.
 2. Find your container in its Compose project or the standalone group. Use the
-   search field to narrow the list. Switch **Running only** to **All** to see
+   search field to narrow the list. Uncheck **Running only** to see
    stopped containers.
 3. Select a container to open the detail panel. **Logs** shows its output;
    **Inspect** shows its configuration.
@@ -111,8 +118,8 @@ and profiles you normally use. Save the association to enable **Start**, **Stop*
 and **Restart**. **Configuration** lets you edit it later.
 
 The project's **Logs** tab combines output from all its containers, with
-timestamps and a service/container prefix on each line. Use **All services** or
-a service button to filter the view, pause/resume following, and copy the
+timestamps and a service/container prefix on each line. Use the searchable service picker to choose **All services** or
+one service, pause/resume following, and copy the
 filtered retained output. Logs work directly from Docker labels without a file
 association. The view picks up restarted or recreated services automatically.
 **Operations** keeps Start/Stop/Restart output separate from application logs.
@@ -144,6 +151,7 @@ Ctrl+F searches the JSON, Enter moves to the next match, and Escape closes searc
 | --- | --- |
 | Ctrl+F | Focus search |
 | Ctrl+R | Refresh containers |
+| Ctrl+, | Open or close appearance settings |
 | Up / Down | Select a container |
 | Enter | Open a shell in the selected running container |
 | Ctrl+1 | Open Logs |
@@ -176,7 +184,7 @@ daemon disconnects, FerryDock retries the connection automatically.
 | --- | --- |
 | FerryDock cannot connect to Docker | Make sure Docker is running and your account can access it. If you have the Docker CLI, run `docker ps` from the same terminal. |
 | Your context is unsupported | Select a local Unix socket context. SSH, TCP/TLS, and Windows named pipe connections are not supported yet. |
-| A stopped container is missing | Switch **Running only** to **All** and clear the search field. |
+| A stopped container is missing | Uncheck **Running only** and clear the search field. |
 | A shell will not open | The container must be running and include Bash or sh. Minimal images may have neither. |
 | FerryDock reports a missing display | Launch from your Linux desktop session with Wayland or X11/XWayland available. |
 
@@ -184,10 +192,11 @@ daemon disconnects, FerryDock retries the connection automatically.
 
 Individual container controls and Compose project Start/Stop/Restart are
 available. Rebuild, Down, and network, volume, and cleanup pages are planned.
-See the [roadmap](PLAN.md) for more.
 
 Container logs and combined project logs each retain up to 1,500 lines; project
 streams begin with the last 200 lines per container and merge output as received.
+Initial container log history larger than 32 MiB is rejected with an explicit
+error to keep oversized records from exhausting application memory.
 Terminal scrollback retains up to 5,000 lines.
 The terminal does not yet support input method composition (IME) or mouse input
 for terminal applications. **Disconnect** detaches FerryDock from a shell;
@@ -198,11 +207,10 @@ when only `DISPLAY` is set. macOS and Windows support are planned.
 
 ## Contributing
 
-This experiment builds FerryDock with Rust and GPUI Kit. See the
-[trial findings](docs/gpui-kit-trial.md) for its scope and verification. For build instructions,
-checks, and UI verification, see the [development guide](docs/development.md).
-Recorded verification results are available in
-[VERIFICATION.md](VERIFICATION.md).
+FerryDock is built with Rust and GPUI Kit. See the
+[development guide](docs/development.md) for architecture, build instructions,
+checks, and releases, and the [verification summary](VERIFICATION.md) for
+recorded evidence and coverage limits.
 
 ## License
 

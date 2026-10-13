@@ -1,0 +1,211 @@
+//! Top-level window layout; feature panels render their own contents.
+use super::FerryDock;
+use super::ui::palette;
+use crate::docker::Command;
+use gpui::{prelude::*, *};
+use gpui_kit::base::TestSupportExt;
+use gpui_kit::component::{
+    IconName, Sizable,
+    alert::Alert,
+    checkbox::Checkbox,
+    input::Input,
+    kbd::Kbd,
+    resizable::{resizable_panel, v_resizable},
+    sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarMenuItem},
+    spinner::Spinner,
+    status_bar::StatusBar,
+    tag::Tag,
+    toolbar::Toolbar,
+};
+
+impl Render for FerryDock {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = palette(cx);
+        let running = self
+            .containers
+            .items
+            .iter()
+            .filter(|container| container.running())
+            .count();
+        let connected = self.connection.is_some();
+        let connection = self
+            .connection
+            .as_ref()
+            .map(|connection| connection.name.clone())
+            .unwrap_or_else(|| "Connecting to Docker…".into());
+        let endpoint = self
+            .connection
+            .as_ref()
+            .map(|connection| connection.endpoint.clone())
+            .unwrap_or_default();
+        let shortcuts = div().flex().flex_col().gap_2().children(
+            [
+                ("ctrl-f", "Search"),
+                ("ctrl-r", "Refresh"),
+                ("ctrl-1", "Logs"),
+                ("ctrl-2", "Terminal"),
+                ("ctrl-3", "Inspect"),
+                ("ctrl-4", "Project logs"),
+            ]
+            .map(|(key, label)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Kbd::new(Keystroke::parse(key).unwrap()))
+                    .child(label)
+            }),
+        );
+        let sidebar = Sidebar::new("workspace-sidebar")
+            .w(px(165.0))
+            .bg(rgb(colors.panel))
+            .child(
+                SidebarGroup::new("Workspace").children([
+                    SidebarMenuItem::new("Containers")
+                        .icon(IconName::LayoutDashboard)
+                        .active(!self.settings_open)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_settings(false, window, cx);
+                        })),
+                    SidebarMenuItem::new("Settings")
+                        .icon(IconName::Settings)
+                        .active(self.settings_open)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_settings(true, window, cx);
+                        })),
+                ]),
+            )
+            .footer(SidebarFooter::new().child(shortcuts));
+        let connection_tag = if connected {
+            Tag::success()
+        } else {
+            Tag::secondary()
+        };
+        let header = Toolbar::new("app-toolbar")
+            .px_5()
+            .py_3()
+            .border_b_1()
+            .border_color(rgb(colors.border))
+            .content(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_size(px(19.0))
+                    .child("FerryDock"),
+            )
+            .content(div().flex_1())
+            .content(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when(!connected, |view| view.child(Spinner::new().small()))
+                    .child(connection_tag.small().outline().child(connection)),
+            )
+            .child(
+                Self::button("refresh", "Refresh", false, false, cx)
+                    .icon(IconName::RefreshCw)
+                    .on_click(cx.listener(|this, _, _, _| this.backend.send(Command::Refresh))),
+            )
+            .child(
+                Self::button("settings", "Settings", self.settings_open, false, cx)
+                    .icon(IconName::Settings)
+                    .tooltip("Appearance settings (Ctrl+,)")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_settings(!this.settings_open, window, cx);
+                    })),
+            );
+        let main = if self.settings_open {
+            self.appearance_settings(cx).into_any_element()
+        } else {
+            let search = div()
+                .id("search")
+                .test_support()
+                .w(px(260.0))
+                .capture_key_down(cx.listener(Self::search_key))
+                .child(Input::new(&self.containers.search_input).small());
+            let mut main = div().flex_1().min_w_0().h_full().flex().flex_col().child(
+                Toolbar::new("container-toolbar")
+                    .px_5()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(rgb(colors.border))
+                    .content(div().font_weight(FontWeight::MEDIUM).child("Containers"))
+                    .content(div().flex_1())
+                    .content(search)
+                    .child(
+                        Checkbox::new("all")
+                            .small()
+                            .label("Running only")
+                            .checked(self.containers.running_only)
+                            .on_change(cx.listener(|this, value: &bool, _, cx| {
+                                this.containers.running_only = *value;
+                                cx.notify();
+                            })),
+                    )
+                    .when(!self.containers.running_only, |toolbar| {
+                        toolbar.content(Tag::secondary().small().outline().child("All containers"))
+                    }),
+            );
+            if let Some(error) = &self.connection_error {
+                main = main.child(
+                    Alert::error(
+                        "docker-connection-error",
+                        format!("{error} · retrying every 5 seconds"),
+                    )
+                    .title("Docker connection unavailable"),
+                );
+            }
+            main.child(
+                v_resizable("workspace-split")
+                    .with_state(&self.dock)
+                    .child(
+                        resizable_panel().size_range(px(80.0)..Pixels::MAX).child(
+                            div()
+                                .id("containers-pane")
+                                .test_support()
+                                .debug_selector(|| "containers-pane".to_string())
+                                .size_full()
+                                .flex()
+                                .flex_col()
+                                .child(self.resources(cx)),
+                        ),
+                    )
+                    .child(
+                        resizable_panel()
+                            .size(px(340.0))
+                            .size_range(px(200.0)..Pixels::MAX)
+                            .child(
+                                self.detail(cx)
+                                    .id("detail-pane")
+                                    .test_support()
+                                    .debug_selector(|| "detail-pane".to_string()),
+                            ),
+                    ),
+            )
+            .into_any_element()
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(colors.background))
+            .text_color(rgb(colors.text))
+            .font_family("Inter")
+            .text_size(px(14.0))
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::root_key))
+            .child(header)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(sidebar)
+                    .child(div().flex_1().min_w_0().child(main)),
+            )
+            .child(StatusBar::new().left(endpoint).right(format!(
+                "{running} running / {} total",
+                self.containers.items.len()
+            )))
+    }
+}

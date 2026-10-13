@@ -10,13 +10,14 @@ use alacritty_terminal::{
 };
 use gpui::{prelude::*, *};
 
-use crate::{ansi::PALETTE, docker::Command};
+use crate::{
+    ansi::{PALETTE, indexed_color},
+    docker::Command,
+};
 
 const FONT_SIZE: f32 = 13.0;
 const LINE_HEIGHT: f32 = 19.0;
 const PADDING: f32 = 10.0;
-const FOREGROUND: u32 = 0xe0ece7;
-const BACKGROUND: u32 = 0x101819;
 
 struct Size {
     columns: usize,
@@ -210,7 +211,11 @@ pub fn key_bytes(
     Some(bytes)
 }
 
-fn ansi_color(color: Color, colors: &alacritty_terminal::term::color::Colors) -> u32 {
+fn ansi_color(
+    color: Color,
+    colors: &alacritty_terminal::term::color::Colors,
+    palette: crate::app::ui::Palette,
+) -> u32 {
     match color {
         Color::Spec(color) => {
             (u32::from(color.r) << 16) | (u32::from(color.g) << 8) | u32::from(color.b)
@@ -220,27 +225,12 @@ fn ansi_color(color: Color, colors: &alacritty_terminal::term::color::Colors) ->
                 return (u32::from(color.r) << 16) | (u32::from(color.g) << 8) | u32::from(color.b);
             }
             match named {
-                NamedColor::Background => BACKGROUND,
-                NamedColor::Foreground | NamedColor::Cursor => FOREGROUND,
-                _ => PALETTE.get(named as usize).copied().unwrap_or(FOREGROUND),
+                NamedColor::Background => palette.logs,
+                NamedColor::Foreground | NamedColor::Cursor => palette.text,
+                _ => PALETTE.get(named as usize).copied().unwrap_or(palette.text),
             }
         }
-        Color::Indexed(index) if index < 16 => PALETTE[index as usize],
-        Color::Indexed(index) if index >= 232 => {
-            let value = 8 + u32::from(index - 232) * 10;
-            (value << 16) | (value << 8) | value
-        }
-        Color::Indexed(index) => {
-            let index = index - 16;
-            let scale = |value: u8| {
-                if value == 0 {
-                    0
-                } else {
-                    55 + u32::from(value) * 40
-                }
-            };
-            (scale(index / 36) << 16) | (scale(index / 6 % 6) << 8) | scale(index % 6)
-        }
+        Color::Indexed(index) => indexed_color(index),
     }
 }
 
@@ -312,6 +302,9 @@ impl TerminalView {
 
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let key = &event.keystroke;
+        if key.modifiers.control && key.key == "," {
+            return;
+        }
         if key.modifiers.control && key.modifiers.shift && key.key == "c" {
             self.copy(cx);
             cx.stop_propagation();
@@ -375,12 +368,13 @@ struct Prepared {
 
 impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = crate::app::ui::palette(cx);
         let entity = cx.entity();
         let view = entity.clone();
         div()
             .id("terminal")
             .size_full()
-            .bg(rgb(BACKGROUND))
+            .bg(rgb(palette.logs))
             .track_focus(&self.focus)
             .cursor(CursorStyle::IBeam)
             .on_key_down(cx.listener(Self::key_down))
@@ -430,7 +424,7 @@ impl Render for TerminalView {
                             let sample = TextRun {
                                 len: 1,
                                 font: font.clone(),
-                                color: rgb(FOREGROUND).into(),
+                                color: rgb(palette.text).into(),
                                 background_color: None,
                                 underline: None,
                                 strikethrough: None,
@@ -475,6 +469,7 @@ impl Render for TerminalView {
                                         cell.fg
                                     },
                                     content.colors,
+                                    palette,
                                 );
                                 let mut background = ansi_color(
                                     if cell.flags.contains(Flags::INVERSE) {
@@ -483,15 +478,17 @@ impl Render for TerminalView {
                                         cell.bg
                                     },
                                     content.colors,
+                                    palette,
                                 );
                                 if content
                                     .selection
                                     .as_ref()
                                     .is_some_and(|range| range.contains(indexed.point))
                                 {
-                                    background = 0x36574a;
+                                    background = palette.selected;
                                 }
-                                if background != BACKGROUND {
+                                let foreground = crate::ansi::display_color(foreground, background);
+                                if background != palette.logs {
                                     backgrounds.push(fill(
                                         Bounds::new(
                                             bounds.origin
@@ -570,7 +567,7 @@ impl Render for TerminalView {
                                             ),
                                         size(px(2.0), px(LINE_HEIGHT)),
                                     ),
-                                    rgb(0x74d7b1),
+                                    rgb(palette.accent),
                                 )
                             });
                             Prepared {

@@ -16,6 +16,63 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def stop_owned_process(app, child_pid=None):
+    if child_pid is not None:
+        try:
+            os.kill(child_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    if app is not None and app.poll() is None:
+        if child_pid is not None:
+            try:
+                app.stdin.write(b'-gdb-exit\n')
+                app.stdin.flush()
+            except BrokenPipeError:
+                pass
+        try:
+            app.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            app.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                app.kill()
+            except ProcessLookupError:
+                pass
+            app.wait(timeout=5)
+    return ((app is None or app.poll() is not None)
+            and (child_pid is None or not Path(f'/proc/{child_pid}').exists()))
+
+
+def finish_run(*, app, child_pid, app_log, run, compose, endpoint, project, evidence, lock, result):
+    """Attempt process and fixture cleanup independently, then persist the report."""
+    try:
+        result['owned_process_exited'] = stop_owned_process(app, child_pid)
+        if not result['owned_process_exited']:
+            result.update(status='failed', process_cleanup_error='Owned application processes remain')
+    except Exception as error:
+        result.update(status='failed', owned_process_exited=False, process_cleanup_error=str(error))
+    try:
+        if app_log is not None:
+            app_log.close()
+    except OSError as error:
+        result.update(status='failed', process_cleanup_error=str(error))
+    try:
+        cleanup = run(compose + ['down', '--volumes', '--remove-orphans'], timeout=45)
+        (evidence / 'cleanup.log').write_text(cleanup.stdout + cleanup.stderr)
+        remaining = run(['docker', '--host', endpoint, 'ps', '-aq', '--filter', f'label=com.docker.compose.project={project}']).stdout.strip()
+        networks = run(['docker', '--host', endpoint, 'network', 'ls', '-q', '--filter', f'label=com.docker.compose.project={project}']).stdout.strip()
+        result['cleanup_success'] = not remaining and not networks
+        if not result['cleanup_success']:
+            result.update(status='failed', error='Owned fixture resources remain')
+    except Exception as error:
+        result.update(status='failed', cleanup_success=False, cleanup_error=str(error))
+    (evidence / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+    lock.close()
+    print(json.dumps(result, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/ferrydock')
@@ -190,35 +247,9 @@ def main():
     except Exception as error:
         result['error'] = str(error)
     finally:
-        if app is not None and app.poll() is None:
-            if args.profile:
-                if app_pid is not None and Path(f'/proc/{app_pid}').exists():
-                    os.kill(app_pid, signal.SIGTERM)
-                app.stdin.write(b'-gdb-exit\n'); app.stdin.flush()
-            app.terminate()
-            try:
-                app.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                app.kill()
-                app.wait()
-        result['owned_process_exited'] = app is None or app.poll() is not None
-        if args.profile and app_pid is not None:
-            result['owned_process_exited'] = result['owned_process_exited'] and not Path(f'/proc/{app_pid}').exists()
-        if app_log is not None:
-            app_log.close()
-        try:
-            cleanup = run(compose + ['down', '--volumes', '--remove-orphans'], timeout=45)
-            (evidence / 'cleanup.log').write_text(cleanup.stdout + cleanup.stderr)
-            remaining = run(['docker', '--host', endpoint, 'ps', '-aq', '--filter', f'label=com.docker.compose.project={project}']).stdout.strip()
-            networks = run(['docker', '--host', endpoint, 'network', 'ls', '-q', '--filter', f'label=com.docker.compose.project={project}']).stdout.strip()
-            result['cleanup_success'] = not remaining and not networks
-            if not result['cleanup_success']:
-                result.update(status='failed', error='Owned fixture resources remain')
-        except Exception as error:
-            result.update(status='failed', cleanup_success=False, cleanup_error=str(error))
-        (evidence / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
-        lock.close()
-        print(json.dumps(result, indent=2))
+        finish_run(app=app, child_pid=app_pid if args.profile else None, app_log=app_log,
+                   run=run, compose=compose, endpoint=endpoint, project=project,
+                   evidence=evidence, lock=lock, result=result)
     return 0 if result['status'] == 'passed' else 1
 
 

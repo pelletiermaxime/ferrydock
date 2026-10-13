@@ -12,7 +12,7 @@ Stop, start and restart the selected container through its visible detail-dock c
 ## How to get to it (user POV)
 
 - Select a container row to open its detail dock.
-- Enable All containers in the main header so stopped rows remain visible.
+- Uncheck Running only in the main header so stopped rows remain visible.
 - Click Stop or Start in the dock, depending on current state.
 - Click Restart in the dock. Watch its state/status and action feedback.
 
@@ -33,5 +33,5 @@ The native fixture below can safely stop because it has no data or host mounts.
 
 - Stop changes a real Docker container. Require fixture ownership and selected-detail proof before clicking.
 - Do not use Docker start/stop/restart as a substitute for these UI actions.
-- Running only can remove a stopped row and change the selection; use All containers first.
+- Running only can remove a stopped row and change the selection; uncheck Running only first.
 - The helper refuses clicks if focus changes or coordinate calibration cannot be observed.

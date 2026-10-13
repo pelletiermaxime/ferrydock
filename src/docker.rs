@@ -241,7 +241,10 @@ impl Drop for Backend {
 async fn context_output(args: &[&str]) -> Result<String> {
     let output = time::timeout(
         Duration::from_secs(8),
-        Process::new("docker").args(args).output(),
+        Process::new("docker")
+            .args(args)
+            .kill_on_drop(true)
+            .output(),
     )
     .await
     .context("Docker context lookup timed out")??;
@@ -583,7 +586,12 @@ async fn stream_logs(
         tokio::select! {
             _ = cancel.cancelled() => return,
             frame = history_stream.next() => match frame {
-                Some(Ok(frame)) => history.push(&frame.into_bytes()),
+                Some(Ok(frame)) => {
+                    if let Err(error) = history.push(&frame.into_bytes()) {
+                        let _ = events.send(Event::LogsEnded { generation, error: Some(error.to_string()) }).await;
+                        return;
+                    }
+                },
                 Some(Err(error)) => {
                     let _ = events.send(Event::LogsEnded { generation, error: Some(error.to_string()) }).await;
                     return;
@@ -638,12 +646,19 @@ struct LogHistory {
 }
 
 impl LogHistory {
+    // Docker's tail limit counts records, not bytes. Refuse oversized history
+    // before copying arbitrarily large records into the initial snapshot.
+    const MAX_BYTES: usize = 32 * 1024 * 1024;
+
     fn timestamp(record: &[u8]) -> Option<chrono::DateTime<chrono::FixedOffset>> {
         let end = record.iter().position(|byte| *byte == b' ')?;
         chrono::DateTime::parse_from_rfc3339(std::str::from_utf8(&record[..end]).ok()?).ok()
     }
 
-    fn push(&mut self, data: &[u8]) {
+    fn push(&mut self, data: &[u8]) -> Result<()> {
+        if data.len() > Self::MAX_BYTES.saturating_sub(self.data.len()) {
+            bail!("Container log history exceeds 32 MiB; initial logs could not be loaded");
+        }
         self.data.extend_from_slice(data);
         for record in data.split_inclusive(|byte| *byte == b'\n') {
             let Some(timestamp) = Self::timestamp(record) else {
@@ -657,6 +672,7 @@ impl LogHistory {
                 *self.boundary.entry(record.to_vec()).or_default() += 1;
             }
         }
+        Ok(())
     }
 
     fn live_data(&mut self, data: &[u8]) -> Vec<u8> {
@@ -779,9 +795,9 @@ mod log_history_tests {
         let gap = b"2026-10-13T05:00:00.950000000Z between requests\n";
         let same_time_new = b"2026-10-13T05:00:00.900000000Z new stderr\n";
         let mut history = LogHistory::default();
-        history.push(old);
-        history.push(boundary);
-        history.push(boundary);
+        history.push(old).unwrap();
+        history.push(boundary).unwrap();
+        history.push(boundary).unwrap();
         assert_eq!(history.data, [old.as_slice(), boundary, boundary].concat());
         assert!(history.live_data(old).is_empty());
         assert!(history.live_data(boundary).is_empty());
@@ -790,5 +806,29 @@ mod log_history_tests {
         assert_eq!(history.live_data(gap), gap);
         // Equal payloads with the same timestamp still preserve multiplicity.
         assert_eq!(history.live_data(boundary), boundary);
+    }
+
+    #[test]
+    fn oversized_history_is_rejected_before_mutating_resume_state() {
+        let mut history = LogHistory::default();
+        history
+            .push(b"2026-10-13T05:00:00.100000000Z retained\n")
+            .unwrap();
+        let retained = history.data.clone();
+        let latest = history.latest;
+        let boundary = history.boundary.clone();
+        let oversized = vec![b'x'; LogHistory::MAX_BYTES];
+        assert!(history.push(&oversized).is_err());
+        assert_eq!(history.data, retained);
+        assert_eq!(history.latest, latest);
+        assert_eq!(history.boundary, boundary);
+
+        let remaining = LogHistory::MAX_BYTES - history.data.len();
+        history.push(&oversized[..remaining / 2]).unwrap();
+        history
+            .push(&oversized[..remaining - remaining / 2])
+            .unwrap();
+        assert_eq!(history.data.len(), LogHistory::MAX_BYTES);
+        assert!(history.push(b"x").is_err());
     }
 }

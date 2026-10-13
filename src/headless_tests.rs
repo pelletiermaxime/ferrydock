@@ -1,7 +1,8 @@
 //! Real GPU rendering and GPUI input dispatch with a fixture Docker boundary.
 //! No compositor, Docker worker, OCR, or application state setters drive the UI.
 
-use super::{FerryDock, TEXT, Tab};
+use super::{FerryDock, Tab};
+const TEXT: u32 = 0xe0ece7;
 use crate::{
     compose::{self, Config as ComposeConfig, Project as ComposeProject},
     docker::{Action, Backend, Command, Connection, Event},
@@ -99,7 +100,10 @@ impl Harness {
                 )))
             },
         );
-        cx.update(super::init_ui);
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::appearance::init_test(evidence.join("appearance.json"), cx);
+        });
         let (backend, commands) = Backend::fixture();
         let (events, receiver) = mpsc::channel(256);
         let mut content = None;
@@ -171,8 +175,9 @@ impl Harness {
     }
 
     fn inspection_value(&self) -> SharedString {
-        self.cx
-            .read_entity(&self.view, |view, cx| view.inspection.read(cx).value())
+        self.cx.read_entity(&self.view, |view, cx| {
+            view.containers.inspection.read(cx).value()
+        })
     }
 
     fn dock_height(&self) -> f32 {
@@ -197,7 +202,7 @@ impl Harness {
 
     fn compose_values(&self) -> [SharedString; 4] {
         self.cx.read_entity(&self.view, |view, cx| {
-            let form = view.compose_form.as_ref().expect("Open Compose form");
+            let form = view.projects.form.as_ref().expect("Open Compose form");
             [
                 form.directory.read(cx).value(),
                 form.lists[0].read(cx).value(),
@@ -213,7 +218,8 @@ impl Harness {
             .update_window(self.window.into(), |_, window, cx| {
                 let form = view
                     .read(cx)
-                    .compose_form
+                    .projects
+                    .form
                     .as_ref()
                     .expect("Open Compose form");
                 let handle = if index == 0 {
@@ -256,6 +262,10 @@ impl Harness {
     }
 
     fn click(&mut self, selector: &str) {
+        self.click_button(selector, MouseButton::Left);
+    }
+
+    fn click_button(&mut self, selector: &str, button: MouseButton) {
         // Bounds come from the painted element, never desktop coordinates.
         let bounds = self
             .cx
@@ -263,9 +273,10 @@ impl Harness {
             .unwrap()
             .unwrap_or_else(|| panic!("No rendered control {selector}"));
         let position = bounds.center();
-        self.actions
-            .push(json!({"input": "click", "selector": selector,
-            "x": f32::from(position.x), "y": f32::from(position.y)}));
+        self.actions.push(
+            json!({"input": "click", "selector": selector, "button": format!("{button:?}"),
+            "x": f32::from(position.x), "y": f32::from(position.y)}),
+        );
         self.cx
             .update_window(self.window.into(), |_, window, cx| {
                 window.dispatch_event(
@@ -282,7 +293,7 @@ impl Harness {
                 window.dispatch_event(
                     MouseDownEvent {
                         position,
-                        button: MouseButton::Left,
+                        button,
                         modifiers: Modifiers::none(),
                         click_count: 1,
                         first_mouse: false,
@@ -293,7 +304,7 @@ impl Harness {
                 window.dispatch_event(
                     MouseUpEvent {
                         position,
-                        button: MouseButton::Left,
+                        button,
                         modifiers: Modifiers::none(),
                         click_count: 1,
                     }
@@ -437,10 +448,10 @@ fn headless_gpu_user_flow() {
         container("fixture-standalone", "standalone-example", "running", None),
     ]));
     assert_eq!(
-        h.observe(|v| v.selected.clone()).as_deref(),
+        h.observe(|v| v.containers.selected.clone()).as_deref(),
         Some("fixture-probe-running")
     );
-    let generation = h.observe(|v| v.generation);
+    let generation = h.observe(|v| v.container_logs.generation);
     h.deliver(Event::Log {
         generation,
         data: b"2026-10-12T23:30:00.000000001Z \x1b[3".to_vec(),
@@ -455,8 +466,13 @@ fn headless_gpu_user_flow() {
     h.require_glyph_color(&initial, "container-log-line-0", TEXT);
     h.require_glyph_color(&initial, "container-log-line-1", TEXT);
     h.require_glyph_color(&initial, "container-log-line-2", crate::ansi::PALETTE[2]);
-    assert!(h.observe(|v| v.logs.lines[2].text == "2026-10-12T23:30:00.000000003Z done"));
-    assert!(!h.observe(|v| v.logs.text()).contains('\x1b'));
+    assert!(h.observe(
+        |v| v.container_logs.buffer.lines[2].text == "2026-10-12T23:30:00.000000003Z done"
+    ));
+    assert!(
+        !h.observe(|v| v.container_logs.buffer.text())
+            .contains('\x1b')
+    );
     assert!(
         h.cx.debug_bounds(h.window.into(), "row-fixture-probe-running")
             .unwrap()
@@ -481,10 +497,90 @@ fn headless_gpu_user_flow() {
         "Real font glyphs must be painted"
     );
 
+    // The settings UI owns theme changes; test assertions only read its state.
+    let selected_before_settings = h.observe(|view| view.containers.selected.clone());
+    h.click("settings");
+    assert!(h.observe(|view| view.settings_open));
+    h.capture("settings-ferrydock");
+    h.click("theme-light");
+    let light_colors =
+        h.cx.update_window(h.window.into(), |_, _, cx| super::ui::palette(cx))
+            .unwrap();
+    assert!(
+        light_colors.background > 0xd0d0d0,
+        "Light theme must have a light application surface"
+    );
+    h.capture("settings-light");
+    h.click("settings");
+    let light = h.capture("containers-light");
+    h.require_glyph_color(&light, "container-log-line-1", light_colors.text);
+    h.require_glyph_color(
+        &light,
+        "container-log-line-0",
+        crate::ansi::display_color(crate::ansi::PALETTE[2], light_colors.logs),
+    );
+    assert_eq!(
+        h.observe(|view| view.containers.selected.clone()),
+        selected_before_settings
+    );
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(h.evidence.join("appearance.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["theme"], "light");
+    h.click("settings");
+    h.click("theme-dark");
+    h.capture("settings-dark");
+    h.click("settings");
+    h.capture("containers-dark");
+    h.key("ctrl-,");
+    assert!(h.observe(|view| view.settings_open));
+    h.click("theme-reset");
+    h.capture("settings-default-restored");
+    h.click("settings");
+    let restored =
+        h.cx.update_window(h.window.into(), |_, _, cx| super::ui::palette(cx))
+            .unwrap();
+    assert_eq!(restored.background, 0x171d21);
+    assert_eq!(restored.text, TEXT);
+    assert_eq!(
+        h.observe(|view| view.containers.selected.clone()),
+        selected_before_settings
+    );
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(h.evidence.join("appearance.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["theme"], "ferry-dock");
+    h.click("container-more");
+    h.capture("container-action-menu");
+    h.key("escape");
+    h.click_button("row-fixture-probe-running", MouseButton::Right);
+    h.capture("container-context-menu");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.within("popup-menu").click(2, cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    assert!(
+        h.observe(|view| view.tab == Tab::Inspect),
+        "Context menu Inspect must use the same navigation as the tab"
+    );
+    h.click_tab("container-tabs", 0);
+
+    h.click("all");
+    assert!(!h.observe(|view| view.containers.running_only));
+    h.capture("containers-all");
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "row-fixture-probe-stopped")
+            .unwrap()
+            .is_some()
+    );
+    h.click("all");
+    assert!(h.observe(|view| view.containers.running_only));
+
     h.click("search");
     assert!(
         h.cx.update_window(h.window.into(), |_, window, cx| {
-            h.view.read(cx).search_focus.is_focused(window)
+            h.view.read(cx).containers.search_focus.is_focused(window)
         })
         .unwrap(),
         "Clicking the Input must focus its editor"
@@ -493,7 +589,12 @@ fn headless_gpu_user_flow() {
     h.key("ctrl-f");
     h.type_text("no-matching-container");
     assert_eq!(
-        h.observe(|v| groups(&v.containers, v.running_only, &v.filter).len()),
+        h.observe(|v| groups(
+            &v.containers.items,
+            v.containers.running_only,
+            &v.containers.filter
+        )
+        .len()),
         0
     );
     let filtered = h.capture("empty-search");
@@ -520,7 +621,7 @@ fn headless_gpu_user_flow() {
 
     h.key("ctrl-a");
     assert_eq!(
-        h.observe(|v| v.filter.clone()),
+        h.observe(|v| v.containers.filter.clone()),
         "no-matching-container",
         "Select All must preserve the value until it is replaced"
     );
@@ -528,23 +629,23 @@ fn headless_gpu_user_flow() {
     h.key("home");
     h.type_text("pre-");
     assert_eq!(
-        h.observe(|v| v.filter.clone()),
+        h.observe(|v| v.containers.filter.clone()),
         "pre-dock",
         "Typing at Home must insert at the beginning"
     );
     h.key("shift-right");
     h.type_text("D");
     assert_eq!(
-        h.observe(|v| v.filter.clone()),
+        h.observe(|v| v.containers.filter.clone()),
         "pre-Dock",
         "Typing must replace the selected character"
     );
     h.key("end");
     h.type_text("é");
-    assert_eq!(h.observe(|v| v.filter.clone()), "pre-Docké");
+    assert_eq!(h.observe(|v| v.containers.filter.clone()), "pre-Docké");
     h.key("backspace");
     assert_eq!(
-        h.observe(|v| v.filter.clone()),
+        h.observe(|v| v.containers.filter.clone()),
         "pre-Dock",
         "Backspace must delete the complete Unicode character"
     );
@@ -554,12 +655,19 @@ fn headless_gpu_user_flow() {
     h.type_text("headless-fixture");
     h.key("escape");
     h.key("down");
-    assert_eq!(h.observe(|v| v.filter.clone()), "headless-fixture");
     assert_eq!(
-        h.observe(|v| groups(&v.containers, v.running_only, &v.filter)
-            .into_values()
-            .flatten()
-            .count()),
+        h.observe(|v| v.containers.filter.clone()),
+        "headless-fixture"
+    );
+    assert_eq!(
+        h.observe(|v| groups(
+            &v.containers.items,
+            v.containers.running_only,
+            &v.containers.filter
+        )
+        .into_values()
+        .flatten()
+        .count()),
         1
     );
     h.capture("filtered-fixture");
@@ -575,7 +683,7 @@ fn headless_gpu_user_flow() {
     );
 
     h.click("follow");
-    assert!(!h.observe(|v| v.log_follow));
+    assert!(!h.observe(|v| v.container_logs.follow));
     h.capture("logs-paused");
     h.deliver(Event::Log {
         generation,
@@ -605,7 +713,7 @@ fn headless_gpu_user_flow() {
     h.cx.run_until_parked();
     h.settle_ui(300);
     assert!(
-        h.observe(|v| v.log_scroll.0.borrow().base_handle.offset().y < px(-1000.0)),
+        h.observe(|v| v.container_logs.scroll.0.borrow().base_handle.offset().y < px(-1000.0)),
         "Dragging the vertical scrollbar must reveal later log rows"
     );
     h.actions
@@ -619,14 +727,17 @@ fn headless_gpu_user_flow() {
     h.cx.run_until_parked();
     h.settle_ui(300);
     assert!(
-        h.observe(|v| v.log_scroll.0.borrow().base_handle.offset().x < px(-100.0)),
+        h.observe(|v| v.container_logs.scroll.0.borrow().base_handle.offset().x < px(-100.0)),
         "Dragging the horizontal scrollbar must reveal long log records"
     );
     h.capture("logs-scrollbar-dragged");
     h.click("follow");
-    assert!(h.observe(|v| v.log_follow));
+    assert!(h.observe(|v| v.container_logs.follow));
     h.capture("logs-scrollbar-following");
-    assert_eq!(h.observe(|v| v.log_scroll.is_scrolled_to_end()), Some(true));
+    assert_eq!(
+        h.observe(|v| v.container_logs.scroll.is_scrolled_to_end()),
+        Some(true)
+    );
 
     let initial_dock_height = h.dock_height();
     h.drag_dock(60.0);
@@ -645,7 +756,7 @@ fn headless_gpu_user_flow() {
 
     h.click_tab("container-tabs", 2);
     assert!(h.observe(|view| view.tab == Tab::Inspect));
-    let generation = h.observe(|view| view.generation);
+    let generation = h.observe(|view| view.container_logs.generation);
     let inspection = serde_json::to_string_pretty(&json!({
         "Id": "fixture-probe-running",
         "Config": {"Image": "alpine:3.23", "Env": ["VISIBLE=fixture-only"]},
@@ -662,6 +773,7 @@ fn headless_gpu_user_flow() {
     let body =
         h.cx.update_window(h.window.into(), |_, _, cx| {
             view.read(cx)
+                .containers
                 .inspection
                 .read(cx)
                 .text_bounds()
@@ -692,7 +804,7 @@ fn headless_gpu_user_flow() {
     h.key("ctrl-f");
     h.type_text("Image");
     h.cx.read_entity(&h.view, |view, cx| {
-        let editor = view.inspection.read(cx);
+        let editor = view.containers.inspection.read(cx);
         let search = editor.search_session();
         assert!(search.open);
         assert!(
@@ -745,6 +857,17 @@ fn headless_gpu_user_flow() {
     assert!(h.drain_commands().iter().any(|command| matches!(command,
         Command::Action { id, action: Action::Stop } if id == "fixture-probe-running")));
     h.capture("stop-requested");
+    h.click("container-more");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.within("popup-menu").click(7, cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    assert!(
+        h.drain_commands().is_empty(),
+        "Disabled menu action must not repeat an in-flight operation"
+    );
+    h.key("escape");
     h.click("primary-action");
     assert!(
         h.drain_commands().is_empty(),
@@ -785,7 +908,7 @@ fn headless_gpu_user_flow() {
     h.click("row-fixture-probe-running");
     h.key("enter");
     assert!(h.observe(|v| v.tab == Tab::Terminal));
-    let terminal_generation = h.observe(|v| v.terminal_generation);
+    let terminal_generation = h.observe(|v| v.terminal.generation);
     assert!(h.drain_commands().iter().any(|command| matches!(command,
         Command::Terminal { id, .. } if id == "fixture-probe-running")));
     h.deliver(Event::TerminalReady {
@@ -797,6 +920,36 @@ fn headless_gpu_user_flow() {
     });
     let terminal_image = h.capture("terminal-rendered");
     h.drain_commands();
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.within("shell-choice").click(1, cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    assert!(
+        h.observe(|view| matches!(view.terminal.shell, crate::docker::Shell::Auto)),
+        "A connected session must disable shell selection"
+    );
+    h.key("ctrl-,");
+    assert!(
+        h.observe(|view| view.settings_open),
+        "Settings shortcut must work from a focused terminal"
+    );
+    h.click("theme-light");
+    h.click("settings");
+    h.capture("terminal-light");
+    assert_eq!(
+        h.observe(|view| view.terminal.generation),
+        terminal_generation
+    );
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::Terminal { .. } | Command::CloseTerminal)),
+        "Appearance changes must not recreate or close a live shell"
+    );
+    h.click("settings");
+    h.click("theme-reset");
+    h.click("settings");
     h.type_text("echo verified");
     h.key("enter");
     let input: Vec<u8> = h
@@ -810,6 +963,93 @@ fn headless_gpu_user_flow() {
         .collect();
     assert_eq!(input, b"echo verified\r");
 
+    let log_generation = h.observe(|v| v.container_logs.generation);
+    let terminal_text = h.cx.read_entity(&h.view, |v, cx| {
+        v.terminal
+            .view
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .core
+            .visible_text()
+    });
+    let inspection = h.inspection_value();
+    let logs = h.observe(|v| v.container_logs.buffer.text());
+    h.deliver(Event::Disconnected("Fixture Docker disconnected".into()));
+    let log_status = h.observe(|v| v.container_logs.status.clone());
+    let terminal_status = h.cx.read_entity(&h.view, |v, cx| {
+        v.terminal.view.as_ref().unwrap().read(cx).status.clone()
+    });
+    for event in [
+        Event::TerminalReady {
+            generation: terminal_generation,
+        },
+        Event::TerminalData {
+            generation: terminal_generation,
+            data: b"STALE TERMINAL OUTPUT".to_vec(),
+        },
+        Event::TerminalEnded {
+            generation: terminal_generation,
+            error: Some("Stale shell error".into()),
+        },
+        Event::Log {
+            generation: log_generation,
+            data: b"STALE LOG OUTPUT\n".to_vec(),
+        },
+        Event::LogsEnded {
+            generation: log_generation,
+            error: Some("Stale log error".into()),
+        },
+        Event::Inspection {
+            generation: log_generation,
+            result: Ok("Stale inspection".into()),
+        },
+    ] {
+        h.deliver(event);
+        assert!(
+            h.cx.read_entity(&h.view, |v, cx| !v
+                .terminal
+                .view
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .ready),
+            "Disconnected shells must ignore stale ready events"
+        );
+    }
+    assert_eq!(
+        h.cx.read_entity(&h.view, |v, cx| v
+            .terminal
+            .view
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .core
+            .visible_text()),
+        terminal_text
+    );
+    assert_eq!(
+        h.cx.read_entity(&h.view, |v, cx| v
+            .terminal
+            .view
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .status
+            .clone()),
+        terminal_status
+    );
+    assert_eq!(h.observe(|v| v.container_logs.buffer.text()), logs);
+    assert_eq!(h.observe(|v| v.container_logs.status.clone()), log_status);
+    assert_eq!(h.inspection_value(), inspection);
+    h.capture("disconnected-stale-events-ignored");
+    h.deliver(Event::Connected(Connection {
+        name: "Fixture Docker".into(),
+        endpoint: "fixture://docker".into(),
+    }));
+    h.deliver(Event::Snapshot(h.observe(|v| v.containers.items.clone())));
+    h.drain_commands();
+
     h.deliver(Event::ComposeProjects(vec![ComposeProject {
         name: "headless-fixture".into(),
         config: None,
@@ -822,8 +1062,8 @@ fn headless_gpu_user_flow() {
     }]));
     h.click("project-headless-fixture");
     assert!(h.drain_commands().iter().any(|command| matches!(command, Command::ProjectLogs { project, .. } if project == "headless-fixture")));
-    let generation = h.observe(|v| v.project_log_generation);
-    let mut members = h.observe(|v| v.containers.clone());
+    let generation = h.observe(|v| v.project_logs.generation);
+    let mut members = h.observe(|v| v.containers.items.clone());
     let mut worker = container(
         "fixture-worker",
         "headless-fixture-worker-1",
@@ -862,8 +1102,11 @@ fn headless_gpu_user_flow() {
         generation,
         status: "3 project containers · 2 live streams · timestamps · merged as received".into(),
     });
+    h.click("project-more");
+    h.capture("project-action-menu");
+    h.key("escape");
     h.click("project-log-follow");
-    assert!(!h.observe(|v| v.project_log_follow));
+    assert!(!h.observe(|v| v.project_logs.follow));
     let project_image = h.capture("project-logs-all");
     h.require_glyph_color(
         &project_image,
@@ -872,10 +1115,15 @@ fn headless_gpu_user_flow() {
     );
     h.require_glyph_color(&project_image, "project-log-line-0", TEXT);
     h.require_glyph_color(&project_image, "project-log-line-1", TEXT);
-    assert!(!h.observe(|v| v.project_logs.text(None)).contains('\x1b'));
-    h.click("project-service-probe");
+    assert!(
+        !h.observe(|v| v.project_logs.history.text(None))
+            .contains('\x1b')
+    );
+    h.click("project-service-filter");
+    h.type_text("probe");
+    h.key("enter");
     assert_eq!(
-        h.observe(|v| v.project_service.clone()).as_deref(),
+        h.observe(|v| v.project_logs.service.clone()).as_deref(),
         Some("probe")
     );
     assert!(
@@ -896,13 +1144,15 @@ fn headless_gpu_user_flow() {
     );
     h.capture("project-logs-filtered");
     h.click_tab("project-tabs", 1);
-    assert!(h.observe(|view| view.project_tab == super::ProjectTab::Operations));
+    assert!(h.observe(|view| view.projects.tab == super::projects::ProjectTab::Operations));
     h.click_tab("project-tabs", 0);
-    assert!(h.observe(|view| view.project_tab == super::ProjectTab::Logs));
-    h.click("project-service-all");
+    assert!(h.observe(|view| view.projects.tab == super::projects::ProjectTab::Logs));
+    h.click("project-service-filter");
+    h.type_text("All services");
+    h.key("enter");
     h.click("project-log-follow");
-    assert!(h.observe(|v| v.project_log_follow));
-    let mut members = h.observe(|v| v.containers.clone());
+    assert!(h.observe(|v| v.project_logs.follow));
+    let mut members = h.observe(|v| v.containers.items.clone());
     members.retain(|container| container.id != "fixture-worker");
     worker.id = "fixture-worker-recreated".into();
     members.push(worker);
@@ -919,6 +1169,7 @@ fn headless_gpu_user_flow() {
     });
     assert!(h.observe(|v| {
         v.project_logs
+            .history
             .text(None)
             .contains("Worker recreated and live")
     }));
@@ -933,17 +1184,37 @@ fn headless_gpu_user_flow() {
     assert!(commands.iter().any(
         |command| matches!(command, Command::Logs { id, .. } if id == "fixture-probe-running")
     ));
+    h.key("ctrl-4");
+    h.key("ctrl-1");
+    assert!(h.observe(|v| v.projects.selected.is_none() && v.tab == Tab::Logs));
+    let timestamp = "2026-10-13T05:00:00.000000001Z";
+    h.deliver(Event::Log {
+        generation: h.observe(|v| v.container_logs.generation),
+        data: format!("{timestamp} \x1b[32mbuilding 10%\r\x1b[2Kdone\x1b[0m\n").into_bytes(),
+    });
+    assert_eq!(
+        h.observe(|v| v.container_logs.buffer.text()),
+        format!("{timestamp} done"),
+        "Returning from project tabs must preserve injected timestamps across ANSI progress updates"
+    );
+    h.capture("container-timestamps-after-project-tab");
+    h.key("ctrl-4");
+    h.key("ctrl-1");
+    h.drain_commands();
     // The worker publishes the complete initial history in one event. Its first
     // painted frame must already contain the tail, without an earlier top frame.
     h.deliver(Event::Log {
-        generation: h.observe(|v| v.generation),
+        generation: h.observe(|v| v.container_logs.generation),
         data: (0..500)
             .map(|index| format!("2026-10-13T05:00:00.{index:09}Z INITIAL HISTORY {index:03}\n"))
             .collect::<String>()
             .into_bytes(),
     });
     h.capture("logs-open-at-bottom");
-    assert_eq!(h.observe(|v| v.log_scroll.is_scrolled_to_end()), Some(true));
+    assert_eq!(
+        h.observe(|v| v.container_logs.scroll.is_scrolled_to_end()),
+        Some(true)
+    );
     assert!(
         h.cx.debug_bounds(h.window.into(), "container-log-line-499")
             .unwrap()
@@ -958,7 +1229,7 @@ fn headless_gpu_user_flow() {
     );
     h.key("ctrl-4");
     assert_eq!(
-        h.observe(|v| v.selected_project.clone()).as_deref(),
+        h.observe(|v| v.projects.selected.clone()).as_deref(),
         Some("headless-fixture")
     );
     h.drain_commands();
@@ -1053,13 +1324,14 @@ fn headless_gpu_user_flow() {
         project: config.project.clone(),
         result: Ok(config),
     });
+    h.settle_ui(500);
     h.drain_commands();
     h.click("compose-configure");
     h.key("ctrl-a");
     h.type_text("/discarded-edit");
     h.key("escape");
     assert!(
-        h.observe(|view| view.compose_form.is_none()),
+        h.observe(|view| view.projects.form.is_none()),
         "Escape must cancel an editable form"
     );
     assert!(
@@ -1101,7 +1373,7 @@ fn headless_gpu_user_flow() {
         crate::ansi::PALETTE[2],
     );
     assert!(h.observe(|v| {
-        let output = v.compose_operations["headless-fixture"].output.text();
+        let output = v.projects.operations["headless-fixture"].output.text();
         !output.contains('\x1b') && !output.contains("Starting") && output.contains("Started")
     }));
     h.deliver(Event::ComposeFinished {
@@ -1110,7 +1382,7 @@ fn headless_gpu_user_flow() {
         result: Ok(()),
     });
     assert!(h.observe(|v| {
-        v.compose_operations["headless-fixture"]
+        v.projects.operations["headless-fixture"]
             .result
             .as_ref()
             .unwrap()
@@ -1142,7 +1414,7 @@ fn headless_gpu_user_flow() {
     h.capture("compose-operation-failed");
     assert!(h.observe(|v| {
         !v.project_busy("headless-fixture")
-            && v.compose_operations["headless-fixture"]
+            && v.projects.operations["headless-fixture"]
                 .output
                 .text()
                 .contains("failure output retained")
@@ -1157,7 +1429,7 @@ fn headless_gpu_user_flow() {
     )));
 
     h.click_tab("project-tabs", 0);
-    let generation = h.observe(|v| v.project_log_generation);
+    let generation = h.observe(|v| v.project_logs.generation);
     let ingestion_started = Instant::now();
     for chunk in (0..1500).collect::<Vec<_>>().chunks(64) {
         for index in chunk {
@@ -1182,13 +1454,13 @@ fn headless_gpu_user_flow() {
     }
     let ingestion_seconds = ingestion_started.elapsed().as_secs_f64();
     h.capture("project-logs-busy");
-    let rows_rendered = h.observe(|v| v.project_rows_rendered.get());
+    let rows_rendered = h.observe(|v| v.project_logs.rows_rendered.get());
     assert!(
         rows_rendered < 80,
         "Log layout must be limited to visible rows, not all 1,500 retained lines"
     );
     assert!(
-        h.observe(|v| v.project_log_scroll.is_scrolled_to_end()) == Some(true),
+        h.observe(|v| v.project_logs.scroll.is_scrolled_to_end()) == Some(true),
         "Follow must jump directly to the current tail"
     );
     assert!(
@@ -1224,6 +1496,7 @@ fn headless_gpu_user_flow() {
         h.cx.run_until_parked();
         if h.observe(|v| {
             v.project_logs
+                .history
                 .lines
                 .back()
                 .is_some_and(|line| line.text.contains("line 9999"))
@@ -1233,8 +1506,9 @@ fn headless_gpu_user_flow() {
     }
     let batched_ingestion_seconds = batched_started.elapsed().as_secs_f64();
     assert!(h.observe(|v| {
-        v.project_logs.lines.len() == 1500
+        v.project_logs.history.lines.len() == 1500
             && v.project_logs
+                .history
                 .lines
                 .back()
                 .unwrap()
@@ -1242,18 +1516,18 @@ fn headless_gpu_user_flow() {
                 .contains("line 9999")
     }));
     h.capture("project-logs-batched-busy");
-    assert!(h.observe(|v| v.project_rows_rendered.get()) < 80);
+    assert!(h.observe(|v| v.project_logs.rows_rendered.get()) < 80);
     assert_eq!(
-        h.observe(|v| v.project_log_scroll.is_scrolled_to_end()),
+        h.observe(|v| v.project_logs.scroll.is_scrolled_to_end()),
         Some(true)
     );
     h.click("project-log-follow");
     assert!(
-        !h.observe(|v| v.project_log_follow),
+        !h.observe(|v| v.project_logs.follow),
         "Controls must remain responsive after a log flood"
     );
-    let performance = json!({"input_lines":1500,"retained_lines":h.observe(|v| v.project_logs.lines.len()),"rows_rendered_in_frame":rows_rendered,"ingestion_seconds":ingestion_seconds,
-        "batched_input_lines":10000,"batched_ingestion_seconds":batched_ingestion_seconds,"batched_rows_rendered":h.observe(|v| v.project_rows_rendered.get()),"follow_reached_tail":true,"controls_respond_after_flood":true});
+    let performance = json!({"input_lines":1500,"retained_lines":h.observe(|v| v.project_logs.history.lines.len()),"rows_rendered_in_frame":rows_rendered,"ingestion_seconds":ingestion_seconds,
+        "batched_input_lines":10000,"batched_ingestion_seconds":batched_ingestion_seconds,"batched_rows_rendered":h.observe(|v| v.project_logs.rows_rendered.get()),"follow_reached_tail":true,"controls_respond_after_flood":true});
     std::fs::write(
         h.evidence.join("log-performance.json"),
         serde_json::to_vec_pretty(&performance).unwrap(),
@@ -1269,13 +1543,14 @@ fn headless_gpu_user_flow() {
         "changed_pixels_after_search_lower_bound": changed_pixels, "screenshots": h.screenshots,
         "frame_timings": h.frame_timings,
         "log_performance": performance,
-        "checks": ["fixture discovery", "search pointer focus", "keyboard search", "Kit Input select all and replacement", "Kit Input caret navigation and selection", "Kit Input Unicode backspace", "empty matches", "restored selection",
+        "checks": ["fixture discovery", "Kit appearance Settings pointer theme switching and default restoration", "theme preference persistence in isolated file", "light theme log glyph contrast", "settings preserve selected resource", "Kit container action menu opens and dismisses", "Kit right-click Inspect menu navigation", "Kit project action menu and disabled unassociated controls", "Kit Checkbox running filter and stopped rows", "Kit menu action blocks duplicate operation", "Kit RadioGroup shell choice disabled during live session", "theme switching preserves terminal generation and input focus", "Kit service Select search and keyboard confirmation", "search pointer focus", "keyboard search", "Kit Input select all and replacement", "Kit Input caret navigation and selection", "Kit Input Unicode backspace", "empty matches", "restored selection",
             "Kit Button Tab focus and Enter Space activation without shortcut leakage", "Kit Button disabled loading action guard",
             "Kit container and project TabBar pointer selection", "Kit Resizable pointer drag and minimum height",
             "Kit Inspect read-only typing guard", "Kit Inspect JSON syntax glyph colors", "Kit Inspect search without replacement",
             "Kit success notification and visible close control", "Kit error notification persists beyond success timeout",
             "container ANSI glyph colors and split sequences", "project ANSI glyph colors with neutral metadata and plain copy", "Compose ANSI colors and carriage-return progress replacement",
             "log follow pointer toggle", "stop command at Docker boundary", "terminal ANSI rendering", "terminal input routing",
+            "disconnection ignores stale terminal, log and inspection events", "project tab return preserves container timestamps",
             "Compose association keyboard form", "Kit Compose caret selection and Unicode editing", "Kit Compose undo",
             "Kit Compose pointer focus and Tab Shift-Tab wraparound", "Kit Compose disabled editing while saving", "Kit Compose Escape cancellation",
             "ordered files, environment files and profiles", "unassociated and conflicting actions blocked",

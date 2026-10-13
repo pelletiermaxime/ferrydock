@@ -43,6 +43,8 @@ jobs:
         run: cargo fetch --locked
       - name: Check formatting
         run: cargo fmt --all --check
+      - name: Verification helper regression tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Unit tests

@@ -109,7 +109,6 @@ class Proof:
         self.created_ids = set()
         self.hover_transform = None
         self.serial = 0
-        self.actions = []
         self.evidence.mkdir(parents=True, mode=0o700, exist_ok=False)
         self.app_log = None
 
@@ -118,7 +117,6 @@ class Proof:
 
     def action(self, label, **details):
         entry = {"at": datetime.now(timezone.utc).isoformat(), "action": label, **details}
-        self.actions.append(entry)
         with (self.evidence / "actions.jsonl").open("a") as output:
             output.write(json.dumps(entry) + "\n")
 

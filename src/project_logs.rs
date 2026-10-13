@@ -48,6 +48,10 @@ impl Record {
     pub fn render(&self, fallback: u32) -> gpui::StyledText {
         self.styled.render(&self.prefix, fallback)
     }
+
+    pub fn render_on(&self, fallback: u32, background: u32) -> gpui::StyledText {
+        self.styled.render_on(&self.prefix, fallback, background)
+    }
 }
 
 #[derive(Default)]
