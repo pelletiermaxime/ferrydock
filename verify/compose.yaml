@@ -1,6 +1,8 @@
 services:
   probe:
     image: alpine:3.23
+    mem_limit: 64m
+    cpus: 0.5
     command: ["sh", "-c", "echo FERRY_FIXTURE_READY; exec sleep 86400"]
     labels:
       dev.ferrydock.fixture: "true"

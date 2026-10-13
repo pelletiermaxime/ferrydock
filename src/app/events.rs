@@ -20,6 +20,24 @@ impl FerryDock {
             Event::Snapshot(_) | Event::ProjectLog { .. } | Event::ProjectLogBatch { .. }
         );
         match event {
+            Event::MetricsSession(session) => {
+                self.metrics.session = Some(session);
+                self.metrics.containers.clear();
+            }
+            Event::Metrics {
+                session,
+                id,
+                result,
+            } if self.metrics.session == Some(session)
+                && self.connection.is_some()
+                && self
+                    .containers
+                    .items
+                    .iter()
+                    .any(|container| container.id == id && container.running()) =>
+            {
+                self.metrics.containers.entry(id).or_default().push(result);
+            }
             Event::ProjectLogBatch { generation, lines }
                 if generation == self.project_logs.generation
                     && self.projects.selected.is_some() =>
@@ -128,6 +146,7 @@ impl FerryDock {
                 }
             }
             Event::Disconnected(error) => {
+                self.metrics.session = None;
                 self.container_logs.generation += 1;
                 self.terminal.generation += 1;
                 self.project_logs.generation += 1;
@@ -162,6 +181,11 @@ impl FerryDock {
                 }
             }
             Event::Snapshot(containers) => {
+                self.metrics.containers.retain(|id, _| {
+                    containers
+                        .iter()
+                        .any(|container| &container.id == id && container.running())
+                });
                 // Discovery order is stable on the first snapshot; later additions
                 // never change existing colors, even when Docker IDs are replaced.
                 let mut names = containers

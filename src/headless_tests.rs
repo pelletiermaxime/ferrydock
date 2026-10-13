@@ -265,6 +265,70 @@ impl Harness {
         self.click_button(selector, MouseButton::Left);
     }
 
+    fn hover(&mut self, selector: &str, horizontal: f32) {
+        let bounds = self
+            .cx
+            .debug_bounds(self.window.into(), selector)
+            .unwrap()
+            .unwrap();
+        let position = gpui::point(
+            bounds.left() + bounds.size.width * horizontal,
+            bounds.top() + bounds.size.height * 0.4,
+        );
+        self.actions
+            .push(json!({"input": "hover", "selector": selector, "fraction": horizontal}));
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Modifiers::none(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.render_frame(cx);
+            })
+            .unwrap();
+        self.cx.run_until_parked();
+        self.settle_ui(300);
+    }
+
+    fn scroll_containers(&mut self, delta: f32) {
+        let bounds = self
+            .cx
+            .debug_bounds(self.window.into(), "containers-pane")
+            .unwrap()
+            .unwrap();
+        self.actions
+            .push(json!({"input": "wheel", "selector": "containers-pane", "delta": delta}));
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position: bounds.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(delta))),
+                        modifiers: Modifiers::none(),
+                        touch_phase: gpui::TouchPhase::Moved,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+        self.cx.run_until_parked();
+    }
+
+    fn tooltip_label(&mut self, selector: &'static str) -> String {
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.find(selector).label().unwrap().to_owned()
+            })
+            .unwrap()
+    }
+
     fn click_button(&mut self, selector: &str, button: MouseButton) {
         // Bounds come from the painted element, never desktop coordinates.
         let bounds = self
@@ -451,6 +515,85 @@ fn headless_gpu_user_flow() {
         h.observe(|v| v.containers.selected.clone()).as_deref(),
         Some("fixture-probe-running")
     );
+    h.deliver(Event::MetricsSession(1));
+    h.capture("metrics-collecting");
+    for index in 0..60 {
+        h.deliver(Event::Metrics {
+            session: 1,
+            id: "fixture-probe-running".into(),
+            result: Ok(crate::metrics::Sample {
+                collected: Instant::now() - Duration::from_secs((59 - index) * 2),
+                cpu_percent: Some(12.0 + ((index * 7) % 23) as f64 * 8.0),
+                memory_used: Some((144 + (index % 12) * 4) * 1024 * 1024),
+                memory_capacity: Some(512 * 1024 * 1024),
+                limits: Some(crate::metrics::Limits {
+                    memory: Some(512 * 1024 * 1024),
+                    cpu_cores: Some(2.0),
+                    cpuset: None,
+                }),
+                reset: false,
+            }),
+        });
+    }
+    let last_sample = h.observe(|v| {
+        v.metrics.containers["fixture-probe-running"]
+            .samples
+            .back()
+            .unwrap()
+            .clone()
+    });
+    h.deliver(Event::Metrics {
+        session: 1,
+        id: "fixture-standalone".into(),
+        result: Ok(crate::metrics::Sample {
+            limits: Some(crate::metrics::Limits::default()),
+            memory_capacity: Some(8 * 1024 * 1024 * 1024),
+            ..last_sample.clone()
+        }),
+    });
+    h.deliver(Event::Metrics {
+        session: 0,
+        id: "fixture-probe-running".into(),
+        result: Err("Old session".into()),
+    });
+    assert!(h.observe(|v| {
+        v.metrics.containers["fixture-probe-running"]
+            .live()
+            .is_some()
+    }));
+    h.deliver(Event::Metrics {
+        session: 1,
+        id: "fixture-probe-running".into(),
+        result: Err("Stats unavailable".into()),
+    });
+    assert!(h.observe(|v| {
+        v.metrics.containers["fixture-probe-running"]
+            .live()
+            .is_none()
+    }));
+    h.capture("metrics-unavailable");
+    h.deliver(Event::Metrics {
+        session: 1,
+        id: "fixture-probe-running".into(),
+        result: Ok(crate::metrics::Sample {
+            collected: Instant::now() - crate::metrics::STALE_AFTER - Duration::from_secs(1),
+            ..last_sample.clone()
+        }),
+    });
+    assert!(h.observe(|v| {
+        v.metrics.containers["fixture-probe-running"]
+            .live()
+            .is_none()
+    }));
+    h.capture("metrics-stale");
+    h.deliver(Event::Metrics {
+        session: 1,
+        id: "fixture-probe-running".into(),
+        result: Ok(crate::metrics::Sample {
+            collected: Instant::now(),
+            ..last_sample
+        }),
+    });
     let generation = h.observe(|v| v.container_logs.generation);
     h.deliver(Event::Log {
         generation,
@@ -462,6 +605,9 @@ fn headless_gpu_user_flow() {
             .to_vec(),
     });
     let initial = h.capture("containers-and-logs");
+    h.require_glyph_color(&initial, "cpu-history", 0x74d7b1);
+    h.require_glyph_color(&initial, "memory-history", 0x74d7b1);
+    h.require_glyph_color(&initial, "metrics-row-fixture-probe-running", 0x9eb2a8);
     h.require_glyph_color(&initial, "container-log-line-0", crate::ansi::PALETTE[2]);
     assert_eq!(
         h.observe(|v| v.container_logs.buffer.lines[0].text.clone()),
@@ -476,6 +622,62 @@ fn headless_gpu_user_flow() {
     h.require_glyph_color(&initial, "container-log-line-1", TEXT);
     h.require_glyph_color(&initial, "container-log-line-2", crate::ansi::PALETTE[2]);
     assert!(h.observe(|v| v.container_logs.buffer.lines[2].text == "done"));
+    h.hover("cpu-history", 0.35);
+    let cpu_hover = h.capture("cpu-chart-hover");
+    let first_cpu_label = h.tooltip_label("cpu-hover-value");
+    assert!(first_cpu_label.starts_with("CPU: ") && first_cpu_label.ends_with('%'));
+    h.require_glyph_color(&cpu_hover, "cpu-hover-value", TEXT);
+    h.hover("cpu-history", 0.8);
+    assert_ne!(
+        h.tooltip_label("cpu-hover-value"),
+        first_cpu_label,
+        "Hover must follow the actual sample under the cursor"
+    );
+    h.capture("cpu-chart-hover-next-sample");
+    h.hover("memory-history", 0.5);
+    let memory_hover = h.capture("memory-chart-hover");
+    let memory_label = h.tooltip_label("memory-hover-value");
+    assert!(
+        h.observe(|v| v.metrics.containers["fixture-probe-running"]
+            .samples
+            .iter()
+            .any(|sample| {
+                sample.memory_used.is_some_and(|used| {
+                    memory_label == format!("Memory: {}", crate::metrics::bytes(used))
+                })
+            })),
+        "Memory hover must use a measured byte value, rather than the capacity percentage"
+    );
+    h.require_glyph_color(&memory_hover, "memory-hover-value", TEXT);
+    h.hover("search", 0.5);
+    // The reported usability case: a small working set against a large limit.
+    for index in 0..20 {
+        h.deliver(Event::Metrics {
+            session: 1,
+            id: "fixture-probe-running".into(),
+            result: Ok(crate::metrics::Sample {
+                collected: Instant::now() - Duration::from_secs((19 - index) * 2),
+                cpu_percent: Some(0.12 + (index % 5) as f64 * 0.08),
+                memory_used: Some(25 * 1024 * 1024 + 100 * 1024 + (index % 4) * 128 * 1024),
+                memory_capacity: Some(2 * 1024 * 1024 * 1024),
+                limits: Some(crate::metrics::Limits {
+                    memory: Some(2 * 1024 * 1024 * 1024),
+                    cpu_cores: Some(2.0),
+                    cpuset: None,
+                }),
+                reset: index == 0,
+            }),
+        });
+    }
+    let low_usage = h.capture("metrics-low-usage");
+    h.require_glyph_color(&low_usage, "memory-history", 0x74d7b1);
+    h.hover("memory-history", 0.65);
+    assert!(
+        h.tooltip_label("memory-hover-value")
+            .starts_with("Memory: 25.")
+    );
+    h.capture("metrics-low-usage-hover");
+    h.hover("search", 0.5);
     assert!(
         !h.observe(|v| v.container_logs.buffer.text())
             .contains('\x1b')
@@ -591,6 +793,34 @@ fn headless_gpu_user_flow() {
             .unwrap()
             .is_some()
     );
+    h.click("row-fixture-probe-stopped");
+    h.deliver(Event::Metrics {
+        session: 1,
+        id: "fixture-probe-stopped".into(),
+        result: Err("Late stopped sample".into()),
+    });
+    assert!(!h.observe(|v| v.metrics.containers.contains_key("fixture-probe-stopped")));
+    h.capture("metrics-stopped");
+    h.scroll_containers(-120.0);
+    h.click("row-fixture-standalone");
+    let unlimited = h.observe(|v| {
+        v.metrics.containers["fixture-standalone"]
+            .samples
+            .back()
+            .unwrap()
+            .clone()
+    });
+    h.deliver(Event::Metrics {
+        session: 1,
+        id: "fixture-standalone".into(),
+        result: Ok(crate::metrics::Sample {
+            collected: Instant::now(),
+            ..unlimited
+        }),
+    });
+    h.capture("metrics-no-container-limit");
+    h.scroll_containers(120.0);
+    h.click("row-fixture-probe-running");
     h.click("all");
     assert!(h.observe(|view| view.containers.running_only));
 
@@ -702,6 +932,7 @@ fn headless_gpu_user_flow() {
     h.click("follow");
     assert!(!h.observe(|v| v.container_logs.follow));
     h.capture("logs-paused");
+    let generation = h.observe(|v| v.container_logs.generation);
     h.deliver(Event::Log {
         generation,
         data: (0..200)
@@ -759,12 +990,12 @@ fn headless_gpu_user_flow() {
     let initial_dock_height = h.dock_height();
     h.drag_dock(60.0);
     assert!(
-        h.dock_height() < initial_dock_height - 40.0,
+        h.dock_height() < initial_dock_height - 20.0,
         "Kit divider must resize the dock through pointer input"
     );
     h.drag_dock(250.0);
     assert!(
-        (h.dock_height() - 200.0).abs() < 2.0,
+        (h.dock_height() - 400.0).abs() < 2.0,
         "Dock minimum height must be enforced"
     );
     h.capture("kit-dock-resized");
@@ -935,7 +1166,24 @@ fn headless_gpu_user_flow() {
         generation: terminal_generation,
         data: b"\x1b[32mFerryDock headless GPU terminal\x1b[0m\r\n/ # ".to_vec(),
     });
+    let terminal_sample = h.observe(|v| {
+        v.metrics.containers["fixture-probe-running"]
+            .samples
+            .back()
+            .unwrap()
+            .clone()
+    });
+    h.deliver(Event::Metrics {
+        session: 1,
+        id: "fixture-probe-running".into(),
+        result: Ok(crate::metrics::Sample {
+            collected: Instant::now(),
+            ..terminal_sample.clone()
+        }),
+    });
     let terminal_image = h.capture("terminal-rendered");
+    h.require_glyph_color(&terminal_image, "cpu-metrics", TEXT);
+    h.require_glyph_color(&terminal_image, "memory-metrics", TEXT);
     h.drain_commands();
     h.cx.update_window(h.window.into(), |_, window, cx| {
         window.within("shell-choice").click(1, cx);
@@ -993,6 +1241,17 @@ fn headless_gpu_user_flow() {
     let inspection = h.inspection_value();
     let logs = h.observe(|v| v.container_logs.buffer.text());
     h.deliver(Event::Disconnected("Fixture Docker disconnected".into()));
+    h.deliver(Event::Metrics {
+        session: 1,
+        id: "fixture-probe-running".into(),
+        result: Ok(terminal_sample),
+    });
+    assert_eq!(h.observe(|v| v.metrics.session), None);
+    assert!(h.observe(|v| {
+        v.metrics.containers["fixture-probe-running"]
+            .error
+            .is_none()
+    }));
     let log_status = h.observe(|v| v.container_logs.status.clone());
     let terminal_status = h.cx.read_entity(&h.view, |v, cx| {
         v.terminal.view.as_ref().unwrap().read(cx).status.clone()
@@ -1721,7 +1980,7 @@ fn headless_gpu_user_flow() {
         "changed_pixels_after_search_lower_bound": changed_pixels, "screenshots": h.screenshots,
         "frame_timings": h.frame_timings,
         "log_performance": performance,
-        "checks": ["fixture discovery", "Kit appearance Settings pointer theme switching and default restoration", "theme preference persistence in isolated file", "light theme log glyph contrast", "settings preserve selected resource", "Kit container action menu opens and dismisses", "Kit right-click Inspect menu navigation", "Kit project action menu and disabled unassociated controls", "Kit Checkbox running filter and stopped rows", "Kit menu action blocks duplicate operation", "Kit RadioGroup shell choice disabled during live session", "theme switching preserves terminal generation and input focus", "Kit service Select search and keyboard confirmation", "search pointer focus", "keyboard search", "Kit Input select all and replacement", "Kit Input caret navigation and selection", "Kit Input Unicode backspace", "empty matches", "restored selection",
+        "checks": ["fixture discovery", "CPU and memory rows with configured limits", "painted native area charts with CPU-percent and MiB axes", "input-driven crosshair and tooltip sample values", "low memory usage remains readable against a 2 GiB limit", "collecting unavailable stale stopped and no-limit resource summaries", "metrics session guards reject old and stopped samples", "resource summaries remain visible above the terminal", "Kit appearance Settings pointer theme switching and default restoration", "theme preference persistence in isolated file", "light theme log glyph contrast", "settings preserve selected resource", "Kit container action menu opens and dismisses", "Kit right-click Inspect menu navigation", "Kit project action menu and disabled unassociated controls", "Kit Checkbox running filter and stopped rows", "Kit menu action blocks duplicate operation", "Kit RadioGroup shell choice disabled during live session", "theme switching preserves terminal generation and input focus", "Kit service Select search and keyboard confirmation", "search pointer focus", "keyboard search", "Kit Input select all and replacement", "Kit Input caret navigation and selection", "Kit Input Unicode backspace", "empty matches", "restored selection",
             "Kit Button Tab focus and Enter Space activation without shortcut leakage", "Kit Button disabled loading action guard",
             "Kit container and project TabBar pointer selection", "Kit Resizable pointer drag and minimum height",
             "Kit Inspect read-only typing guard", "Kit Inspect JSON syntax glyph colors", "Kit Inspect search without replacement",

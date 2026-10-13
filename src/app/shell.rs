@@ -172,8 +172,14 @@ impl Render for FerryDock {
                     )
                     .child(
                         resizable_panel()
-                            .size(px(340.0))
-                            .size_range(px(200.0)..Pixels::MAX)
+                            .size(px(430.0))
+                            .size_range(
+                                px(if self.projects.selected.is_some() {
+                                    200.0
+                                } else {
+                                    400.0
+                                })..Pixels::MAX,
+                            )
                             .child(
                                 self.detail(cx)
                                     .id("detail-pane")

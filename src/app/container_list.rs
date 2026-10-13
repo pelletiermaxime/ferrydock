@@ -318,6 +318,7 @@ impl FerryDock {
                                                         .child(container.status.clone()),
                                                 ),
                                         )
+                                        .child(this.metrics_row(container, cx))
                                         .child(
                                             div()
                                                 .w(px(140.0))

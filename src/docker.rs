@@ -128,6 +128,12 @@ pub enum Event {
     Connected(Connection),
     Disconnected(String),
     Snapshot(Vec<Container>),
+    MetricsSession(u64),
+    Metrics {
+        session: u64,
+        id: String,
+        result: Result<crate::metrics::Sample, String>,
+    },
     ComposeProjects(Vec<compose::Project>),
     ProjectLog {
         generation: u64,
@@ -436,6 +442,16 @@ async fn connected(
     let mut logs_cancel = cancel.child_token();
     let mut project_logs_cancel = cancel.child_token();
     let (project_snapshots, snapshots) = watch::channel(Vec::new());
+    static METRICS_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let metrics_session = METRICS_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    events.send(Event::MetricsSession(metrics_session)).await?;
+    tokio::spawn(crate::metrics::follow(
+        docker.clone(),
+        metrics_session,
+        snapshots.clone(),
+        events.clone(),
+        cancel.child_token(),
+    ));
     let mut terminal_cancel = cancel.child_token();
     let mut terminal = None::<(u64, mpsc::UnboundedSender<TerminalCommand>)>;
     let mut busy = HashSet::new();

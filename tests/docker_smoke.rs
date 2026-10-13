@@ -142,6 +142,43 @@ async fn docker_daily_loop_and_interactive_terminal() -> Result<()> {
             _ => {}
         }
     }
+    let sample = time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let Event::Metrics {
+                id: sampled,
+                result,
+                ..
+            } = receive(&mut events).await?
+                && sampled == id
+            {
+                let sample = result.map_err(anyhow::Error::msg)?;
+                if sample.cpu_percent.is_some() {
+                    return Ok::<_, anyhow::Error>(sample);
+                }
+            }
+        }
+    })
+    .await
+    .context("No CPU baseline from the resource sampler")??;
+    let limits = sample
+        .limits
+        .as_ref()
+        .context("Resource limits were not inspected")?;
+    assert_eq!(limits.memory, Some(64 * 1024 * 1024));
+    assert_eq!(limits.cpu_cores, Some(0.5));
+    assert_eq!(sample.memory_capacity, Some(64 * 1024 * 1024));
+    assert!(
+        sample
+            .memory_used
+            .is_some_and(|used| used > 0 && used < 64 * 1024 * 1024)
+    );
+    assert!(
+        sample
+            .cpu_percent
+            .is_some_and(|cpu| cpu.is_finite() && cpu >= 0.0)
+    );
+    println!("PASS real worker CPU baseline, memory usage, 64 MiB limit and 0.5 CPU quota");
+
     let populate = tokio::process::Command::new("docker")
         .args([
             "exec",

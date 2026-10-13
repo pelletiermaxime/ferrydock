@@ -169,19 +169,29 @@ impl FerryDock {
         detail =
             detail.child(
                 Toolbar::new("container-detail-toolbar")
+                    .h_auto()
+                    .min_h(px(64.0))
                     .gap_2()
                     .px_4()
-                    .py_2()
+                    .py_3()
                     .content(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_ellipsis()
-                            .child(container.name.clone())
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_ellipsis()
+                                    .child(container.name.clone()),
+                            )
                             .child(
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(rgb(colors.muted))
+                                    .text_ellipsis()
                                     .child(format!(
                                         "{} · {}",
                                         container.project.as_deref().unwrap_or("Standalone"),
@@ -221,6 +231,7 @@ impl FerryDock {
                     ),
             );
         let items = [Tab::Logs, Tab::Terminal, Tab::Inspect];
+        detail = detail.child(self.metrics_summary(container, cx));
         let tabs = TabBar::new("container-tabs")
             .small()
             .underline()

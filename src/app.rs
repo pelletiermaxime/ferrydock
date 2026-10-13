@@ -12,6 +12,7 @@ mod container_list;
 mod container_logs;
 mod containers;
 mod events;
+mod metrics;
 mod navigation;
 mod project_logs;
 mod projects;
@@ -52,6 +53,7 @@ pub struct FerryDock {
     connection: Option<Connection>,
     connection_error: Option<String>,
     containers: Containers,
+    metrics: metrics::Metrics,
     container_logs: ContainerLogs,
     terminal: Terminal,
     projects: Projects,
@@ -103,7 +105,7 @@ impl FerryDock {
                     .await;
                 if this
                     .update_in(cx, |this, window, cx| {
-                        let mut changed = false;
+                        let mut changed = this.metrics.expire();
                         let started = Instant::now();
                         for _ in 0..64 {
                             match this.events.try_recv() {
@@ -136,6 +138,7 @@ impl FerryDock {
             connection: None,
             connection_error: None,
             containers: Containers::new(search_input, search_focus, inspection),
+            metrics: metrics::Metrics::default(),
             container_logs: ContainerLogs::default(),
             terminal: Terminal::default(),
             projects: Projects::new(compose_focus),

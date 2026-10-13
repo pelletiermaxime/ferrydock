@@ -16,6 +16,7 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | --- | --- |
 | `containers.rs` | Discovery/search state, selection, container actions, and the container detail panel |
 | `container_list.rs` | Virtualized resource groups and Kit ListItem rows, tags, and empty states |
+| `metrics.rs` | Per-container resource history, freshness, compact rows and CPU/memory summary charts |
 | `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
 | `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
 | `projects.rs` | Compose associations, editable forms, operation state, and project controls |
@@ -40,6 +41,24 @@ dispatch starts collecting substantial feature-specific logic, move that logic
 into handlers in the owning module. Extract a separate GPUI entity when a panel
 needs an independent lifecycle, rather than splitting components merely to meet
 a line count.
+
+`src/metrics.rs` samples running containers through a separate Tokio worker task,
+with up to 16 concurrent one-shot Docker stats requests, a two-second pause between
+rounds and three-second request timeouts. Inspect-derived limits refresh every
+30 seconds. The UI retains at most 60 samples per running container, charts the
+last two minutes, and expires readings after eight seconds using Docker's sample
+timestamp. Memory usage follows Docker CLI's cgroup v1/v2 cache subtraction;
+CPU uses counter deltas and online CPU count, so it can exceed 100%. Worker session
+IDs reject readings from an earlier connection; discovery drops stopped/removed
+container histories and counter resets clear history after a restart.
+
+Resource plots use Kit `AreaChart` with natural curves, a zero baseline, labelled
+auto-scaled CPU-percent/MiB axes and interactive crosshairs/tooltips. Tooltips read
+the actual sample, while the curve is visual interpolation. Memory chart scale
+follows usage; configured limits and utilization stay in the footer. The latest
+contiguous history spans the plot width, up to two minutes; missing readings or
+collection gaps start a new plotted series. A container dock defaults to 430px
+and has a 400px minimum to retain room for the taller charts and tab content.
 
 ## UI components and appearance
 
@@ -314,8 +333,8 @@ For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag -a v0.5.1 -m "FerryDock 0.5.1"
-git push --atomic origin main v0.5.1
+git tag -a v0.6.0 -m "FerryDock 0.6.0"
+git push --atomic origin main v0.6.0
 ```
 
 Replace the example version with the version being released. The tag must match
@@ -327,7 +346,7 @@ To package a locally built release on an Ubuntu 24.04 x86-64 host, install
 build the binary and run:
 
 ```sh
-bash scripts/package-linux.sh v0.5.1
+bash scripts/package-linux.sh v0.6.0
 ```
 
 Output goes to `target/packages/`. Local builds on newer distributions may
