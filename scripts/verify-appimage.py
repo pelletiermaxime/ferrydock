@@ -116,6 +116,13 @@ def verify(appimage, evidence):
                 assert app.poll() is None, "AppImage exited during UI check"
                 run("import", "-window", window, str(image), env=env)
                 text = run("tesseract", str(image), "stdout", "--psm", "11", env=env)
+                if not all(word.lower() in text.lower() for word in expected):
+                    # Sparse-text segmentation can merge the focused Input's
+                    # border/caret with its glyphs. Try block segmentation on
+                    # the same screenshot, still requiring the exact text.
+                    text += "\n--- OCR block segmentation ---\n" + run(
+                        "tesseract", str(image), "stdout", "--psm", "6", env=env
+                    )
                 (evidence / f"{name}.txt").write_text(text)
                 if all(word.lower() in text.lower() for word in expected):
                     return
