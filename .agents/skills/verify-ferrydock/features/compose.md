@@ -17,7 +17,7 @@ Associate project files and manage the project from its bottom-dock workspace.
 - Choose Associate files, review the suggestions, and enter files/profiles one per line. The directory uses Kit Input and the three lists use Textarea. Tab/Shift+Tab cycle through fields; Ctrl+A selects all, typing replaces the selection, and Ctrl+V pastes. Escape cancels editing.
 - Save association. Missing files show a form error; controls remain unavailable until saved.
 - Click Start, Stop or Restart. Start creates/starts configured services without building images. Watch output in the bottom dock.
-- Switch to a container and back to the heading to inspect the retained result. Configuration edits the saved invocation.
+- Switch to a container and back to the heading, then select Operations to inspect the retained result; returning to the project opens Logs. Configuration edits the saved invocation.
 
 ## Driving it
 
@@ -35,5 +35,5 @@ Passing both commands proves the headless UI and real process boundaries separat
 - Actions apply to all services selected by the saved project configuration and profiles, including replicas.
 - Start uses `up --detach --no-build`; it may create/recreate containers and pull missing images. It does not run an image build.
 - Paths must be accessible locally. Switching Docker endpoints does not reuse a same-named project's association.
-- Closing/disconnecting terminates the tracked process but does not roll back Docker changes.
+- Closing the application or losing the Docker connection terminates the tracked process but does not roll back Docker changes. Switching between a container and a project does not cancel an ongoing operation.
 - Never verify against an existing user project. Settings and daemon state are separate from headless fixture events.
