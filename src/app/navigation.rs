@@ -127,8 +127,7 @@ impl FerryDock {
                 )
                 .into_iter()
                 .filter(|(group, _)| self.containers.group_expanded(group))
-                .map(|(_, members)| members)
-                .flatten()
+                .flat_map(|(_, members)| members)
                 .collect::<Vec<_>>();
                 let current = items
                     .iter()
