@@ -135,7 +135,29 @@ async fn image_worker_discovery_and_guarded_removal() -> Result<()> {
             .contains("used by")
     );
     docker::perform(&docker, &container_id, docker::Action::Stop).await?;
-    let images = inventory(&backend, &mut events, 2).await?;
+    // Docker's stop response can precede the stopped state in list results.
+    // Poll through the worker with fresh generations until discovery catches up.
+    let images = time::timeout(Duration::from_secs(20), async {
+        let mut generation = 2;
+        loop {
+            let images = inventory(&backend, &mut events, generation).await?;
+            let fixture = images
+                .iter()
+                .find(|image| image.id == image_id)
+                .context("Owned image absent after Stop")?;
+            if fixture
+                .containers
+                .iter()
+                .any(|container| container.id == container_id && container.state == "exited")
+            {
+                return Ok::<_, anyhow::Error>(images);
+            }
+            generation += 1;
+            time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .context("Worker inventory did not observe the stopped fixture")??;
     let fixture = images.iter().find(|image| image.id == image_id).unwrap();
     assert_eq!(fixture.containers[0].state, "exited");
     assert!(
@@ -228,7 +250,7 @@ async fn image_worker_discovery_and_guarded_removal() -> Result<()> {
         }) => {}
         other => bail!("Removed image still exists or unexpected inspect result: {other:?}"),
     }
-    let images = inventory(&backend, &mut events, 3).await?;
+    let images = inventory(&backend, &mut events, 1_000).await?;
     assert!(!images.iter().any(|image| image.id == image_id));
     assert!(!images.iter().any(|image| spare_ids.contains(&image.id)));
     assert!(images.iter().any(|image| image.id == tagged_id));

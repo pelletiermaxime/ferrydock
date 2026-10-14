@@ -52,7 +52,10 @@ FERRYDOCK_IMAGE_TEST_TAGGED_ID="$(docker image inspect --format '{{.Id}}' "$proj
 export FERRYDOCK_IMAGE_TEST_SPARE_IDS
 FERRYDOCK_IMAGE_TEST_SPARE_IDS="$(docker image inspect --format '{{.Id}}' "$project:spare"),$(docker image inspect --format '{{.Id}}' "$project:spare2")"
 echo "Images evidence: $evidence"
-cargo test --locked --offline "$@" --test images_smoke -- --ignored --nocapture >"$evidence/test.log" 2>&1
+if ! cargo test --locked --offline "$@" --test images_smoke -- --ignored --nocapture >"$evidence/test.log" 2>&1; then
+  cat "$evidence/test.log" >&2
+  exit 1
+fi
 cat "$evidence/test.log"
 cleanup
 trap - EXIT
