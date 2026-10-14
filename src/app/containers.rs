@@ -6,7 +6,7 @@ use super::ui::{empty_state, palette};
 use crate::ansi::Buffer as StyledLogBuffer;
 use crate::docker::Action;
 use crate::docker::Command;
-use crate::model::Container;
+use crate::model::{Container, GroupKey};
 use gpui::{prelude::*, *};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::IconName;
@@ -18,7 +18,7 @@ use gpui_kit::component::input::InputState;
 use gpui_kit::component::tab::Tab as KitTab;
 use gpui_kit::component::tab::TabBar;
 use gpui_kit::component::{menu::DropdownMenu, toolbar::Toolbar};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 pub(super) struct Containers {
     pub(super) source_colors: crate::source_colors::SourceColors,
@@ -31,6 +31,7 @@ pub(super) struct Containers {
     pub(super) search_input: Entity<InputState>,
     pub(super) search_focus: FocusHandle,
     pub(super) scroll: UniformListScrollHandle,
+    pub(super) collapsed_groups: BTreeSet<GroupKey>,
 }
 
 impl Containers {
@@ -50,6 +51,7 @@ impl Containers {
             search_input,
             search_focus,
             scroll: UniformListScrollHandle::default(),
+            collapsed_groups: BTreeSet::new(),
         }
     }
 }

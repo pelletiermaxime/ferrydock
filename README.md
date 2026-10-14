@@ -149,6 +149,13 @@ Enter files in override order, one per line, and include the environment files
 and profiles you normally use. Save the association to enable **Start**, **Stop**,
 **Restart**, and **Rebuild & restart**. **Configuration** lets you edit it later.
 
+Each project has a bordered group with indented container rows and a running/total
+count. Click its chevron to collapse or expand the group; the standalone group
+can be folded too. Folding keeps the current detail panel and session open.
+Groups remember their folded state while FerryDock is open, including through
+refreshes. Search temporarily reveals matching containers in folded groups;
+clearing search restores the folds. Up/Down skips folded container rows.
+
 The project's **Logs** tab combines output from all its containers, with a coloured
 service/container prefix on each line that matches the container's list marker.
 Use the searchable service picker to choose **All services** or

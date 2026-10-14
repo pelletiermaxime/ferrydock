@@ -5,6 +5,7 @@ Find containers, see their state and Compose project grouping, and select one to
 ## Sub-features
 
 - `containers.discover`: list running containers and group Compose-labelled services by project.
+- `containers.group`: bordered project/standalone groups with indented rows and chevrons; folds survive refresh, preserve the detail session, temporarily reveal search matches, and hide members from keyboard navigation.
 - `containers.search`: filter by visible container/project/image information and show an empty-match state.
 - `containers.running`: toggle the Running only checkbox to include stopped containers.
 - `containers.select`: select a row and navigate matching rows with Up/Down.
@@ -15,14 +16,15 @@ Find containers, see their state and Compose project grouping, and select one to
 - Launch FerryDock; the main list is the initial view.
 - Click Search or press Ctrl+F, then type. Escape/Enter leaves search; Ctrl+A selects the search text. Typing replaces the selection, or Backspace clears it.
 - Uncheck the Running only checkbox in the header to show all containers; the All containers indicator appears.
-- Click a container row or use Up/Down with the main view focused.
+- Click a group chevron to fold or unfold its containers. Click the project name to open project logs/controls. Search reveals matching rows while keeping stored folds; clear search to restore them.
+- Click a container row or use Up/Down with the main view focused; folded rows are skipped.
 - Click Refresh in the header or press Ctrl+R outside terminal/search focus. Scroll the list for additional rows.
 
 ## Driving it with native.py
 
 Preconditions: headless checks need cached dependencies and a usable Linux WGPU driver; native checks additionally need the skill's native Doctor and its owned Docker fixture/window.
 
-- **Headless development check:** `python3 scripts/verify-headless.py` supplies snapshots through the Docker event channel, clicks the actual Input to verify focus, dispatches Ctrl+F/text/Escape/Down through GPUI, and captures initial, empty-search, Input-editing and filtered frames. Assertions cover Select All without clearing, insertion at Home, selected-character replacement, End and Unicode Backspace, selected fixture identity, zero/nonzero matching rows and more than 1,000 changed pixels after search. This proves rendering/search/selection behavior; the running-only Checkbox is also driven and a stopped row is asserted visible; native clipboard and real daemon discovery remain outside this headless flow.
+- **Headless development check:** `python3 scripts/verify-headless.py` supplies snapshots through the Docker event channel, clicks the actual Input to verify focus, dispatches Ctrl+F/text/Escape/Down through GPUI, and captures initial, empty-search, Input-editing and filtered frames. Assertions cover Select All without clearing, insertion at Home, selected-character replacement, End and Unicode Backspace, selected fixture identity, zero/nonzero matching rows and more than 1,000 changed pixels after search. The flow also clicks Compose/standalone chevrons, checks rendered row visibility and preserved selection/worker sessions, delivers a fresh inventory while folded, searches to reveal members and clears search to restore the fold, navigates past folded rows and handles all groups folded. Expanded and folded groups have default/Light screenshot evidence. This proves rendering/search/selection behavior; the running-only Checkbox is also driven and a stopped row is asserted visible; native clipboard and real daemon discovery remain outside this headless flow.
 
 Native commands below record exact keys/clicks in `actions.jsonl`.
 

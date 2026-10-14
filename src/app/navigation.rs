@@ -125,17 +125,19 @@ impl FerryDock {
                     self.containers.running_only,
                     &self.containers.filter,
                 )
-                .into_values()
+                .into_iter()
+                .filter(|(group, _)| self.containers.group_expanded(group))
+                .map(|(_, members)| members)
                 .flatten()
                 .collect::<Vec<_>>();
                 let current = items
                     .iter()
-                    .position(|item| Some(&item.id) == self.containers.selected.as_ref())
-                    .unwrap_or(0);
-                let next = if key.key == "up" {
-                    current.saturating_sub(1)
-                } else {
-                    (current + 1).min(items.len().saturating_sub(1))
+                    .position(|item| Some(&item.id) == self.containers.selected.as_ref());
+                let next = match (current, key.key.as_str()) {
+                    (Some(current), "up") => current.saturating_sub(1),
+                    (Some(current), _) => (current + 1).min(items.len().saturating_sub(1)),
+                    (None, "up") => items.len().saturating_sub(1),
+                    (None, _) => 0,
                 };
                 if let Some(container) = items.get(next) {
                     self.select(container.id.clone(), window, cx);

@@ -5,7 +5,8 @@ use crate::model::{Container, GroupKey, groups};
 use gpui::{prelude::*, *};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{
-    Sizable,
+    Disableable, IconName, Sizable,
+    button::{Button, ButtonVariants},
     empty::EmptyContent,
     list::ListItem,
     menu::ContextMenuExt,
@@ -15,8 +16,14 @@ use gpui_kit::component::{
 };
 
 enum ResourceRow {
-    Heading(GroupKey, String),
-    Container(Box<Container>),
+    Heading(GroupKey, String, bool),
+    Container(Box<Container>, bool),
+}
+
+impl super::containers::Containers {
+    pub(super) fn group_expanded(&self, group: &GroupKey) -> bool {
+        !self.filter.is_empty() || !self.collapsed_groups.contains(group)
+    }
 }
 
 impl FerryDock {
@@ -51,7 +58,7 @@ impl FerryDock {
                         .filter(|container| container.project.as_ref() == Some(name))
                         .collect::<Vec<_>>();
                     format!(
-                        "{} running / {} containers · project controls",
+                        "{} running · {} containers",
                         members
                             .iter()
                             .filter(|container| container.running())
@@ -63,12 +70,22 @@ impl FerryDock {
                     format!("{count} container{}", if count == 1 { "" } else { "s" })
                 }
             };
-            rows.push(ResourceRow::Heading(project, count_label));
-            rows.extend(
-                containers
-                    .into_iter()
-                    .map(|container| ResourceRow::Container(Box::new(container))),
-            );
+            let expanded = self.containers.group_expanded(&project);
+            rows.push(ResourceRow::Heading(
+                project,
+                count_label,
+                expanded && count > 0,
+            ));
+            if expanded {
+                rows.extend(
+                    containers
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, container)| {
+                            ResourceRow::Container(Box::new(container), index + 1 == count)
+                        }),
+                );
+            }
         }
         if rows.is_empty() {
             let (title, description) = if self.connection.is_none() {
@@ -139,7 +156,7 @@ impl FerryDock {
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range
                     .map(|index| match rows.get(index) {
-                        Some(ResourceRow::Heading(project, count_label)) => {
+                        Some(ResourceRow::Heading(project, count_label, has_children)) => {
                             let selected = matches!(project, GroupKey::Compose(name)
                                 if this.projects.selected.as_ref() == Some(name));
                             let compose_project = match project {
@@ -147,14 +164,48 @@ impl FerryDock {
                                 GroupKey::Standalone => None,
                             };
                             let menu_project = compose_project.clone();
+                            let group = project.clone();
+                            let expanded = this.containers.group_expanded(project);
+                            let toggle_id = match project {
+                                GroupKey::Compose(name) => format!("toggle-compose-{name}"),
+                                GroupKey::Standalone => "toggle-standalone".into(),
+                            };
+                            let toggle_label = format!(
+                                "{} {}",
+                                if expanded { "Collapse" } else { "Expand" },
+                                project.label()
+                            );
+                            let toggle = Button::new(SharedString::from(toggle_id.clone()))
+                                .debug_selector(move || toggle_id.clone())
+                                .small()
+                                .ghost()
+                                .icon(if expanded {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronRight
+                                })
+                                .accessibility_label(toggle_label.clone())
+                                .tooltip(if this.containers.filter.is_empty() {
+                                    toggle_label
+                                } else {
+                                    "Search reveals matching containers; clear search to collapse"
+                                        .into()
+                                })
+                                .disabled(!this.containers.filter.is_empty())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if !this.containers.collapsed_groups.remove(&group) {
+                                        this.containers.collapsed_groups.insert(group.clone());
+                                    }
+                                    cx.notify();
+                                }));
                             let header = ListItem::new(SharedString::from(format!(
                                 "project-{}",
                                 project.label()
                             )))
                             .selected(selected)
                             .accessibility_label(project.label().to_owned())
-                            .disabled(compose_project.is_none())
-                            .h(px(56.0))
+                            .h(px(52.0))
                             .w_full()
                             .debug_selector({
                                 let label = project.label().to_owned();
@@ -166,10 +217,13 @@ impl FerryDock {
                             .px_2()
                             .py_2()
                             .rounded_md()
+                            .when(*has_children, |header| header.rounded_b_none())
+                            .border_1()
+                            .border_color(rgb(colors.border))
                             .bg(rgb(if selected {
                                 colors.selected
                             } else {
-                                colors.background
+                                colors.panel
                             }))
                             .text_size(px(12.0))
                             .when_some(compose_project, |header, name| {
@@ -185,26 +239,48 @@ impl FerryDock {
                                     .flex()
                                     .items_center()
                                     .justify_between()
+                                    .gap_3()
+                                    .child(toggle)
                                     .child(
                                         div()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(project.label().to_owned()),
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(
+                                                div()
+                                                    .text_ellipsis()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .child(project.label().to_owned()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(rgb(colors.muted))
+                                                    .child(
+                                                        if matches!(project, GroupKey::Compose(_)) {
+                                                            "Compose project"
+                                                        } else {
+                                                            "Individual containers"
+                                                        },
+                                                    ),
+                                            ),
                                     )
                                     .child(
                                         div()
+                                            .flex_shrink_0()
                                             .text_color(rgb(colors.muted))
                                             .child(count_label.clone()),
                                     ),
                             );
-                            if let Some(name) = menu_project {
+                            let header = if let Some(name) = menu_project {
                                 header
                                     .context_menu(this.project_menu(name, cx))
                                     .into_any_element()
                             } else {
                                 header.into_any_element()
-                            }
+                            };
+                            div().h(px(56.0)).pt_1().child(header).into_any_element()
                         }
-                        Some(ResourceRow::Container(container)) => {
+                        Some(ResourceRow::Container(container, last)) => {
                             let selected = this.projects.selected.is_none()
                                 && this.containers.selected.as_ref() == Some(&container.id);
                             let running = container.running();
@@ -229,9 +305,14 @@ impl FerryDock {
                                 .flex()
                                 .items_center()
                                 .gap_3()
-                                .px_3()
+                                .pl(px(38.0))
+                                .pr_3()
                                 .py_2()
-                                .rounded_md()
+                                .rounded_none()
+                                .border_l_1()
+                                .border_r_1()
+                                .border_color(rgb(colors.border))
+                                .when(*last, |row| row.border_b_1().rounded_b_md())
                                 .bg(rgb(if selected {
                                     colors.selected
                                 } else {

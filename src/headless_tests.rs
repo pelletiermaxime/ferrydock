@@ -592,6 +592,75 @@ fn headless_gpu_user_flow() {
         Some("fixture-probe-running")
     );
     let original_containers = h.observe(|v| v.containers.items.clone());
+    h.click("all");
+    h.capture("compose-groups-expanded");
+    h.click("all");
+    h.drain_commands();
+    h.click("toggle-compose-headless-fixture");
+    h.capture("compose-group-collapsed");
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "row-fixture-probe-running")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "row-fixture-standalone")
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        h.observe(|v| v.containers.selected.clone()).as_deref(),
+        Some("fixture-probe-running")
+    );
+    assert!(h.observe(|v| v.projects.selected.is_none()));
+    assert!(
+        h.drain_commands().is_empty(),
+        "Folding must preserve the detail session"
+    );
+    h.deliver(Event::Snapshot(original_containers.clone()));
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "row-fixture-probe-running")
+            .unwrap()
+            .is_none()
+    );
+
+    // Search temporarily reveals folded matches without discarding the fold.
+    h.key("ctrl-f");
+    h.type_text("headless-fixture");
+    h.capture("compose-group-search-revealed");
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "row-fixture-probe-running")
+            .unwrap()
+            .is_some()
+    );
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "row-fixture-probe-running")
+            .unwrap()
+            .is_none()
+    );
+    h.key("down");
+    assert_eq!(
+        h.observe(|v| v.containers.selected.clone()).as_deref(),
+        Some("fixture-standalone")
+    );
+    h.click("toggle-standalone");
+    h.capture("all-container-groups-collapsed");
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "row-fixture-standalone")
+            .unwrap()
+            .is_none()
+    );
+    h.key("up");
+    assert_eq!(
+        h.observe(|v| v.containers.selected.clone()).as_deref(),
+        Some("fixture-standalone")
+    );
+    h.click("toggle-standalone");
+    h.click("toggle-compose-headless-fixture");
+    h.click("row-fixture-probe-running");
     let mut many_containers = original_containers.clone();
     many_containers.extend((0..100).map(|index| {
         container(
@@ -820,6 +889,9 @@ fn headless_gpu_user_flow() {
     h.capture("settings-light");
     h.click("settings");
     let light = h.capture("containers-light");
+    h.click("toggle-compose-headless-fixture");
+    h.capture("compose-group-collapsed-light");
+    h.click("toggle-compose-headless-fixture");
     let light_source_color = h.observe(|v| {
         v.containers
             .source_colors
@@ -2099,6 +2171,11 @@ fn headless_gpu_user_flow() {
     });
     report["checks"].as_array_mut().unwrap().extend(
         [
+            "Compose and standalone chevrons collapse and expand rendered groups",
+            "Folding preserves the detail session and survives inventory refresh",
+            "Search reveals folded matches and restores folds when cleared",
+            "Keyboard selection skips folded rows and handles all groups folded",
+            "Bordered Compose groups render expanded and folded in FerryDock and Light themes",
             "Images Overview History Inspect tab clicks and keyboard shortcuts",
             "Images history commands UTC dates MiB sizes unavailable fields and copy feedback",
             "Images resizable history table shows aligned columns and a 53-command sample",

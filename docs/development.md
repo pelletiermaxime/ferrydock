@@ -172,6 +172,13 @@ Verification uses an isolated preference file.
 
 ## Docker and Compose boundaries
 
+The container list keeps Compose and standalone fold state in `Containers` for
+the application session. Kit buttons and ListItem rows form bordered groups;
+the virtualized list omits folded members instead of mounting each project's
+contents in an Accordion/Collapsible. Search temporarily expands matching groups
+without changing stored folds. Keyboard selection uses the same expansion rule;
+folding never changes the detail selection or opens/closes worker streams.
+
 Identify Compose membership from project/service labels and scope saved
 associations by Docker endpoint and project name. Labels and file suggestions
 cannot reconstruct the original environment and profile choices. Persist
