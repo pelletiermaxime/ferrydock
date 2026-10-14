@@ -111,6 +111,8 @@ impl FerryDock {
             return;
         };
         if self.connection.is_none()
+            || self.volumes.mutating()
+            || self.images.pruning.is_some()
             || self.containers.busy.contains_key(&container.id)
             || container
                 .project
@@ -148,6 +150,8 @@ impl FerryDock {
             ));
         };
         let unavailable = self.connection.is_none()
+            || self.volumes.mutating()
+            || self.images.pruning.is_some()
             || self.containers.busy.contains_key(&container.id)
             || container
                 .project

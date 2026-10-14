@@ -4,9 +4,10 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use anyhow::{Context, Result, bail};
 use bollard::{
     Docker,
-    models::{ContainerSummary, ImageSummary},
+    models::{ContainerSummary, ImageHistoryResponseItem, ImageSummary},
     query_parameters::{
-        ListContainersOptionsBuilder, ListImagesOptionsBuilder, RemoveImageOptionsBuilder,
+        ListContainersOptionsBuilder, ListImagesOptionsBuilder, PruneImagesOptions,
+        PruneImagesOptionsBuilder, RemoveImageOptionsBuilder,
     },
 };
 use tokio::{
@@ -38,6 +39,41 @@ pub struct Image {
 pub struct RemovalResult {
     pub id: String,
     pub result: Result<(), String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PruneMode {
+    Untagged,
+    AllUnused,
+}
+
+impl PruneMode {
+    fn options(self) -> PruneImagesOptions {
+        PruneImagesOptionsBuilder::default()
+            .filters(&HashMap::from([(
+                "dangling",
+                vec![if self == Self::Untagged {
+                    "true"
+                } else {
+                    "false"
+                }],
+            )]))
+            .build()
+    }
+}
+
+pub async fn prune(docker: &Docker, mode: PruneMode) -> Result<Option<u64>> {
+    // Let Docker decide eligibility, including stopped-container
+    // references. Inventory selection and search never limit a daemon prune.
+    let response = time::timeout(
+        Duration::from_secs(120),
+        docker.prune_images(Some(mode.options())),
+    )
+    .await
+    .context("Image pruning timed out; refresh to check Docker state")??;
+    Ok(response
+        .space_reclaimed
+        .and_then(|bytes| u64::try_from(bytes).ok()))
 }
 
 impl Image {
@@ -74,6 +110,17 @@ impl Image {
             .and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0))
             .map(|time| time.format("%Y-%m-%d %H:%M UTC").to_string())
             .unwrap_or_else(|| "Unavailable".into())
+    }
+
+    pub fn age_label(&self) -> String {
+        let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+            return "Unavailable".into();
+        };
+        self.age_label_at(now.as_secs() as i64)
+    }
+
+    fn age_label_at(&self, now: i64) -> String {
+        crate::resource_age::label(self.created_timestamp(), now)
     }
 
     pub fn created_timestamp(&self) -> Option<i64> {
@@ -161,6 +208,93 @@ pub async fn snapshot(docker: &Docker) -> Result<Vec<Image>> {
     .context("Image discovery timed out")?
 }
 
+pub async fn history(docker: &Docker, id: &str) -> Result<Vec<ImageHistoryResponseItem>> {
+    let rows = time::timeout(Duration::from_secs(15), docker.image_history(id))
+        .await
+        .context("Image history timed out")??;
+    let bytes: usize = rows
+        .iter()
+        .map(|row| {
+            row.id.len()
+                + row.created_by.len()
+                + row.comment.len()
+                + row.tags.iter().map(String::len).sum::<usize>()
+        })
+        .sum();
+    if rows.len() > 2_000 || bytes > 4 * 1_048_576 {
+        bail!("Image history exceeds FerryDock's display limit (2,000 entries / 4 MiB)");
+    }
+    Ok(rows)
+}
+
+pub async fn inspect(docker: &Docker, id: &str) -> Result<String> {
+    let value = time::timeout(Duration::from_secs(15), docker.inspect_image(id))
+        .await
+        .context("Image inspection timed out")??;
+    let text = serde_json::to_string_pretty(&value)?;
+    if text.len() > 4 * 1_048_576 {
+        bail!("Image inspection exceeds FerryDock's display limit (4 MiB)");
+    }
+    Ok(text)
+}
+
+/// One selected image at a time. A newer selection drops both in-flight reads;
+/// either result can still be displayed if the other endpoint fails.
+pub(crate) async fn follow_details(
+    docker: Docker,
+    mut requests: watch::Receiver<Option<(String, u64)>>,
+    events: mpsc::Sender<Event>,
+    cancel: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            changed = requests.changed() => if changed.is_err() { return; },
+        }
+        loop {
+            let request = requests.borrow_and_update().clone();
+            let Some((id, generation)) = request else {
+                break;
+            };
+            let load = async {
+                let history = async {
+                    let result = history(&docker, &id)
+                        .await
+                        .map_err(|error| format!("{error:#}"));
+                    let _ = events
+                        .send(Event::ImageHistory {
+                            id: id.clone(),
+                            generation,
+                            result,
+                        })
+                        .await;
+                };
+                let inspection = async {
+                    let result = inspect(&docker, &id)
+                        .await
+                        .map_err(|error| format!("{error:#}"));
+                    let _ = events
+                        .send(Event::ImageInspection {
+                            id: id.clone(),
+                            generation,
+                            result,
+                        })
+                        .await;
+                };
+                tokio::join!(history, inspection);
+            };
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                changed = requests.changed() => {
+                    if changed.is_err() { return; }
+                    continue;
+                },
+                _ = load => break,
+            }
+        }
+    }
+}
+
 pub async fn remove(docker: &Docker, id: &str) -> Result<()> {
     remove_many(docker, vec![id.to_owned()])
         .await
@@ -233,6 +367,34 @@ pub(crate) async fn follow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn age_labels_handle_unit_boundaries_missing_dates_and_future_clock_skew() {
+        let mut image = Image {
+            id: "age-fixture".into(),
+            tags: vec![],
+            digests: vec![],
+            size: None,
+            created: 1_000_000_000,
+            containers: vec![].into(),
+        };
+        for (elapsed, expected) in [
+            (59, "Just now"),
+            (60, "1 minute ago"),
+            (120, "2 minutes ago"),
+            (3_600, "1 hour ago"),
+            (2 * 86_400, "2 days ago"),
+            (30 * 86_400, "1 month ago"),
+            (365 * 86_400, "1 year ago"),
+        ] {
+            assert_eq!(image.age_label_at(image.created + elapsed), expected);
+        }
+        assert_eq!(image.age_label_at(image.created - 7_200), "In 2 hours");
+        for created in [0, -1, i64::MAX] {
+            image.created = created;
+            assert_eq!(image.age_label_at(1_000_000_000), "Unavailable");
+        }
+    }
 
     #[test]
     fn image_references_use_ids_even_when_tags_move_and_include_stopped_containers() {

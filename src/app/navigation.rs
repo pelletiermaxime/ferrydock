@@ -87,6 +87,10 @@ impl FerryDock {
         if self.settings_open {
             return;
         }
+        if self.volumes_open {
+            self.volumes_key(event, window, cx);
+            return;
+        }
         if self.images_open {
             self.images_key(event, window, cx);
             return;

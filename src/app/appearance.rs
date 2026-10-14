@@ -150,7 +150,7 @@ impl FerryDock {
         cx: &mut Context<Self>,
     ) {
         self.settings_open = open;
-        if !open && self.images_open {
+        if !open && (self.images_open || self.volumes_open) {
             self.focus.focus(window, cx);
         } else if !open && let Some(form) = &self.projects.form {
             use gpui::Focusable;

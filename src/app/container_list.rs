@@ -5,7 +5,13 @@ use crate::model::{Container, GroupKey, groups};
 use gpui::{prelude::*, *};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{
-    Sizable, empty::EmptyContent, list::ListItem, menu::ContextMenuExt, spinner::Spinner, tag::Tag,
+    Sizable,
+    empty::EmptyContent,
+    list::ListItem,
+    menu::ContextMenuExt,
+    scroll::{Scrollbar, ScrollbarMode},
+    spinner::Spinner,
+    tag::Tag,
 };
 
 enum ResourceRow {
@@ -127,7 +133,7 @@ impl FerryDock {
                 )
                 .into_any_element();
         }
-        uniform_list(
+        let list = uniform_list(
             "containers-scroll",
             rows.len().max(1),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
@@ -357,7 +363,22 @@ impl FerryDock {
         .track_scroll(&self.containers.scroll)
         .flex_1()
         .min_h_0()
-        .p_3()
-        .into_any_element()
+        .p_3();
+        div()
+            .id("containers-viewport")
+            .test_support()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .overflow_hidden()
+            .child(list)
+            .child(
+                Scrollbar::vertical(&self.containers.scroll)
+                    .id("containers-scrollbar")
+                    .mode(ScrollbarMode::Always),
+            )
+            .into_any_element()
     }
 }

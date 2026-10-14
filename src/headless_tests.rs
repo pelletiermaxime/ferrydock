@@ -91,7 +91,7 @@ impl Harness {
         let platform = gpui_platform::current_platform(true);
         let mut cx = HeadlessAppContext::with_platform(
             platform.text_system(),
-            Arc::new(gpui_kit::assets::Assets),
+            Arc::new(crate::assets::Assets),
             || {
                 // Never fall back
                 // to a no-op renderer: GPU initialization failure must fail the test.
@@ -200,6 +200,23 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
+    fn drag_list_scrollbar(&mut self, viewport: &'static str, to_end: bool) {
+        self.actions
+            .push(json!({"input": "list-scrollbar-drag", "viewport": viewport, "to_end": to_end}));
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let bounds = window.find(viewport).bounds();
+                let top = gpui::point(bounds.right() - px(6.0), bounds.top() + px(12.0));
+                let bottom = gpui::point(top.x, bounds.bottom() - px(12.0));
+                let (from, to) = if to_end { (top, bottom) } else { (bottom, top) };
+                window.drag(from, to, cx);
+            })
+            .unwrap();
+        self.cx.run_until_parked();
+        self.settle_ui(300);
+    }
+
     fn compose_values(&self) -> [SharedString; 4] {
         self.cx.read_entity(&self.view, |view, cx| {
             let form = view.projects.form.as_ref().expect("Open Compose form");
@@ -263,7 +280,11 @@ impl Harness {
 
     fn click(&mut self, selector: &str) {
         self.click_button(selector, MouseButton::Left);
-        if selector == "image-remove" && self.observe(|v| v.images.confirmation.is_some()) {
+        if (selector == "image-remove" && self.observe(|v| v.images.confirmation.is_some()))
+            || (selector == "image-prune" && self.observe(|v| v.images.prune_review))
+            || (selector == "volume-remove" && self.observe(|v| v.volumes.confirmation.is_some()))
+            || (selector == "volume-prune" && self.observe(|v| v.volumes.prune_review))
+        {
             self.settle_ui(300);
         }
     }
@@ -320,6 +341,35 @@ impl Harness {
                     gpui::ScrollWheelEvent {
                         position: bounds.center(),
                         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(delta))),
+                        modifiers: Modifiers::none(),
+                        touch_phase: gpui::TouchPhase::Moved,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+        self.cx.run_until_parked();
+    }
+
+    fn history_click_line(&mut self, line: usize, button: MouseButton) {
+        self.click_button(&format!("history-row-{line}"), button);
+    }
+
+    fn history_scroll(&mut self, x: f32, y: f32) {
+        let bounds = self
+            .cx
+            .debug_bounds(self.window.into(), "image-history-table")
+            .unwrap()
+            .unwrap();
+        self.actions
+            .push(json!({"input":"history wheel", "x":x,"y":y}));
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position: bounds.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(x), px(y))),
                         modifiers: Modifiers::none(),
                         touch_phase: gpui::TouchPhase::Moved,
                     }
@@ -541,6 +591,28 @@ fn headless_gpu_user_flow() {
         h.observe(|v| v.containers.selected.clone()).as_deref(),
         Some("fixture-probe-running")
     );
+    let original_containers = h.observe(|v| v.containers.items.clone());
+    let mut many_containers = original_containers.clone();
+    many_containers.extend((0..100).map(|index| {
+        container(
+            &format!("scroll-fixture-{index:03}"),
+            &format!("scroll-fixture-{index:03}"),
+            "running",
+            Some("scroll-fixture"),
+        )
+    }));
+    h.deliver(Event::Snapshot(many_containers));
+    h.capture("containers-scrollbar-top");
+    h.drag_list_scrollbar("containers-viewport", true);
+    assert!(h.observe(|v| v.containers.scroll.0.borrow().base_handle.offset().y < px(-1000.0)));
+    assert_eq!(
+        h.observe(|v| v.containers.selected.clone()).as_deref(),
+        Some("fixture-probe-running")
+    );
+    h.capture("containers-scrollbar-dragged");
+    h.drag_list_scrollbar("containers-viewport", false);
+    assert!(h.observe(|v| v.containers.scroll.0.borrow().base_handle.offset().y > px(-100.0)));
+    h.deliver(Event::Snapshot(original_containers));
     h.deliver(Event::MetricsSession(1));
     h.capture("metrics-collecting");
     for index in 0..60 {
@@ -1998,6 +2070,7 @@ fn headless_gpu_user_flow() {
     .unwrap();
 
     verify_images_workspace(&mut h);
+    verify_volumes_workspace(&mut h);
 
     let mut report = json!({
         "status": "passed", "renderer": "GPUI Kit gpui-pre WgpuHeadlessRenderer",
@@ -2026,6 +2099,16 @@ fn headless_gpu_user_flow() {
     });
     report["checks"].as_array_mut().unwrap().extend(
         [
+            "Images Overview History Inspect tab clicks and keyboard shortcuts",
+            "Images history commands UTC dates MiB sizes unavailable fields and copy feedback",
+            "Images resizable history table shows aligned columns and a 53-command sample",
+            "Images native divider dragging and metadata toggles preserve widths and selected rows",
+            "Images history filtering context-copy horizontal wheel and first-last row navigation",
+            "Images full-command dialog double-click Enter Close read-only typing and search",
+            "Images history virtualizes 2000 entries and renders the Light theme",
+            "Images inspection JSON syntax colors read-only typing guard and built-in search",
+            "Images independent detail errors refresh retries and empty history",
+            "Images selected-ID generation closed-workspace and disconnect detail guards",
             "Images column-header clicks sort ascending and descending with rendered row order",
             "Images numeric size sorting keeps unavailable last",
             "Images sorting survives search and refresh without selection or session changes",
@@ -2034,6 +2117,23 @@ fn headless_gpu_user_flow() {
             "Images bulk review includes hidden selections and sends exact immutable IDs",
             "Images partial bulk results retain failed selections; full success clears selection",
             "Images bulk duplicate and stale-operation guards",
+            "Volumes sidebar preserves container and terminal sessions",
+            "Volumes name driver and Compose-project keyboard search",
+            "Volumes stopped reference guards and container navigation",
+            "Volumes Cancel Escape confirmation and exact-name removal requests",
+            "Volumes pending duplicate success failure and refreshed-reference guards",
+            "Volumes stale generation and disconnected operation guards",
+            "Volumes virtualized 10000-row inventory and Light theme",
+            "Volumes sortable Name Driver Age References headers with aligned age cells",
+            "Volumes age sorts by creation instant and unavailable stays last in both directions",
+            "Volumes Ctrl-click selection persists through sorting search and fresh inventory",
+            "Volumes bulk review includes hidden and protected selections",
+            "Volumes partial results retain failures and complete success clears selection",
+            "Volumes bulk duplicate stale-operation and disconnect guards",
+            "Volumes prune anonymous/all-unused review Cancel Escape Enter guard and unfiltered request",
+            "Volumes prune pending duplicate and container/image conflict guards",
+            "Volumes prune success failure zero-space unavailable-space and cache/selection reconciliation",
+            "Volumes prune workspace and disconnected stale-operation guards",
         ]
         .map(Value::from),
     );
@@ -2050,14 +2150,105 @@ fn headless_gpu_user_flow() {
     println!("Headless GPU evidence: {}", h.evidence.display());
 }
 
+fn verify_image_prune(h: &mut Harness, inventory: &[crate::images::Image]) {
+    use crate::images::PruneMode;
+    let selection = h.observe(|v| v.images.selection.clone());
+    h.drain_commands();
+    h.click("image-prune");
+    assert!(h.observe(|v| v.images.prune_review));
+    h.capture("images-prune-review");
+    h.key("enter");
+    assert!(h.observe(|v| v.images.prune_review && v.images.pruning.is_none()));
+    h.click("image-prune-cancel");
+    assert!(!h.observe(|v| v.images.prune_review));
+    h.click("image-prune");
+    h.key("escape");
+    assert!(!h.observe(|v| v.images.prune_review));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::PruneImages { .. }))
+    );
+
+    // Search/selection must not become filters on this daemon-wide action.
+    h.key("ctrl-f");
+    h.type_text("postgres");
+    h.key("escape");
+    for (selector, expected, result) in [
+        (
+            "image-prune-untagged",
+            PruneMode::Untagged,
+            Ok(Some(2 * 1_048_576)),
+        ),
+        (
+            "image-prune-unused",
+            PruneMode::AllUnused,
+            Err("fixture prune denied".into()),
+        ),
+        ("image-prune-unused", PruneMode::AllUnused, Ok(None)),
+    ] {
+        h.click("image-prune");
+        h.click(selector);
+        let operation = h.observe(|v| v.images.pruning.unwrap());
+        assert!(!h.observe(|v| v.images.prune_review));
+        assert_eq!(h.drain_commands().iter().filter(|command| matches!(command, Command::PruneImages { mode, operation: current } if *mode == expected && *current == operation)).count(), 1);
+        h.click("image-prune");
+        h.click("image-remove");
+        assert!(
+            h.drain_commands().is_empty(),
+            "Pending prune blocks duplicate and removal requests"
+        );
+        h.capture("images-prune-pending");
+        h.deliver(Event::ImagesPruned {
+            operation: operation + 1,
+            result: Ok(Some(99)),
+        });
+        assert_eq!(h.observe(|v| v.images.pruning), Some(operation));
+        h.deliver(Event::ImagesPruned { operation, result });
+        assert!(h.observe(|v| v.images.pruning.is_none()));
+        assert!(
+            h.drain_commands()
+                .iter()
+                .any(|command| matches!(command, Command::Images { .. }))
+        );
+        h.settle_ui(300);
+        assert!(
+            h.notification_count() > 0,
+            "Prune completion must show feedback"
+        );
+        h.capture(if expected == PruneMode::Untagged {
+            "images-prune-success"
+        } else {
+            "images-prune-feedback"
+        });
+        h.dismiss_image_feedback();
+        let generation = h.observe(|v| v.images.generation);
+        h.deliver(Event::Images {
+            generation,
+            result: Ok(inventory.to_vec()),
+        });
+        assert_eq!(h.observe(|v| v.images.selection.clone()), selection);
+    }
+    h.key("ctrl-f");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    h.drain_commands();
+}
+
 fn verify_images_workspace(h: &mut Harness) {
     use crate::images::{Image, ImageContainer};
+    let connection = h.observe(|v| v.connection.clone().unwrap());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
     let unused = Image {
         id: format!("sha256:{}", "a".repeat(64)),
         tags: vec!["ferrydock-demo:latest".into()],
         digests: vec![],
         size: Some(128 * 1_048_576),
-        created: 1_792_000_000,
+        created: now - 2 * 86_400,
         containers: vec![].into(),
     };
     let used = Image {
@@ -2065,7 +2256,7 @@ fn verify_images_workspace(h: &mut Harness) {
         tags: vec!["postgres:demo".into()],
         digests: vec![],
         size: Some(32 * 1_048_576),
-        created: 1_791_913_600,
+        created: now - 3 * 86_400,
         containers: vec![ImageContainer {
             id: "fixture-probe-stopped".into(),
             name: "demo-database-stopped".into(),
@@ -2101,6 +2292,9 @@ fn verify_images_workspace(h: &mut Harness) {
         result: Ok(inventory.clone()),
     });
     h.capture("images-inventory");
+    verify_image_details(h, &inventory);
+    verify_image_prune(h, &inventory);
+    generation = h.observe(|v| v.images.generation);
     h.cx.update_window(h.window.into(), |_, window, cx| {
         window.render_frame(cx);
         let row = window.find("image-row-aaaaaaaaaaaa").bounds();
@@ -2245,6 +2439,9 @@ fn verify_images_workspace(h: &mut Harness) {
     h.click("settings");
     assert!(h.observe(|v| v.images_open && !v.settings_open));
     h.capture("images-light");
+    h.click("image-prune");
+    h.capture("images-prune-light");
+    h.click("image-prune-cancel");
     h.click("settings");
     h.click("theme-reset");
     h.click("settings");
@@ -2260,6 +2457,13 @@ fn verify_images_workspace(h: &mut Harness) {
         result: Ok(many),
     });
     h.capture("images-large-inventory");
+    let selection = h.observe(|v| v.images.selection.clone());
+    h.drag_list_scrollbar("images-viewport", true);
+    assert!(h.observe(|v| v.images.scroll.0.borrow().base_handle.offset().y < px(-1000.0)));
+    assert_eq!(h.observe(|v| v.images.selection.clone()), selection);
+    h.capture("images-scrollbar-dragged");
+    h.drag_list_scrollbar("images-viewport", false);
+    assert!(h.observe(|v| v.images.scroll.0.borrow().base_handle.offset().y > px(-100.0)));
     assert!(
         h.observe(|v| v.images.rows_rendered.get()) < 40,
         "Image list must virtualize a large inventory"
@@ -2320,6 +2524,8 @@ fn verify_images_workspace(h: &mut Harness) {
         result: Err("Fixture inventory failure".into()),
     });
     h.capture("images-discovery-failed");
+    h.click("image-prune");
+    assert!(!h.observe(|v| v.images.prune_review));
     h.deliver(Event::Images {
         generation,
         result: Ok(vec![unused.clone(), used, untagged]),
@@ -2328,10 +2534,26 @@ fn verify_images_workspace(h: &mut Harness) {
     h.click("image-remove");
     h.click("image-confirm-remove");
     let operation = h.observe(|v| v.images.busy[&unused.id]);
+    h.click_tab("image-tabs", 1);
+    let detail_generation = h.observe(|v| v.images.details.generation);
     h.deliver(Event::Disconnected("Fixture Docker disconnect".into()));
+    h.deliver(Event::ImageHistory {
+        id: unused.id.clone(),
+        generation: detail_generation,
+        result: Ok(vec![]),
+    });
+    h.deliver(Event::ImageInspection {
+        id: unused.id.clone(),
+        generation: detail_generation,
+        result: Ok("stale disconnected inspection".into()),
+    });
+    assert!(
+        h.observe(|v| v.images.details.history.is_none() && v.images.details.inspection.is_none())
+    );
+    h.capture("images-history-disconnected");
     h.deliver(Event::Images {
         generation,
-        result: Ok(inventory),
+        result: Ok(inventory.clone()),
     });
     h.deliver(Event::ImageRemoved {
         id: unused.id,
@@ -2347,6 +2569,537 @@ fn verify_images_workspace(h: &mut Harness) {
             .any(|image| image.id == format!("sha256:{}", "a".repeat(64)))
     }));
     h.capture("images-disconnected");
+    h.deliver(Event::Connected(connection.clone()));
+    let generation = h.observe(|v| v.images.generation);
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    assert!(h.drain_commands().iter().any(|c| matches!(c, Command::ImageDetails { id, .. } if id == &format!("sha256:{}", "a".repeat(64)))), "Reconnect reloads active image details");
+    h.key("ctrl-1");
+    h.click("image-prune");
+    assert!(h.observe(|v| v.images.prune_review));
+    h.deliver(Event::Disconnected(
+        "Fixture disconnected during prune review".into(),
+    ));
+    assert!(!h.observe(|v| v.images.prune_review));
+    assert!(
+        !h.cx
+            .update_window(h.window.into(), |_, window, cx| window
+                .has_active_dialog(cx))
+            .unwrap()
+    );
+    h.deliver(Event::Connected(connection));
+    let generation = h.observe(|v| v.images.generation);
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(inventory),
+    });
+    h.click("image-prune");
+    h.click("image-prune-unused");
+    let operation = h.observe(|v| v.images.pruning.unwrap());
+    h.deliver(Event::Disconnected(
+        "Fixture disconnected during pruning".into(),
+    ));
+    h.drain_commands();
+    h.deliver(Event::ImagesPruned {
+        operation,
+        result: Ok(Some(1_048_576)),
+    });
+    assert!(h.observe(|v| v.images.pruning.is_none() && !v.images.loaded));
+    assert!(
+        h.drain_commands().is_empty(),
+        "Disconnected prune completion is ignored"
+    );
+    h.capture("images-prune-disconnected");
+}
+
+fn verify_image_details(h: &mut Harness, inventory: &[crate::images::Image]) {
+    use super::image_details::ImageTab;
+    use bollard::models::ImageHistoryResponseItem;
+    let id = inventory[0].id.clone();
+    assert!(h.observe(|v| v.images.details.tab == ImageTab::Overview));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|c| matches!(c, Command::ImageDetails { .. }))
+    );
+    h.click_tab("image-tabs", 1);
+    let generation = h.observe(|v| v.images.details.generation);
+    assert!(h.drain_commands().iter().any(|c| matches!(c, Command::ImageDetails { id: current, generation: active } if current == &id && *active == generation)));
+    h.capture("images-history-loading");
+    let rows = vec![
+        ImageHistoryResponseItem {
+            id: id.clone(),
+            created: 1_792_000_000,
+            created_by: "CMD [\"/bin/sh\"]".into(),
+            size: 0,
+            comment: "buildkit.dockerfile.v0".into(),
+            ..Default::default()
+        },
+        ImageHistoryResponseItem {
+            id: "<missing>".into(),
+            created: 1_791_900_000,
+            created_by: format!(
+                "RUN /bin/sh -c {}",
+                "echo complete-build-command; ".repeat(20)
+            ),
+            size: 3 * 1_048_576,
+            ..Default::default()
+        },
+        ImageHistoryResponseItem {
+            id: "<missing>".into(),
+            created: 0,
+            size: -1,
+            ..Default::default()
+        },
+    ];
+    h.deliver(Event::ImageHistory {
+        id: id.clone(),
+        generation,
+        result: Ok(rows.clone()),
+    });
+    h.deliver(Event::ImageInspection {
+        id: id.clone(),
+        generation,
+        result: Err("Fixture inspection unavailable".into()),
+    });
+    h.capture("images-history");
+    assert_eq!(
+        h.observe(|v| v
+            .images
+            .details
+            .history
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .len()),
+        3
+    );
+    h.cx.read_entity(&h.view, |view, cx| {
+        let table = view.images.details.history_view.table.read(cx);
+        assert_eq!(table.delegate().columns, [true; 3]);
+        assert_eq!(table.delegate().active_columns(), vec![0, 1, 2, 3, 4]);
+        assert_eq!(table.delegate().visible.len(), 3);
+    });
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let command = window.find("history-cell-1-1").bounds();
+        let size = window.find("history-cell-1-2").bounds();
+        assert!(
+            command.right() <= size.origin.x,
+            "Long commands must stay inside their column"
+        );
+    })
+    .unwrap();
+    h.history_click_line(0, MouseButton::Left);
+    let width = h.cx.read_entity(&h.view, |view, cx| {
+        view.images
+            .details
+            .history_view
+            .table
+            .read(cx)
+            .delegate()
+            .widths[1]
+    });
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let header = window
+            .within("image-history-table")
+            .find(("col-header", 1_usize))
+            .bounds();
+        let from = gpui::point(header.right() - px(1.0), header.center().y);
+        window.drag(from, from + gpui::point(px(200.0), px(0.0)), cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    h.capture("images-history-table-resized");
+    h.cx.read_entity(&h.view, |view, cx| {
+        assert!(
+            view.images
+                .details
+                .history_view
+                .table
+                .read(cx)
+                .delegate()
+                .widths[1]
+                > width + px(40.0),
+            "Pointer dragging must resize the command column"
+        )
+    });
+    for column in 0..3 {
+        h.click("image-history-columns");
+        h.cx.update_window(h.window.into(), |_, window, cx| {
+            window.within("popup-menu").click(column, cx)
+        })
+        .unwrap();
+        h.cx.run_until_parked();
+    }
+    h.cx.read_entity(&h.view, |view, cx| {
+        let table = view.images.details.history_view.table.read(cx);
+        assert_eq!(table.delegate().columns, [false; 3]);
+        assert_eq!(table.selected_row(), Some(0));
+        assert!(table.delegate().widths[1] > width + px(40.0));
+    });
+    h.capture("images-history-command-only");
+    h.key("ctrl-f");
+    h.type_text("complete-build-command");
+    h.cx.read_entity(&h.view, |view, cx| {
+        assert_eq!(
+            view.images
+                .details
+                .history_view
+                .table
+                .read(cx)
+                .delegate()
+                .visible,
+            vec![1]
+        )
+    });
+    h.capture("images-history-search");
+    h.key("escape");
+    h.history_click_line(1, MouseButton::Right);
+    h.capture("images-history-context-menu");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.within("popup-menu").click(0, cx)
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    h.cx.update_window(h.window.into(), |_, _, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(rows[1].created_by.clone())
+        )
+    })
+    .unwrap();
+    h.history_click_line(1, MouseButton::Left);
+    h.key("ctrl-c");
+    h.key("enter");
+    assert!(h.observe(|v| v.images.details.history_view.command_open));
+    h.capture("images-history-full-command");
+    h.key("ctrl-a");
+    h.type_text("must-not-edit-command");
+    h.cx.read_entity(&h.view, |view, cx| {
+        assert_eq!(
+            view.images
+                .details
+                .history_view
+                .command_editor
+                .read(cx)
+                .value(),
+            rows[1].created_by
+        )
+    });
+    h.key("ctrl-f");
+    h.type_text("complete-build-command");
+    h.cx.read_entity(&h.view, |view, cx| {
+        let search = view
+            .images
+            .details
+            .history_view
+            .command_editor
+            .read(cx)
+            .search_session();
+        assert!(search.open && !search.replace_mode);
+        assert_eq!(search.matcher.len(), 20);
+    });
+    h.capture("images-history-full-command-search");
+    h.key("escape");
+    h.click("history-command-close");
+    assert!(!h.observe(|v| v.images.details.history_view.command_open));
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let position = window.find("history-row-1").bounds().center();
+        window.dispatch_event(
+            MouseDownEvent {
+                position,
+                button: MouseButton::Left,
+                modifiers: Modifiers::none(),
+                click_count: 2,
+                first_mouse: false,
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.dispatch_event(
+            MouseUpEvent {
+                position,
+                button: MouseButton::Left,
+                modifiers: Modifiers::none(),
+                click_count: 2,
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    assert!(
+        h.observe(|v| v.images.details.history_view.command_open),
+        "Double click must open the full command"
+    );
+    h.click("history-command-close");
+    h.key("ctrl-f");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    for column in 0..3 {
+        h.click("image-history-columns");
+        h.cx.update_window(h.window.into(), |_, window, cx| {
+            window.within("popup-menu").click(column, cx)
+        })
+        .unwrap();
+        h.cx.run_until_parked();
+    }
+    h.capture("images-history-columns");
+    let left =
+        h.cx.debug_bounds(h.window.into(), "history-header-command")
+            .unwrap()
+            .unwrap()
+            .origin
+            .x;
+    h.history_scroll(-300.0, 0.0);
+    h.capture("images-history-horizontal-scroll");
+    let moved =
+        h.cx.debug_bounds(h.window.into(), "history-header-command")
+            .unwrap()
+            .unwrap()
+            .origin
+            .x;
+    assert!(moved < left - px(30.0));
+    h.history_scroll(10_000.0, 0.0);
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let header = window
+            .within("image-history-table")
+            .find(("col-header", 1_usize))
+            .bounds();
+        let from = gpui::point(header.right() - px(1.0), header.center().y);
+        window.drag(from, from - gpui::point(px(200.0), px(0.0)), cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    let realistic = (0..53)
+        .map(|index| ImageHistoryResponseItem {
+            created_by: match index % 3 {
+                0 => "USER www-data".into(),
+                1 => format!("RUN /bin/sh -c echo build-step-{index}"),
+                _ => "WORKDIR /var/www/html".into(),
+            },
+            ..rows[index % rows.len()].clone()
+        })
+        .collect();
+    h.deliver(Event::ImageHistory {
+        id: id.clone(),
+        generation,
+        result: Ok(realistic),
+    });
+    h.capture("images-history-53-commands");
+    h.cx.read_entity(&h.view, |view, cx| {
+        let table = view.images.details.history_view.table.read(cx);
+        assert_eq!(table.delegate().visible.len(), 53);
+        assert!(table.visible_range().rows().len() >= 5);
+    });
+    h.deliver(Event::ImageHistory {
+        id: id.clone(),
+        generation,
+        result: Ok(rows.clone()),
+    });
+    h.click_tab("image-tabs", 2);
+    assert!(h.observe(|v| v.images.details.tab == ImageTab::Inspect));
+    assert!(
+        h.drain_commands().is_empty(),
+        "Tab changes reuse selected-image results"
+    );
+    h.capture("images-inspect-failed");
+    h.key("ctrl-f");
+    h.type_text("ferry");
+    h.deliver(Event::ImageInspection {
+        id: id.clone(),
+        generation,
+        result: Err("Fixture error while searching inventory".into()),
+    });
+    h.type_text("dock");
+    assert_eq!(
+        h.observe(|v| v.images.filter.clone()),
+        "ferrydock",
+        "An async inspection error must preserve inventory-search focus"
+    );
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    // Refresh retries both endpoints without changing the selected tab.
+    h.key("ctrl-r");
+    let inventory_generation = h.observe(|v| v.images.generation);
+    h.deliver(Event::Images {
+        generation: inventory_generation,
+        result: Ok(inventory.to_vec()),
+    });
+    let active = h.observe(|v| v.images.details.generation);
+    assert_ne!(active, generation);
+    let inspection = serde_json::to_string_pretty(&json!({
+        "Id": id, "Architecture": "amd64", "Config": { "Cmd": ["/bin/sh"], "Env": ["IMAGE=fixture-only"] },
+        "RootFS": { "Type": "layers", "Layers": ["sha256:fixture-layer"] }
+    })).unwrap();
+    h.deliver(Event::ImageInspection {
+        id: id.clone(),
+        generation: active,
+        result: Ok(inspection.clone()),
+    });
+    h.deliver(Event::ImageHistory {
+        id: id.clone(),
+        generation: active,
+        result: Ok(rows.clone()),
+    });
+    // Clicking the tab must focus the Kit editor, even after an async load.
+    h.click_tab("image-tabs", 2);
+    let painted = h.capture("images-inspect-json");
+    h.cx.read_entity(&h.view, |view, cx| {
+        assert_eq!(view.images.details.editor.read(cx).value(), inspection)
+    });
+    let view = h.view.clone();
+    let body =
+        h.cx.update_window(h.window.into(), |_, _, cx| {
+            view.read(cx)
+                .images
+                .details
+                .editor
+                .read(cx)
+                .text_bounds()
+                .unwrap()
+        })
+        .unwrap();
+    assert!(
+        painted
+            .enumerate_pixels()
+            .filter(|(x, y, pixel)| {
+                *x >= (f32::from(body.origin.x) * 2.0) as u32
+                    && *x < (f32::from(body.right()) * 2.0) as u32
+                    && *y >= (f32::from(body.origin.y) * 2.0) as u32
+                    && *y < (f32::from(body.bottom()) * 2.0) as u32
+                    && pixel.0[..3].iter().max().unwrap() - pixel.0[..3].iter().min().unwrap() > 50
+            })
+            .count()
+            > 200,
+        "Image inspection must paint JSON syntax colors"
+    );
+    h.key("ctrl-a");
+    h.type_text("must-not-edit-image-inspection");
+    h.cx.read_entity(&h.view, |view, cx| {
+        assert_eq!(view.images.details.editor.read(cx).value(), inspection)
+    });
+    h.key("ctrl-f");
+    h.type_text("Architecture");
+    h.cx.read_entity(&h.view, |view, cx| {
+        let search = view.images.details.editor.read(cx).search_session();
+        assert!(search.open && !search.replace_mode);
+        assert_eq!(search.query, "Architecture");
+        assert_eq!(search.matcher.len(), 1);
+    });
+    h.capture("images-inspect-search");
+    h.key("escape");
+    h.click_tab("image-tabs", 1);
+    h.deliver(Event::ImageHistory {
+        id: id.clone(),
+        generation: active,
+        result: Ok(vec![rows[2].clone()]),
+    });
+    h.capture("images-history-unavailable-values");
+    let many = (0..2_000)
+        .map(|index| ImageHistoryResponseItem {
+            created_by: format!("RUN echo history-{index}"),
+            ..rows[0].clone()
+        })
+        .collect();
+    h.deliver(Event::ImageHistory {
+        id: id.clone(),
+        generation: active,
+        result: Ok(many),
+    });
+    h.capture("images-history-large");
+    h.cx.read_entity(&h.view, |view, cx| {
+        let table = view.images.details.history_view.table.read(cx);
+        assert_eq!(table.delegate().visible.len(), 2_000);
+        assert!(table.visible_range().rows().len() < 40);
+    });
+    h.history_click_line(0, MouseButton::Left);
+    h.key("end");
+    h.capture("images-history-tail");
+    h.cx.read_entity(&h.view, |view, cx| {
+        let table = view.images.details.history_view.table.read(cx);
+        assert_eq!(table.selected_row(), Some(1_999));
+        assert_eq!(table.visible_range().rows().end, 2_000);
+    });
+    h.click("settings");
+    h.click("theme-light");
+    h.click("settings");
+    h.capture("images-history-light");
+    h.click("settings");
+    h.click("theme-reset");
+    h.click("settings");
+    h.click("image-row-bbbbbbbbbbbb");
+    let second = h.observe(|v| v.images.details.generation);
+    assert!(
+        h.observe(|v| v.images.details.history.is_none() && v.images.details.inspection.is_none())
+    );
+    h.deliver(Event::ImageHistory {
+        id: id.clone(),
+        generation: active,
+        result: Ok(rows.clone()),
+    });
+    h.deliver(Event::ImageInspection {
+        id: id.clone(),
+        generation: second,
+        result: Ok(inspection.clone()),
+    });
+    assert!(
+        h.observe(|v| v.images.details.history.is_none() && v.images.details.inspection.is_none()),
+        "Old generation and wrong image ID must be ignored"
+    );
+    h.deliver(Event::ImageHistory {
+        id: inventory[1].id.clone(),
+        generation: second,
+        result: Ok(vec![]),
+    });
+    h.capture("images-history-empty");
+    h.deliver(Event::ImageHistory {
+        id: inventory[1].id.clone(),
+        generation: second,
+        result: Err("Fixture history unavailable".into()),
+    });
+    h.capture("images-history-failed");
+    h.click("0-0");
+    h.deliver(Event::ImageInspection {
+        id: inventory[1].id.clone(),
+        generation: second,
+        result: Ok(inspection),
+    });
+    assert!(
+        h.observe(|v| v.images.details.inspection.is_none()),
+        "Closed workspace rejects detail completions"
+    );
+    h.click("0-1");
+    let inventory_generation = h.observe(|v| v.images.generation);
+    h.deliver(Event::Images {
+        generation: inventory_generation,
+        result: Ok(inventory.to_vec()),
+    });
+    h.click("image-row-aaaaaaaaaaaa");
+    h.key("ctrl-3");
+    assert!(h.observe(|v| v.images.details.tab == ImageTab::Inspect));
+    h.key("ctrl-2");
+    assert!(h.observe(|v| v.images.details.tab == ImageTab::History));
+    h.key("ctrl-1");
+    assert!(h.observe(|v| v.images.details.tab == ImageTab::Overview));
+    h.click("0-0");
+    h.click("0-1");
+    let inventory_generation = h.observe(|v| v.images.generation);
+    h.deliver(Event::Images {
+        generation: inventory_generation,
+        result: Ok(inventory.to_vec()),
+    });
+    h.drain_commands();
 }
 
 fn verify_image_sorting(h: &mut Harness, inventory: &[crate::images::Image], generation: u64) {
@@ -2397,23 +3150,25 @@ fn verify_image_sorting(h: &mut Harness, inventory: &[crate::images::Image], gen
         result: Ok(refreshed),
     });
     assert_order(h, &[0, 1, 2]);
-    h.click("image-sort-created");
-    assert_order(h, &[1, 0, 2]);
-    h.capture("images-created-oldest-first");
-    h.click("image-sort-created");
+    h.click("image-sort-age");
     assert_order(h, &[0, 1, 2]);
-    h.capture("images-created-newest-first");
+    h.capture("images-age-youngest-first");
+    h.click("image-sort-age");
+    assert_order(h, &[1, 0, 2]);
+    h.capture("images-age-oldest-first");
     h.cx.update_window(h.window.into(), |_, window, cx| {
         window.render_frame(cx);
-        let created = window.find("image-created-aaaaaaaaaaaa").bounds();
+        let created = window.find("image-age-aaaaaaaaaaaa").bounds();
         let size = window.find("image-size-aaaaaaaaaaaa").bounds();
         assert!(
             created.origin.x < size.origin.x
                 && created.origin.y >= window.find("image-row-aaaaaaaaaaaa").bounds().origin.y,
-            "Created timestamps must render in their own aligned column"
+            "Image ages must render in their own aligned column"
         );
     })
     .unwrap();
+    h.click("image-sort-age");
+    assert_order(h, &[0, 1, 2]);
     h.key("ctrl-f");
     h.type_text("postgres");
     assert_order(h, &[1]);
@@ -2601,4 +3356,1098 @@ fn verify_image_multiselection(h: &mut Harness, inventory: &[crate::images::Imag
     h.click("image-row-aaaaaaaaaaaa");
     assert_eq!(h.observe(|v| v.images.selection.len()), 1);
     h.drain_commands();
+}
+
+fn verify_volumes_workspace(h: &mut Harness) {
+    use crate::volumes::{Volume, VolumeContainer};
+    h.deliver(Event::Connected(crate::docker::Connection {
+        name: "headless-fixture".into(),
+        endpoint: "unix:///headless-fixture.sock".into(),
+    }));
+    h.settle_ui(5500);
+    h.click("0-0");
+    h.click("row-fixture-probe-running");
+    let unused = Volume {
+        name: "demo-cache".into(),
+        driver: "local".into(),
+        mountpoint: "/var/lib/docker/volumes/demo-cache/_data".into(),
+        created: Some("2026-10-13T10:00:00-04:00".into()),
+        scope: Some("local".into()),
+        labels: [("com.docker.compose.project".into(), "sample-project".into())].into(),
+        options: Default::default(),
+        size: None,
+        containers: vec![].into(),
+    };
+    let used = Volume {
+        name: "demo-database".into(),
+        containers: vec![VolumeContainer {
+            id: "fixture-probe-stopped".into(),
+            name: "demo-database-stopped".into(),
+            state: "exited".into(),
+        }]
+        .into(),
+        ..unused.clone()
+    };
+    let remote = Volume {
+        name: "remote-data".into(),
+        driver: "nfs".into(),
+        labels: Default::default(),
+        options: [("type".into(), "nfs".into())].into(),
+        ..unused.clone()
+    };
+    let inventory = vec![unused.clone(), used.clone(), remote.clone()];
+    let session = h.observe(|v| {
+        (
+            v.containers.selected.clone(),
+            v.container_logs.generation,
+            v.terminal.generation,
+            v.project_logs.generation,
+        )
+    });
+    h.drain_commands();
+    h.click("0-2"); // Workspace -> Volumes.
+    assert!(h.observe(|v| v.volumes_open && !v.images_open));
+    let mut generation = h.observe(|v| v.volumes.generation);
+    assert!(h.drain_commands().iter().any(|command| matches!(command, Command::Volumes { generation: current } if *current == generation)));
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.capture("volumes-inventory");
+    verify_volume_sizes(h, &inventory);
+    verify_volume_sorting_and_selection(h, &inventory);
+    generation = h.observe(|v| v.volumes.generation);
+    h.click("volume-row-demo-database");
+    h.click("volume-remove");
+    assert!(h.observe(|v| v.volumes.confirmation.is_none()));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::RemoveVolume { .. }))
+    );
+    h.capture("volumes-stopped-reference");
+    for (query, count) in [
+        ("DEMO-CACHE", 1),
+        ("NFS", 1),
+        ("SAMPLE-PROJECT", 2),
+        ("no-such-volume", 0),
+    ] {
+        h.key("ctrl-f");
+        h.key("ctrl-a");
+        h.type_text(query);
+        assert_eq!(h.observe(|v| v.volumes.visible.len()), count);
+    }
+    h.capture("volumes-no-matches");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    h.click("volume-row-demo-cache");
+    h.click("volume-remove");
+    assert_eq!(
+        h.observe(|v| v.volumes.confirmation.clone()),
+        Some(vec![unused.name.clone()])
+    );
+    h.capture("volumes-removal-review");
+    h.click("volume-cancel-remove");
+    assert!(h.observe(|v| v.volumes.confirmation.is_none()));
+    h.click("volume-remove");
+    h.key("escape");
+    h.settle_ui(300);
+    assert!(h.observe(|v| v.volumes.confirmation.is_none()));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::RemoveVolume { .. }))
+    );
+    // A stopped reference appearing during review invalidates the open dialog.
+    h.click("volume-remove");
+    let mut now_used = unused.clone();
+    now_used.containers = used.containers.clone();
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(vec![now_used, used.clone(), remote.clone()]),
+    });
+    assert!(h.observe(|v| v.volumes.confirmation.is_none()));
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.click("volume-remove");
+    h.click("volume-confirm-remove");
+    let operation = h
+        .drain_commands()
+        .iter()
+        .find_map(|command| match command {
+            Command::RemoveVolume { name, operation } if name == &unused.name => Some(*operation),
+            _ => None,
+        })
+        .unwrap();
+    h.click("volume-remove");
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::RemoveVolume { .. }))
+    );
+    h.capture("volumes-removing");
+    h.click("0-0");
+    h.drain_commands();
+    h.click("primary-action");
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::Action { .. }))
+    );
+    h.click("0-2");
+    h.deliver(Event::VolumeRemoved {
+        name: unused.name.clone(),
+        operation: operation + 1,
+        result: Ok(()),
+    });
+    assert!(h.observe(|v| v.volumes.busy.is_some()));
+    h.deliver(Event::VolumeRemoved {
+        name: unused.name.clone(),
+        operation,
+        result: Err("Fixture volume conflict".into()),
+    });
+    assert!(h.observe(|v| v.volumes.busy.is_none()));
+    assert_eq!(
+        h.observe(|v| v.volumes.selected.clone()),
+        Some(unused.name.clone())
+    );
+    h.capture("volumes-removal-failed");
+    h.dismiss_image_feedback();
+    generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.click("volume-remove");
+    h.click("volume-confirm-remove");
+    let operation = h.observe(|v| v.volumes.busy.as_ref().unwrap().1);
+    let old_generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::VolumeRemoved {
+        name: unused.name.clone(),
+        operation,
+        result: Ok(()),
+    });
+    h.deliver(Event::Volumes {
+        generation: old_generation,
+        result: Ok(inventory.clone()),
+    });
+    assert!(!h.observe(|v| {
+        v.volumes
+            .items
+            .iter()
+            .any(|volume| volume.name == unused.name)
+    }));
+    generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(vec![used.clone(), remote.clone()]),
+    });
+    h.capture("volumes-removed");
+    h.dismiss_image_feedback();
+    h.click("settings");
+    h.click("theme-light");
+    h.click("settings");
+    assert!(h.observe(|v| v.volumes_open && !v.settings_open));
+    h.capture("volumes-light");
+    h.click("settings");
+    h.click("theme-reset");
+    h.click("settings");
+    let many = (0..10_000)
+        .map(|index| Volume {
+            name: format!("fixture-volume-{index:05}"),
+            ..unused.clone()
+        })
+        .collect();
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(many),
+    });
+    h.capture("volumes-large-inventory");
+    let selection = h.observe(|v| v.volumes.selection.clone());
+    h.drag_list_scrollbar("volumes-viewport", true);
+    assert!(h.observe(|v| v.volumes.scroll.0.borrow().base_handle.offset().y < px(-1000.0)));
+    assert_eq!(h.observe(|v| v.volumes.selection.clone()), selection);
+    h.capture("volumes-scrollbar-dragged");
+    h.drag_list_scrollbar("volumes-viewport", false);
+    assert!(h.observe(|v| v.volumes.scroll.0.borrow().base_handle.offset().y > px(-100.0)));
+    assert!(h.observe(|v| v.volumes.rows_rendered.get()) < 40);
+    h.key("ctrl-f");
+    h.type_text("fixture-volume-09999");
+    h.key("escape");
+    h.key("down");
+    assert_eq!(h.observe(|v| v.volumes.visible.len()), 1);
+    assert_eq!(
+        h.observe(|v| v.volumes.selected.clone()),
+        Some("fixture-volume-09999".into())
+    );
+    h.capture("volumes-large-search");
+    h.click("0-0");
+    assert!(!h.observe(|v| v.volumes_open));
+    assert_eq!(
+        session,
+        h.observe(|v| (
+            v.containers.selected.clone(),
+            v.container_logs.generation,
+            v.terminal.generation,
+            v.project_logs.generation
+        ))
+    );
+    assert!(
+        h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::CloseVolumes))
+    );
+    h.click("0-2");
+    h.key("ctrl-f");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.click("volume-row-demo-database");
+    h.click("volume-container-fixture-probe-stopped");
+    assert!(!h.observe(|v| v.volumes_open));
+    assert!(!h.observe(|v| v.containers.running_only));
+    assert_eq!(
+        h.observe(|v| v.containers.selected.clone()),
+        Some("fixture-probe-stopped".into())
+    );
+    h.capture("volumes-reference-navigation");
+    h.click("0-2");
+    h.drain_commands();
+    h.key("ctrl-r");
+    generation = h.observe(|v| v.volumes.generation);
+    assert!(h.drain_commands().iter().any(|command| matches!(command, Command::Volumes { generation: current } if *current == generation)));
+    h.deliver(Event::Volumes {
+        generation,
+        result: Err("Fixture volume inventory failure".into()),
+    });
+    h.capture("volumes-discovery-failed");
+    h.click("volume-remove");
+    assert!(h.observe(|v| v.volumes.confirmation.is_none()));
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.click("volume-gather-sizes");
+    let request = h.observe(|v| v.volumes.gathering.unwrap());
+    let measurement = crate::volumes::VolumeSize {
+        name: unused.name.clone(),
+        driver: unused.driver.clone(),
+        mountpoint: unused.mountpoint.clone(),
+        created: unused.created.clone(),
+        size: Some(3 * 1_048_576),
+    };
+    h.deliver(Event::VolumeSizes {
+        request,
+        result: Ok(vec![measurement.clone()]),
+    });
+    h.click("volume-gather-sizes");
+    let interrupted_request = h.observe(|v| v.volumes.gathering.unwrap());
+    h.click("volume-row-demo-cache");
+    h.ctrl_click("volume-row-remote-data");
+    h.click("volume-remove");
+    h.click("volume-confirm-remove");
+    let operation = h.observe(|v| v.volumes.busy.as_ref().unwrap().1);
+    h.deliver(Event::Disconnected("Fixture Docker disconnect".into()));
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory),
+    });
+    h.deliver(Event::VolumesRemoved {
+        operation,
+        results: vec![
+            crate::volumes::RemovalResult {
+                name: unused.name.clone(),
+                result: Ok(()),
+            },
+            crate::volumes::RemovalResult {
+                name: remote.name.clone(),
+                result: Ok(()),
+            },
+        ],
+    });
+    assert!(!h.observe(|v| v.volumes.loaded));
+    assert!(h.observe(|v| v.volumes.busy.is_none()));
+    assert!(h.observe(|v| {
+        v.volumes
+            .items
+            .iter()
+            .any(|volume| volume.name == unused.name)
+    }));
+    h.deliver(Event::VolumeSizes {
+        request: interrupted_request,
+        result: Ok(vec![]),
+    });
+    assert!(h.observe(|v| v.volumes.gathering.is_none()));
+    assert_eq!(
+        h.observe(|v| v
+            .volumes
+            .items
+            .iter()
+            .find(|volume| volume.name == unused.name)
+            .unwrap()
+            .size),
+        measurement.size
+    );
+    h.drain_commands();
+    h.click("volume-gather-sizes");
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::GatherVolumeSizes { .. }))
+    );
+    h.deliver(Event::Connected(Connection {
+        name: "headless-fixture".into(),
+        endpoint: "unix:///headless-fixture.sock".into(),
+    }));
+    let generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(vec![unused.clone(), used.clone(), remote.clone()]),
+    });
+    assert_eq!(h.observe(|v| v.volumes.items[0].size), measurement.size);
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::GatherVolumeSizes { .. }))
+    );
+    h.capture("volumes-sizes-retained-after-reconnect");
+    h.deliver(Event::Connected(Connection {
+        name: "other-fixture".into(),
+        endpoint: "unix:///other-fixture.sock".into(),
+    }));
+    assert!(h.observe(|v| v.volumes.items.iter().all(|volume| volume.size.is_none())));
+    h.deliver(Event::Disconnected("Fixture Docker disconnect".into()));
+    h.capture("volumes-disconnected");
+    verify_volume_pruning(h, &[unused, used, remote]);
+}
+
+fn verify_volume_pruning(h: &mut Harness, original: &[crate::volumes::Volume]) {
+    use crate::volumes::{PruneMode, PruneResult, Volume, VolumeSize};
+    let connection = Connection {
+        name: "headless-fixture".into(),
+        endpoint: "unix:///headless-fixture.sock".into(),
+    };
+    h.deliver(Event::Connected(connection.clone()));
+    let mut inventory = original.to_vec();
+    inventory.push(Volume {
+        name: "hidden-unused".into(),
+        ..original[0].clone()
+    });
+    let deliver = |h: &mut Harness, inventory: &[Volume]| {
+        let generation = h.observe(|v| v.volumes.generation);
+        h.deliver(Event::Volumes {
+            generation,
+            result: Ok(inventory.to_vec()),
+        });
+    };
+    deliver(h, &inventory);
+    h.click("volume-row-demo-cache");
+    h.drain_commands();
+    h.click("volume-gather-sizes");
+    let request = h.observe(|v| v.volumes.gathering.unwrap());
+    let measurements = inventory
+        .iter()
+        .enumerate()
+        .map(|(index, volume)| VolumeSize {
+            name: volume.name.clone(),
+            driver: volume.driver.clone(),
+            mountpoint: volume.mountpoint.clone(),
+            created: volume.created.clone(),
+            size: Some(index as u64 * 1_048_576),
+        })
+        .collect();
+    h.deliver(Event::VolumeSizes {
+        request,
+        result: Ok(measurements),
+    });
+    h.ctrl_click("volume-row-demo-cache");
+    assert!(h.observe(|v| v.volumes.selection.is_empty()));
+    h.key("ctrl-f");
+    h.type_text("demo-database");
+    h.key("escape");
+    assert_eq!(h.observe(|v| v.volumes.visible.len()), 1);
+    h.drain_commands();
+    h.click("volume-prune");
+    assert!(h.observe(|v| v.volumes.prune_review));
+    h.capture("volumes-prune-review-all-unused");
+    h.key("enter");
+    assert!(h.observe(|v| v.volumes.prune_review && v.volumes.pruning.is_none()));
+    h.click("volume-prune-cancel");
+    assert!(!h.observe(|v| v.volumes.prune_review));
+    h.click("volume-prune");
+    h.key("escape");
+    assert!(!h.observe(|v| v.volumes.prune_review));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::PruneVolumes { .. }))
+    );
+    // A conflicting worker action disables prune, even with a loaded inventory.
+    h.deliver(Event::ActionStarted {
+        id: "fixture-probe-running".into(),
+        action: Action::Stop,
+    });
+    h.click("volume-prune");
+    assert!(!h.observe(|v| v.volumes.prune_review));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::PruneVolumes { .. }))
+    );
+    h.deliver(Event::ActionFinished {
+        id: "fixture-probe-running".into(),
+        result: Ok(()),
+    });
+    deliver(h, &inventory);
+    h.dismiss_image_feedback();
+    for (index, result) in [
+        Err("Fixture Docker prune failure".into()),
+        Ok(PruneResult {
+            deleted: vec![original[0].name.clone(), "hidden-unused".into()],
+            reclaimed: Some(3 * 1_048_576),
+        }),
+        Ok(PruneResult {
+            deleted: vec![],
+            reclaimed: None,
+        }),
+        Ok(PruneResult {
+            deleted: vec![],
+            reclaimed: Some(0),
+        }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mode = if index == 0 || index == 2 {
+            PruneMode::Anonymous
+        } else {
+            PruneMode::AllUnused
+        };
+        if index == 1 {
+            h.click("volume-row-demo-database");
+            h.key("ctrl-f");
+            h.key("ctrl-a");
+            h.type_text("demo-cache");
+            h.key("escape");
+            h.ctrl_click("volume-row-demo-cache");
+            h.key("ctrl-f");
+            h.key("ctrl-a");
+            h.type_text("demo-database");
+            h.key("escape");
+        }
+        h.click("volume-prune");
+        h.click(if mode == PruneMode::Anonymous {
+            "volume-prune-anonymous"
+        } else {
+            "volume-prune-unused"
+        });
+        let operation = h.observe(|v| v.volumes.pruning.unwrap());
+        assert!(!h.observe(|v| v.volumes.prune_review));
+        assert_eq!(h.drain_commands().iter().filter(|command| matches!(command, Command::PruneVolumes { mode: current_mode, operation: current } if *current == operation && *current_mode == mode)).count(), 1);
+        h.click("volume-prune");
+        h.click("volume-remove");
+        assert!(!h.drain_commands().iter().any(|command| matches!(
+            command,
+            Command::PruneVolumes { .. }
+                | Command::RemoveVolume { .. }
+                | Command::RemoveVolumes { .. }
+        )));
+        h.deliver(Event::VolumesPruned {
+            operation: operation + 1,
+            result: Ok(PruneResult {
+                deleted: vec![],
+                reclaimed: Some(999),
+            }),
+        });
+        assert_eq!(h.observe(|v| v.volumes.pruning), Some(operation));
+        if index == 0 {
+            h.capture("volumes-prune-pending");
+            h.click("0-0");
+            h.drain_commands();
+            h.click("primary-action");
+            assert!(
+                !h.drain_commands()
+                    .iter()
+                    .any(|command| matches!(command, Command::Action { .. }))
+            );
+            h.click("0-1");
+            let generation = h.observe(|v| v.images.generation);
+            h.deliver(Event::Images {
+                generation,
+                result: Ok(vec![]),
+            });
+            h.drain_commands();
+            h.click("image-prune");
+            assert!(!h.observe(|v| v.images.prune_review));
+            assert!(
+                !h.drain_commands()
+                    .iter()
+                    .any(|command| matches!(command, Command::PruneImages { .. }))
+            );
+            h.click("0-2");
+            deliver(h, &inventory);
+        }
+        if index == 2 {
+            h.click("0-0");
+        }
+        h.deliver(Event::VolumesPruned { operation, result });
+        assert!(h.observe(|v| v.volumes.pruning.is_none()));
+        h.settle_ui(300);
+        assert!(h.notification_count() > 0);
+        if index == 0 {
+            assert_eq!(h.observe(|v| v.volumes.items.len()), 4);
+            h.capture("volumes-prune-failed-keeps-measurements");
+        } else {
+            assert_eq!(h.observe(|v| v.volumes.items.len()), 2);
+            assert_eq!(
+                h.observe(|v| v.volumes.selection.clone()),
+                [original[1].name.clone()].into_iter().collect()
+            );
+            assert_eq!(
+                h.observe(|v| v
+                    .volumes
+                    .items
+                    .iter()
+                    .find(|volume| volume.name == original[1].name)
+                    .unwrap()
+                    .size),
+                Some(1_048_576)
+            );
+            inventory = original[1..].to_vec();
+            if index == 1 {
+                h.capture("volumes-prune-success");
+            } else {
+                h.click("0-2");
+                h.capture(if index == 2 {
+                    "volumes-prune-space-unavailable"
+                } else {
+                    "volumes-prune-zero-reclaimed"
+                });
+            }
+        }
+        let commands = h.drain_commands();
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::GatherVolumeSizes { .. })),
+            "Pruning never regathers surviving volume sizes"
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Volumes { .. })),
+            "Pruning reconciles the inventory"
+        );
+        h.dismiss_image_feedback();
+        deliver(h, &inventory);
+        assert_eq!(
+            h.observe(|v| v
+                .volumes
+                .items
+                .iter()
+                .find(|volume| volume.name == original[1].name)
+                .unwrap()
+                .size),
+            Some(1_048_576)
+        );
+    }
+    h.click("volume-prune");
+    h.click("volume-prune-unused");
+    let operation = h.observe(|v| v.volumes.pruning.unwrap());
+    h.deliver(Event::Disconnected("Fixture prune disconnect".into()));
+    h.deliver(Event::VolumesPruned {
+        operation,
+        result: Ok(PruneResult {
+            deleted: vec![original[1].name.clone()],
+            reclaimed: Some(1_048_576),
+        }),
+    });
+    assert!(h.observe(|v| v.volumes.pruning.is_none() && !v.volumes.prune_review));
+    assert!(h.observe(|v| {
+        v.volumes
+            .items
+            .iter()
+            .any(|volume| volume.name == original[1].name)
+    }));
+    h.capture("volumes-prune-disconnected");
+    h.dismiss_image_feedback();
+    h.deliver(Event::Connected(connection));
+    deliver(h, original);
+    h.key("ctrl-f");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    h.click("volume-row-demo-cache");
+    h.drain_commands();
+}
+
+fn verify_volume_sizes(h: &mut Harness, inventory: &[crate::volumes::Volume]) {
+    use crate::volumes::VolumeSize;
+    let measured = |sizes: [Option<u64>; 3]| {
+        inventory
+            .iter()
+            .zip(sizes)
+            .map(|(volume, size)| VolumeSize {
+                name: volume.name.clone(),
+                driver: volume.driver.clone(),
+                mountpoint: volume.mountpoint.clone(),
+                created: volume.created.clone(),
+                size,
+            })
+            .collect::<Vec<_>>()
+    };
+    let values = |h: &Harness| {
+        h.observe(|v| {
+            v.volumes
+                .items
+                .iter()
+                .map(|volume| volume.size)
+                .collect::<Vec<_>>()
+        })
+    };
+    let order = |h: &Harness| h.observe(|v| v.volumes.visible.clone());
+    let no_gather = |commands: Vec<Command>| {
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::GatherVolumeSizes { .. })),
+            "Refresh/navigation must never recalculate sizes"
+        )
+    };
+    h.drain_commands();
+    assert_eq!(values(h), vec![None; 3]);
+    h.ctrl_click("volume-row-demo-database");
+    let selection = h.observe(|v| v.volumes.selection.clone());
+    h.click("volume-gather-sizes");
+    let commands = h.drain_commands();
+    let request = commands
+        .iter()
+        .find_map(|command| match command {
+            Command::GatherVolumeSizes { request } => Some(*request),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| matches!(command, Command::GatherVolumeSizes { .. }))
+            .count(),
+        1
+    );
+    h.click("volume-gather-sizes");
+    no_gather(h.drain_commands());
+    h.capture("volumes-gathering-sizes");
+    // Ordinary discovery continues while the independently queued calculation runs.
+    let generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.to_vec()),
+    });
+    h.deliver(Event::VolumeSizes {
+        request: request + 1,
+        result: Ok(measured([Some(999); 3])),
+    });
+    assert!(h.observe(|v| v.volumes.gathering == Some(request)));
+    assert_eq!(values(h), vec![None; 3]);
+    h.deliver(Event::VolumeSizes {
+        request,
+        result: Ok(measured([Some(10 * 1_048_576), Some(2 * 1_048_576), None])),
+    });
+    assert_eq!(
+        values(h),
+        vec![Some(10 * 1_048_576), Some(2 * 1_048_576), None]
+    );
+    assert!(h.observe(|v| v.volumes.gathering.is_none()));
+    h.click("volume-sort-size");
+    assert_eq!(order(h), vec![1, 0, 2]);
+    h.capture("volumes-sizes-smallest-first");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let size = window.find("volume-size-demo-cache").bounds();
+        let header = window.find("volume-sort-size").bounds();
+        let row = window.find("volume-row-demo-cache").bounds();
+        assert!((size.origin.x - header.origin.x).abs() < px(2.0));
+        assert!(size.origin.y >= row.origin.y && size.bottom() <= row.bottom());
+    })
+    .unwrap();
+    h.click("volume-sort-size");
+    assert_eq!(order(h), vec![0, 1, 2]);
+    assert_eq!(h.observe(|v| v.volumes.selection.clone()), selection);
+    h.capture("volumes-sizes-largest-first");
+    no_gather(h.drain_commands());
+    let mut refresh = inventory.to_vec();
+    for volume in &mut refresh {
+        volume.size = Some(123);
+    }
+    h.key("ctrl-r");
+    no_gather(h.drain_commands());
+    let generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(refresh.clone()),
+    });
+    assert_eq!(
+        values(h),
+        vec![Some(10 * 1_048_576), Some(2 * 1_048_576), None]
+    );
+    h.deliver(Event::Volumes {
+        generation,
+        result: Err("Fixture inventory failure".into()),
+    });
+    assert_eq!(
+        values(h),
+        vec![Some(10 * 1_048_576), Some(2 * 1_048_576), None]
+    );
+    h.click("0-0");
+    h.click("0-2");
+    let generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.to_vec()),
+    });
+    no_gather(h.drain_commands());
+    assert_eq!(
+        values(h),
+        vec![Some(10 * 1_048_576), Some(2 * 1_048_576), None]
+    );
+    // Failure preserves the last measurements; only another explicit click replaces them.
+    h.click("volume-gather-sizes");
+    let request = h.observe(|v| v.volumes.gathering.unwrap());
+    h.drain_commands();
+    h.deliver(Event::VolumeSizes {
+        request,
+        result: Err("Fixture Docker disk usage failure".into()),
+    });
+    assert_eq!(
+        values(h),
+        vec![Some(10 * 1_048_576), Some(2 * 1_048_576), None]
+    );
+    h.capture("volumes-size-error-keeps-measurements");
+    h.click("volume-gather-sizes");
+    let request = h.observe(|v| v.volumes.gathering.unwrap());
+    h.drain_commands();
+    h.click("0-0");
+    h.deliver(Event::VolumeSizes {
+        request,
+        result: Ok(measured([Some(0), Some(20 * 1_048_576), None])),
+    });
+    h.click("0-2");
+    let generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.to_vec()),
+    });
+    assert_eq!(values(h), vec![Some(0), Some(20 * 1_048_576), None]);
+    assert_eq!(order(h), vec![1, 0, 2]);
+    no_gather(h.drain_commands());
+    h.capture("volumes-sizes-regathered-after-workspace-change");
+    refresh[1].created = Some("2026-10-14T00:00:00Z".into());
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(refresh),
+    });
+    assert_eq!(
+        values(h),
+        vec![Some(0), None, None],
+        "Recreated volumes must not inherit a cached size"
+    );
+    h.click("volume-sort-name");
+    h.click("volume-row-demo-cache");
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.to_vec()),
+    });
+}
+
+fn verify_volume_sorting_and_selection(h: &mut Harness, original: &[crate::volumes::Volume]) {
+    use crate::volumes::{RemovalResult, Volume};
+    let now = chrono::Utc::now().timestamp();
+    let mut inventory = original.to_vec();
+    inventory[0].created = Some(
+        chrono::DateTime::from_timestamp(now - 864000, 0)
+            .unwrap()
+            .to_rfc3339(),
+    );
+    inventory[1].created = Some(
+        chrono::DateTime::from_timestamp(now - 172800, 0)
+            .unwrap()
+            .to_rfc3339(),
+    );
+    inventory[2].created = None;
+    inventory.push(Volume {
+        name: "unavailable".into(),
+        created: Some("invalid".into()),
+        ..original[0].clone()
+    });
+    let generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.drain_commands();
+    let assert_order = |h: &Harness, expected: &[usize]| {
+        assert_eq!(
+            h.observe(|v| v
+                .volumes
+                .visible
+                .iter()
+                .map(|index| v.volumes.items[*index].name.clone())
+                .collect::<Vec<_>>()),
+            expected
+                .iter()
+                .map(|index| inventory[*index].name.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            h.observe(|v| v.volumes.selected.clone()),
+            Some(inventory[0].name.clone())
+        );
+    };
+    for (header, ascending, descending) in [
+        ("volume-sort-age", vec![1, 0, 2, 3], vec![0, 1, 2, 3]),
+        ("volume-sort-driver", vec![0, 1, 3, 2], vec![2, 0, 1, 3]),
+        ("volume-sort-references", vec![0, 2, 3, 1], vec![1, 0, 2, 3]),
+        ("volume-sort-name", vec![0, 1, 2, 3], vec![3, 2, 1, 0]),
+    ] {
+        h.click(header);
+        assert_order(h, &ascending);
+        if header == "volume-sort-age" {
+            h.capture("volumes-age-youngest-first");
+        }
+        h.click(header);
+        assert_order(h, &descending);
+        if header == "volume-sort-age" {
+            h.capture("volumes-age-oldest-first");
+        }
+    }
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let row = window.find("volume-row-demo-cache").bounds();
+        let age = window.find("volume-age-demo-cache").bounds();
+        let header = window.find("volume-sort-age").bounds();
+        assert!(age.origin.x > row.origin.x + row.size.width / 2.0);
+        assert!(age.origin.y >= row.origin.y && age.bottom() <= row.bottom());
+        assert!((age.origin.x - header.origin.x).abs() < px(2.0));
+        let cache = window.find("volume-row-demo-cache").bounds();
+        let database = window.find("volume-row-demo-database").bounds();
+        assert!(
+            database.origin.y < cache.origin.y,
+            "Painted rows must follow descending name order"
+        );
+    })
+    .unwrap();
+    assert!(
+        h.drain_commands().is_empty(),
+        "Sorting must not send Docker operations"
+    );
+    // Ctrl-click supports multiple selection and clearing the final row.
+    h.ctrl_click("volume-row-demo-database");
+    h.ctrl_click("volume-row-remote-data");
+    assert_eq!(h.observe(|v| v.volumes.selection.len()), 3);
+    h.capture("volumes-multiple-selected");
+    h.ctrl_click("volume-row-demo-cache");
+    h.ctrl_click("volume-row-demo-database");
+    h.ctrl_click("volume-row-remote-data");
+    assert!(h.observe(|v| v.volumes.selection.is_empty()));
+    h.click("volume-remove");
+    assert!(h.observe(|v| v.volumes.confirmation.is_none()));
+    h.click("volume-row-demo-cache");
+    h.ctrl_click("volume-row-demo-database");
+    h.ctrl_click("volume-row-remote-data");
+    let selected = h.observe(|v| v.volumes.selection.clone());
+    h.click("volume-sort-driver");
+    assert_eq!(h.observe(|v| v.volumes.selection.clone()), selected);
+    h.key("ctrl-f");
+    h.type_text("demo-cache");
+    h.key("escape");
+    assert_eq!(h.observe(|v| v.volumes.visible.len()), 1);
+    assert_eq!(h.observe(|v| v.volumes.selection.clone()), selected);
+    h.capture("volumes-multiple-hidden-selection");
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(vec![
+            inventory[2].clone(),
+            inventory[3].clone(),
+            inventory[1].clone(),
+            inventory[0].clone(),
+        ]),
+    });
+    assert_eq!(h.observe(|v| v.volumes.selection.clone()), selected);
+    h.click("volume-remove");
+    let names = selected.iter().cloned().collect::<Vec<_>>();
+    assert_eq!(
+        h.observe(|v| v.volumes.confirmation.clone()),
+        Some(names.clone())
+    );
+    h.capture("volumes-multiple-hidden-review");
+    for name in &names {
+        assert!(
+            h.cx.debug_bounds(h.window.into(), &format!("volume-removal-target-{name}"))
+                .unwrap()
+                .is_some()
+        );
+    }
+    h.click("volume-cancel-remove");
+    assert!(h.observe(|v| v.volumes.confirmation.is_none()));
+    assert!(!h.drain_commands().iter().any(|command| matches!(
+        command,
+        Command::RemoveVolume { .. } | Command::RemoveVolumes { .. }
+    )));
+    h.click("volume-remove");
+    h.key("escape");
+    h.settle_ui(300);
+    assert!(h.observe(|v| v.volumes.confirmation.is_none()));
+    h.click("volume-remove");
+    h.click("volume-confirm-remove");
+    let operation = h
+        .drain_commands()
+        .iter()
+        .find_map(|command| match command {
+            Command::RemoveVolumes {
+                names: actual,
+                operation,
+            } if actual == &names => Some(*operation),
+            _ => None,
+        })
+        .expect("Bulk removal must contain every reviewed name, including hidden selections");
+    h.click("volume-remove");
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::RemoveVolumes { .. }))
+    );
+    h.deliver(Event::VolumesRemoved {
+        operation: operation + 1,
+        results: vec![RemovalResult {
+            name: inventory[0].name.clone(),
+            result: Ok(()),
+        }],
+    });
+    assert!(h.observe(|v| v.volumes.busy.is_some()));
+    h.deliver(Event::VolumesRemoved {
+        operation,
+        results: vec![
+            RemovalResult {
+                name: inventory[0].name.clone(),
+                result: Ok(()),
+            },
+            RemovalResult {
+                name: inventory[1].name.clone(),
+                result: Err("Volume is used by a stopped container".into()),
+            },
+            RemovalResult {
+                name: inventory[2].name.clone(),
+                result: Err("Fixture Docker conflict".into()),
+            },
+        ],
+    });
+    assert_eq!(
+        h.observe(|v| v.volumes.selection.clone()),
+        [inventory[1].name.clone(), inventory[2].name.clone()]
+            .into_iter()
+            .collect()
+    );
+    assert!(!h.observe(|v| {
+        v.volumes
+            .items
+            .iter()
+            .any(|volume| volume.name == inventory[0].name)
+    }));
+    let generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(inventory[1..].to_vec()),
+    });
+    h.key("ctrl-f");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    h.settle_ui(300);
+    h.capture("volumes-multiple-partial-results");
+    h.dismiss_image_feedback();
+    h.click("volume-row-remote-data");
+    h.ctrl_click("volume-row-unavailable");
+    h.click("volume-remove");
+    h.click("volume-confirm-remove");
+    let operation = h.observe(|v| v.volumes.busy.as_ref().unwrap().1);
+    h.deliver(Event::VolumesRemoved {
+        operation,
+        results: vec![
+            RemovalResult {
+                name: inventory[2].name.clone(),
+                result: Ok(()),
+            },
+            RemovalResult {
+                name: inventory[3].name.clone(),
+                result: Ok(()),
+            },
+        ],
+    });
+    assert!(h.observe(|v| v.volumes.selection.is_empty() && v.volumes.selected.is_none()));
+    let generation = h.observe(|v| v.volumes.generation);
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(vec![inventory[1].clone()]),
+    });
+    assert!(h.observe(|v| v.volumes.selection.is_empty()));
+    h.capture("volumes-multiple-removed");
+    h.dismiss_image_feedback();
+    // Restore the ordinary single-selection flow through the same front door.
+    h.deliver(Event::Volumes {
+        generation,
+        result: Ok(original.to_vec()),
+    });
+    h.click("volume-sort-name");
+    h.click("volume-row-demo-cache");
+}
+
+#[test]
+fn headless_gpu_volume_flow() {
+    let started = Instant::now();
+    let mut h = Harness::new();
+    h.deliver(Event::Connected(Connection {
+        name: "Headless fixture".into(),
+        endpoint: "fixture://no-docker".into(),
+    }));
+    h.deliver(Event::Snapshot(vec![
+        container(
+            "fixture-probe-running",
+            "headless-fixture-probe-1",
+            "running",
+            Some("headless-fixture"),
+        ),
+        container(
+            "fixture-probe-stopped",
+            "headless-fixture-probe-2",
+            "exited",
+            Some("headless-fixture"),
+        ),
+    ]));
+    verify_volumes_workspace(&mut h);
+    let report = json!({
+        "status": "passed", "renderer": "GPUI Kit gpui-fast WgpuHeadlessRenderer",
+        "display": null, "wayland_display": null, "docker_worker_started": false,
+        "logical_width": 1180, "logical_height": 820, "pixel_width": 2360, "pixel_height": 1640,
+        "render_and_flow_seconds": started.elapsed().as_secs_f64(),
+        "screenshots": h.screenshots, "frame_timings": h.frame_timings,
+        "checks": ["Volumes sidebar and container session preservation", "name driver and project keyboard search", "Age column aligned with sortable headers", "Name Driver Age References ascending and descending with painted row order", "manual size gathering loading duplicate guard and numeric sorting with unavailable last", "size cache retained through Ctrl+R automatic inventory and workspace changes", "gather failure preserves measurements and explicit regather updates sorting", "recreated volume identity invalidates old measurement", "same-endpoint reconnect preserves sizes and disconnect rejects stale gathering", "different Docker endpoint clears cached sizes", "Age numeric ordering with unavailable last in both directions", "Ctrl-click multiple selection and clearing final row", "selection preserved through sorting filtering and fresh inventory", "hidden and protected selections included in review", "Cancel Escape and exact-name single/bulk confirmation", "pending duplicate and conflicting container controls blocked", "partial bulk results retain failed selections", "full bulk success clears selection", "stopped reference guard and container navigation", "10000-row virtualization and search", "Light theme", "stale generations and operation IDs rejected", "bulk disconnection invalidates pending state", "anonymous/all-unused prune dialog Cancel Escape and Enter guard", "anonymous and all-unused prune requests ignore selection and filter", "prune duplicate and conflicting container/image actions blocked", "prune success failure zero/unknown reclaim and size-cache reconciliation", "prune survives workspace change and ignores stale/disconnected completion"]
+    });
+    std::fs::write(
+        h.evidence.join("headless.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        h.evidence.join("actions.json"),
+        serde_json::to_vec_pretty(&h.actions).unwrap(),
+    )
+    .unwrap();
 }

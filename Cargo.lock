@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "ferrydock"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -1708,6 +1708,10 @@ dependencies = [
  "gpui-fast-platform",
  "gpui-fast-wgpu",
  "gpui-kit",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "hyperlocal",
  "image",
  "serde",
  "serde_json",

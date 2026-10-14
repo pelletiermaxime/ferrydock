@@ -14,7 +14,7 @@ fn main() {
         }
     }
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(ferrydock::assets::Assets)
         .run(|cx: &mut App| {
             ferrydock::app::init_ui(cx);
             cx.on_window_closed(|cx, _| {

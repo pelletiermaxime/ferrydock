@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, help="New evidence directory; existing paths are refused")
+    parser.add_argument("--flow", choices=("all", "volumes"), default="all", help="Full application or focused Volumes input/rendering flow")
     parser.add_argument("--timeout", type=int, default=600, help="Build plus test timeout in seconds")
     parser.add_argument("--keep-runs", type=keep_runs, default=8,
                         help="Completed default-path runs to retain; 0 keeps all")
@@ -30,13 +31,14 @@ def main():
     env.pop("DISPLAY", None)
     env.pop("WAYLAND_DISPLAY", None)
     env["FERRYDOCK_HEADLESS_EVIDENCE"] = str(evidence)
+    test_name = "headless_tests::headless_gpu_volume_flow" if args.flow == "volumes" else "headless_tests::headless_gpu_user_flow"
     command = ["cargo", "test", "--lib", "--features", "headless-tests", "--locked", "--offline",
-               "headless_tests::headless_gpu_user_flow", "--", "--nocapture", "--test-threads=1"]
+               test_name, "--", "--nocapture", "--test-threads=1"]
     manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
     revisions = {manifest["dependencies"][name]["version"] for name in ("gpui", "gpui_platform", "gpui_wgpu")}
     if len(revisions) != 1:
         raise RuntimeError("GPUI packages must share one pinned snapshot version")
-    report = {"status": "failed", "evidence": str(evidence), "command": command,
+    report = {"status": "failed", "selected_flow": args.flow, "evidence": str(evidence), "command": command,
               "gpui_snapshot": next(iter(revisions)),
               "gpui_engine": manifest["dependencies"]["gpui"]["package"],
               "display": None, "wayland_display": None,

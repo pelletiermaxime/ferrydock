@@ -128,6 +128,50 @@ async fn image_worker_discovery_and_guarded_removal() -> Result<()> {
     assert_eq!(fixture.containers[0].state, "running");
     assert!(fixture.size.is_some());
     assert_eq!(fixture.tags, vec![format!("{project}:main")]);
+    backend.send(Command::ImageDetails {
+        id: image_id.clone(),
+        generation: 41,
+    });
+    let (history, inspection) = time::timeout(Duration::from_secs(20), async {
+        let mut history = None;
+        let mut inspection = None;
+        while history.is_none() || inspection.is_none() {
+            match events
+                .recv()
+                .await
+                .context("Worker ended during image details")?
+            {
+                Event::ImageHistory {
+                    id,
+                    generation: 41,
+                    result,
+                } if id == image_id => {
+                    history = Some(result.map_err(anyhow::Error::msg)?);
+                }
+                Event::ImageInspection {
+                    id,
+                    generation: 41,
+                    result,
+                } if id == image_id => {
+                    inspection = Some(result.map_err(anyhow::Error::msg)?);
+                }
+                Event::Disconnected(error) => bail!("Docker disconnected: {error}"),
+                _ => {}
+            }
+        }
+        Ok::<_, anyhow::Error>((history.unwrap(), inspection.unwrap()))
+    })
+    .await
+    .context("Timed out waiting for image details")??;
+    assert!(!history.is_empty());
+    assert!(history.iter().any(|row| row.created_by.contains("sleep")));
+    let inspection: serde_json::Value = serde_json::from_str(&inspection)?;
+    assert_eq!(inspection["Id"], image_id);
+    assert_eq!(
+        inspection["Config"]["Labels"]["dev.ferrydock.fixture.project"],
+        project
+    );
+    backend.send(Command::CloseImageDetails);
     assert!(
         remove(&backend, &mut events, &image_id, 1)
             .await?

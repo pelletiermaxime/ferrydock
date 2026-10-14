@@ -6,11 +6,12 @@ use std::{
 
 use super::{
     FerryDock,
+    image_details::{ImageDetails, ImageTab},
     ui::{empty_state, palette},
 };
 use crate::{
     docker::{Command, Event},
-    images::Image,
+    images::{Image, PruneMode},
 };
 use gpui::{prelude::*, *};
 use gpui_kit::{
@@ -23,6 +24,7 @@ use gpui_kit::{
         input::{Input, InputEvent, InputState},
         list::ListItem,
         resizable::{ResizableState, resizable_panel, v_resizable},
+        scroll::{Scrollbar, ScrollbarMode},
         spinner::Spinner,
         tag::Tag,
         toolbar::Toolbar,
@@ -34,7 +36,7 @@ pub(super) enum ImageSort {
     #[default]
     Name,
     Size,
-    Created,
+    Age,
     References,
 }
 
@@ -43,7 +45,7 @@ impl ImageSort {
         match self {
             Self::Name => "image-sort-name",
             Self::Size => "image-sort-size",
-            Self::Created => "image-sort-created",
+            Self::Age => "image-sort-age",
             Self::References => "image-sort-references",
         }
     }
@@ -52,7 +54,7 @@ impl ImageSort {
         match self {
             Self::Name => "Image / ID",
             Self::Size => "Size (MiB)",
-            Self::Created => "Created (UTC)",
+            Self::Age => "Age",
             Self::References => "References",
         }
     }
@@ -74,12 +76,15 @@ pub(super) struct Images {
     pub(super) loaded: bool,
     pub(super) error: Option<String>,
     pub(super) confirmation: Option<Vec<String>>,
+    pub(super) prune_review: bool,
+    pub(super) pruning: Option<u64>,
     pub(super) busy: HashMap<String, u64>,
     removing_names: HashMap<String, String>,
     pub(super) operation: u64,
     pub(super) scroll: UniformListScrollHandle,
     pub(super) dock: Entity<ResizableState>,
     pub(super) rows_rendered: Cell<usize>,
+    pub(super) details: ImageDetails,
 }
 
 impl Images {
@@ -115,12 +120,15 @@ impl Images {
             loaded: false,
             error: None,
             confirmation: None,
+            prune_review: false,
+            pruning: None,
             busy: HashMap::new(),
             removing_names: HashMap::new(),
             operation: 0,
             scroll: UniformListScrollHandle::default(),
             dock,
             rows_rendered: Cell::new(0),
+            details: ImageDetails::new(window, cx),
         }
     }
 
@@ -153,12 +161,12 @@ impl Images {
                     name_key(index),
                 )
             }),
-            ImageSort::Created => self.visible.sort_by_cached_key(|index| {
+            ImageSort::Age => self.visible.sort_by_cached_key(|index| {
                 let created = items[*index].created_timestamp();
                 let timestamp = created.unwrap_or_default();
                 (
                     created.is_none(),
-                    if descending {
+                    if !descending {
                         i64::MAX - timestamp
                     } else {
                         timestamp
@@ -220,9 +228,11 @@ impl Images {
     }
 
     pub(super) fn interrupt_removal(&mut self) {
-        if !self.busy.is_empty() {
-            self.error = Some("Docker disconnected during image removal; refresh after reconnecting to check which images remain.".into());
+        if !self.busy.is_empty() || self.pruning.is_some() {
+            self.error = Some("Docker disconnected during image cleanup; refresh after reconnecting to check which images remain.".into());
         }
+        self.pruning = None;
+        self.prune_review = false;
         self.busy.clear();
         self.removing_names.clear();
     }
@@ -272,6 +282,7 @@ impl FerryDock {
     }
 
     pub(super) fn show_images(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_volumes(window, cx);
         let changed = self.images_open != open;
         self.images_open = open;
         self.settings_open = false;
@@ -280,6 +291,7 @@ impl FerryDock {
             if open {
                 self.refresh_images();
             } else {
+                self.invalidate_image_details(window, cx);
                 self.images.generation += 1;
                 self.images.loading = false;
                 self.backend.send(Command::CloseImages);
@@ -298,9 +310,16 @@ impl FerryDock {
         if self.images_open {
             self.refresh_images();
         }
+        if self.volumes_open {
+            self.refresh_volumes();
+        }
     }
 
     fn refresh_images(&mut self) {
+        if self.images.details.requested {
+            self.backend.send(Command::CloseImageDetails);
+        }
+        self.images.details.reset();
         self.images.generation += 1;
         self.images.loading = true;
         self.images.loaded = false;
@@ -317,6 +336,7 @@ impl FerryDock {
         self.images.selection.clear();
         self.images.selection.insert(id.clone());
         self.images.selected = Some(id);
+        self.sync_image_details(window, cx);
         self.focus.focus(window, cx);
         cx.notify();
     }
@@ -331,16 +351,19 @@ impl FerryDock {
             self.images.selection.insert(id.clone());
             self.images.selected = Some(id);
         }
+        self.sync_image_details(window, cx);
         self.focus.focus(window, cx);
         cx.notify();
     }
 
     fn image_removal_available(&self) -> bool {
         self.connection.is_some()
+            && !self.volumes.mutating()
             && self.images.loaded
             && !self.images.loading
             && self.images.error.is_none()
             && self.images.busy.is_empty()
+            && self.images.pruning.is_none()
             && !self
                 .projects
                 .operations
@@ -349,6 +372,78 @@ impl FerryDock {
             && self.images.items.iter().any(|image| {
                 self.images.selection.contains(&image.id) && image.containers.is_empty()
             })
+    }
+
+    fn image_prune_available(&self) -> bool {
+        self.connection.is_some()
+            && self.images.loaded
+            && !self.images.loading
+            && self.images.error.is_none()
+            && self.images.busy.is_empty()
+            && self.images.pruning.is_none()
+            && !self.volumes.mutating()
+            && self.containers.busy.is_empty()
+            && !self
+                .projects
+                .operations
+                .values()
+                .any(|operation| operation.running)
+    }
+
+    fn review_image_prune(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.image_prune_available() {
+            return;
+        }
+        self.images.prune_review = true;
+        let view = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let Some(view) = view.upgrade() else {
+                return dialog;
+            };
+            view.update(cx, |this, cx| this.image_prune_dialog(dialog, cx))
+        });
+        cx.notify();
+    }
+
+    fn prune_images(&mut self, mode: PruneMode, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.images.prune_review || !self.image_prune_available() {
+            return;
+        }
+        self.images.operation += 1;
+        let operation = self.images.operation;
+        self.images.pruning = Some(operation);
+        self.images.prune_review = false;
+        self.backend.send(Command::PruneImages { mode, operation });
+        window.close_dialog(cx);
+        cx.notify();
+    }
+
+    fn image_prune_dialog(&self, dialog: Dialog, cx: &mut Context<Self>) -> Dialog {
+        let colors = palette(cx);
+        let cancel_view = cx.entity().downgrade();
+        dialog.title("Prune images?")
+            .width(px(620.0))
+            .overlay_closable(false)
+            .on_close(cx.listener(|this, _, _, cx| { this.images.prune_review = false; cx.notify(); }))
+            .on_cancel(move |_, _, cx| cancel_view.update(cx, |this, cx| { this.images.prune_review = false; cx.notify(); true }).unwrap_or(true))
+            // Enter on the dialog itself must never choose a destructive mode.
+            .on_ok(|_, _, _| false)
+            .child(div().flex().flex_col().gap_3()
+                .child("Remove unused images from the connected Docker daemon, regardless of search or selection.")
+                .child("Untagged removes only images without tags. All unused also includes tagged images.")
+                .child("Images used by running or stopped containers are kept."))
+            .footer(div().flex().justify_end().gap_2()
+                .child(Self::button("image-prune-cancel", "Cancel", false, false, cx)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.images.prune_review = false;
+                        window.close_dialog(cx);
+                        cx.notify();
+                    })))
+                .child(Self::button("image-prune-untagged", "All untagged images", false, !self.image_prune_available(), cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.prune_images(PruneMode::Untagged, window, cx))))
+                .child(Self::button("image-prune-unused", "All unused images", false, !self.image_prune_available(), cx)
+                    .text_color(rgb(colors.error))
+                    .on_click(cx.listener(|this, _, window, cx| this.prune_images(PruneMode::AllUnused, window, cx)))))
     }
 
     fn review_image_removal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -462,6 +557,9 @@ impl FerryDock {
     ) {
         let was_confirming = self.images.confirmation.is_some();
         match event {
+            event @ (Event::ImageHistory { .. } | Event::ImageInspection { .. }) => {
+                self.image_details_event(event, window, cx);
+            }
             Event::Images { generation, result }
                 if generation == self.images.generation && self.connection.is_some() =>
             {
@@ -473,6 +571,7 @@ impl FerryDock {
                         self.images.items = items;
                         self.images.filter_items();
                         self.images.reconcile_selection();
+                        self.sync_image_details(window, cx);
                         if !self.images.items.iter().any(|image| {
                             self.images.selection.contains(&image.id) && image.containers.is_empty()
                         }) {
@@ -500,9 +599,34 @@ impl FerryDock {
             Event::ImagesRemoved { operation, results } => {
                 self.finish_image_removal(operation, results, window, cx)
             }
+            Event::ImagesPruned { operation, result }
+                if self.connection.is_some() && self.images.pruning == Some(operation) =>
+            {
+                self.images.pruning = None;
+                let (message, failed) = match result {
+                    Ok(Some(bytes)) => (
+                        format!(
+                            "Image pruning completed · {:.1} MiB reclaimed",
+                            bytes as f64 / 1_048_576.0
+                        ),
+                        false,
+                    ),
+                    Ok(None) => (
+                        "Image pruning completed · reclaimed space unavailable".into(),
+                        false,
+                    ),
+                    Err(error) => (format!("Image pruning failed: {error}"), true),
+                };
+                Self::notify(message, failed, window, cx);
+                self.refresh();
+            }
             _ => {}
         }
         if was_confirming && self.images.confirmation.is_none() {
+            window.close_dialog(cx);
+        }
+        if self.images.prune_review && !self.image_prune_available() {
+            self.images.prune_review = false;
             window.close_dialog(cx);
         }
     }
@@ -557,11 +681,17 @@ impl FerryDock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.images.confirmation.is_some() {
+        if self.images.confirmation.is_some() || self.images.prune_review {
+            return;
+        }
+        if self.history_key(event, window, cx) {
             return;
         }
         let key = &event.keystroke;
         match key.key.as_str() {
+            "1" if key.modifiers.control => self.switch_image_tab(ImageTab::Overview, window, cx),
+            "2" if key.modifiers.control => self.switch_image_tab(ImageTab::History, window, cx),
+            "3" if key.modifiers.control => self.switch_image_tab(ImageTab::Inspect, window, cx),
             "f" if key.modifiers.control => self.images.search_focus.focus(window, cx),
             "r" if key.modifiers.control => self.refresh(),
             "escape" => {
@@ -621,7 +751,7 @@ impl FerryDock {
             };
             return empty_state(title, description).into_any_element();
         }
-        uniform_list(
+        let list = uniform_list(
             "images-scroll",
             self.images.visible.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
@@ -686,14 +816,14 @@ impl FerryDock {
                                 .child(
                                     div()
                                         .id(SharedString::from(format!(
-                                            "image-created-{}",
+                                            "image-age-{}",
                                             image.short_id()
                                         )))
                                         .test_support()
-                                        .w(px(185.0))
+                                        .w(px(140.0))
                                         .flex_shrink_0()
                                         .text_sm()
-                                        .child(image.created_label()),
+                                        .child(image.age_label()),
                                 )
                                 .child(
                                     div()
@@ -726,8 +856,20 @@ impl FerryDock {
             }),
         )
         .track_scroll(&self.images.scroll)
-        .size_full()
-        .into_any_element()
+        .size_full();
+        div()
+            .id("images-viewport")
+            .test_support()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .child(list)
+            .child(
+                Scrollbar::vertical(&self.images.scroll)
+                    .id("images-scrollbar")
+                    .mode(ScrollbarMode::Always),
+            )
+            .into_any_element()
     }
 
     fn image_detail(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -773,8 +915,21 @@ impl FerryDock {
                         ),
                     ),
             );
+        let detail = detail.child(self.image_tabs(cx));
+        let content = match self.images.details.tab {
+            ImageTab::Overview => self.image_overview(image, cx),
+            ImageTab::History => self.image_history_view(cx),
+            ImageTab::Inspect => self.image_inspect_view(),
+        };
+        detail
+            .child(div().flex_1().min_h_0().child(content))
+            .into_any_element()
+    }
+
+    fn image_overview(&self, image: &Image, cx: &mut Context<Self>) -> AnyElement {
+        let colors = palette(cx);
         let references = image.containers.clone();
-        detail.child(div().id("image-detail-scroll").flex_1().min_h_0().overflow_y_scroll().px_5().py_3().flex().flex_col().gap_3()
+        div().id("image-detail-scroll").size_full().overflow_y_scroll().px_5().py_3().flex().flex_col().gap_3()
             .child(div().id("image-full-id").test_support().text_xs().text_color(rgb(colors.muted)).child(image.id.clone()))
             .child(div().text_sm().child(format!("Size: {} · Created: {}", image.size_label(), image.created_label())))
             .child(div().text_xs().text_color(rgb(colors.muted)).child("Image size includes shared layers; it is not the space recovered by removal."))
@@ -800,7 +955,7 @@ impl FerryDock {
                         })).into_any_element()
                 }).collect::<Vec<_>>()
             })).h(px(108.0)).flex_shrink_0()))
-            .when(!image.containers.is_empty(), |view| view.child(div().text_color(rgb(colors.muted)).text_sm().child("Removal is unavailable while any running or stopped container uses this image."))))
+            .when(!image.containers.is_empty(), |view| view.child(div().text_color(rgb(colors.muted)).text_sm().child("Removal is unavailable while any running or stopped container uses this image.")))
             .into_any_element()
     }
 
@@ -840,6 +995,9 @@ impl FerryDock {
                         toolbar.content(Spinner::new().small())
                     })
                     .content(div().flex_1())
+                    .child(Self::button("image-prune", if self.images.pruning.is_some() { "Pruning…" } else { "Prune…" }, false, !self.image_prune_available(), cx)
+                        .loading(self.images.pruning.is_some())
+                        .on_click(cx.listener(|this, _, window, cx| this.review_image_prune(window, cx))))
                     .content(
                         div()
                             .id("image-search")
@@ -887,7 +1045,7 @@ impl FerryDock {
                                                 .flex()
                                                 .child(self.image_sort_header(ImageSort::Name, cx)),
                                         )
-                                        .child(div().w(px(185.0)).child(self.image_sort_header(ImageSort::Created, cx)))
+                                        .child(div().w(px(140.0)).child(self.image_sort_header(ImageSort::Age, cx)))
                                         .child(
                                             div()
                                                 .w(px(115.0))

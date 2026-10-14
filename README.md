@@ -34,7 +34,12 @@ the terminal, and container details close at hand.
 - **Manage local images.** Open **Images** to search tags, digests, or image IDs,
   read sizes and creation dates, and see every container using an image,
   including stopped containers. Ctrl-click to select several images, then review
-  and remove them together with completion feedback.
+    and remove them together with completion feedback, or prune untagged or all
+    unused images.
+- **Manage local volumes.** Open **Volumes** to search by name, driver, or Compose
+  project, inspect configuration, and find running or stopped container references.
+  Review permanent deletion before removing selected volumes, or prune unused
+  anonymous volumes or all unused volumes.
 - **Adjust the workspace.** Drag the divider between the container list and
   detail panel. Action buttons show loading state, and notifications report
   completed operations and copy feedback.
@@ -73,12 +78,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.7.0`; replace it with the version you downloaded.
+The examples below use `0.8.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.7.0_amd64.deb
+sudo apt install ./ferrydock_0.8.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -86,11 +91,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.7.0-linux-x86_64.AppImage`:
+`ferrydock-0.8.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.7.0-linux-x86_64.AppImage
-./ferrydock-0.7.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.8.0-linux-x86_64.AppImage
+./ferrydock-0.8.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -99,7 +104,7 @@ Wayland libraries and Vulkan/EGL graphics driver stack, and Docker. If FUSE
 mounting is unavailable, run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.7.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.8.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in
@@ -205,16 +210,32 @@ Choose **Images** in the sidebar. The list refreshes automatically while this
 workspace is open; **Refresh** or **Ctrl+R** reloads it manually. **Ctrl+F**
 focuses image search, and Up/Down selects an image when the list has focus.
 Each image appears once, with all its local tags in the detail panel. Untagged
-images remain visible. Click **Image / ID**, **Created (UTC)**, **Size (MiB)**, or **References** to
+images remain visible. Click **Image / ID**, **Age**, **Size (MiB)**, or **References** to
 sort that column; click again to reverse the order. An arrow marks the active
 direction. Sorting stays active through search and refreshes, and preserves the
 selected image. Unavailable sizes and creation dates stay last in either direction.
 Sizes use MiB and include shared layers, so they do not
-represent the space that removal would recover. **Created (UTC)** is the image's
-creation date and time, rather than when it was pulled to this computer.
+represent the space that removal would recover. **Age** shows time since image
+creation, such as **2 hours ago**, rather than when it was pulled to this computer.
+Ascending age sorts youngest first; descending sorts oldest first. The detail
+panel retains the exact creation date and time in UTC.
 
 The detail panel shows the full image ID and running or stopped container
-references. Click a referenced container to open its existing container view.
+references in **Overview**. **History** shows Docker's build commands, newest
+first, in a compact table: #, Command, Size (MiB), Created (UTC), and Layer ID.
+Drag header dividers to resize columns; use **Columns** to hide metadata fields.
+Widths and column choices stay active while you browse images. Long commands
+stay inside their cells. Double-click a row, press Enter on a selected row, or
+choose **View command…** from its right-click menu to read, search and select
+the full instruction. **Ctrl+F** searches the table's commands. **Ctrl+C** or
+**Copy command** copies the selected instruction without metadata, and the
+right-click menu can also copy its full layer ID. Home/End select the first/last
+command. All metadata columns start visible. Missing values show **—**,
+while metadata-only instructions can have a zero size.
+**Inspect** shows read-only, syntax-highlighted image JSON with selection,
+folding, and Ctrl+F search, just like container Inspect. Ctrl+1, Ctrl+2, and
+Ctrl+3 switch between Overview, History, and Inspect in the Images workspace.
+**Refresh** retries detail reads. Click a referenced container to open its existing container view.
 **Ctrl-click** adds or removes an image from the selection; a normal click
 selects only that image. Selected IDs stay selected through sorting, searches,
 and refreshes. The selected count also identifies images hidden by your search.
@@ -230,8 +251,75 @@ the completion counts and up to three failure examples. Cancel or Escape closes
 the popup without removing anything.
 Successfully removed images leave the selection; failures stay selected while
 they remain in Docker. Docker conflicts, including images with multiple tags,
-leave those images in place. Pulling, tagging, registry browsing, and bulk pruning
-are not available in this Images workspace.
+leave those images in place.
+
+**Prune…** opens a dialog with **Cancel**, **All untagged images**, and **All unused
+images**. The first removes unused images without tags (Docker's dangling-image
+prune); the second also removes tagged images unused by any container. Images
+referenced by running or stopped containers are kept. Pruning applies to the
+connected Docker daemon's full inventory, regardless of search or selection.
+Removed images may need to be pulled or rebuilt again. The button shows progress,
+then a notification reports completion and reclaimed space in MiB when Docker
+provides it. The inventory refreshes afterward. Cancel or Escape closes the dialog
+without pruning; conflicting Docker operations disable the action.
+Pulling, tagging, and registry browsing are not available in this Images workspace.
+
+## Manage volumes
+
+Choose **Volumes** in the sidebar. Search names, drivers, or Compose project
+labels; click a volume or use Up/Down when the list has focus. The list refreshes
+automatically while this workspace is open. **Refresh** or **Ctrl+R** reloads it,
+and **Ctrl+F** focuses search. The **Age** column shows elapsed time since creation
+using the same relative wording as Images, from minutes through years. Missing
+or invalid creation dates show **Unavailable**; future dates are shown explicitly. Click **Volume**, **Driver**, **Age**, **Size**, or
+**References** to sort; click again to reverse direction. Age sorts by the actual
+creation instant, and unavailable ages stay last in either direction. Sorting,
+selection, and search survive refreshes and workspace changes.
+
+**Ctrl-click** adds or removes volumes from the selection; a normal click selects
+one. Selected volumes stay selected through sorting, search, and refreshes. The
+selected count identifies any selections hidden by search.
+
+The detail panel shows the driver, scope, creation date in UTC, mountpoint on
+the Docker host, labels, driver options, and running or stopped containers using
+the volume. Click a referenced container to open its container view. Stopped
+containers become visible automatically. A Docker Desktop mountpoint belongs to
+its Docker host and may be inside its VM.
+
+Click **Gather volume sizes** to ask Docker to calculate volume disk usage. The
+**Size** column and detail panel show MiB; click its header to sort by bytes in
+either direction. Unmeasured or unsupported volumes show **Unavailable** and
+stay last in either direction. Gathering runs in the background with loading and
+error feedback. The last measurement time is shown beside the button.
+Measurements stay cached during automatic refreshes, **Refresh**, **Ctrl+R**,
+workspace changes, and reconnecting to the same Docker endpoint. Only another
+click recalculates them; a failed calculation keeps the previous values. The
+cache lasts for the app session. Removed/recreated volumes and a different
+Docker endpoint discard their old measurements. Gathering requires Docker 23+
+(API 1.42+) and can take longer for volumes with many files.
+
+**Remove volume…** or **Remove selected (N)…** opens a confirmation listing every
+selected volume, including hidden selections and volumes in use. Removal is
+available after successful discovery, with at least one unused selected volume
+and no conflicting Docker operation running. The confirmation explains that
+removal permanently deletes stored data. **Cancel** or Escape closes it without
+deletion. FerryDock checks fresh running and stopped container references, then
+asks Docker to remove each selected volume without force. Referenced volumes
+are kept; a failure does not stop the rest of the batch. A notification reports
+removed/failed counts and up to three failure examples. Successful volumes leave
+the selection; failed volumes stay selected while they remain in Docker.
+
+**Prune…** opens a confirmation with two choices: **Anonymous volumes only**
+removes unused volumes created without an explicit name; **All unused volumes**
+also includes unused named volumes. Both cover the connected Docker daemon,
+regardless of search or selection, and keep volumes referenced by running or
+stopped containers. Removed volumes and their stored data are permanently deleted.
+Cancel/Escape leaves Docker unchanged. While pruning runs, conflicting mutations
+are disabled. Completion reports removed volumes and reclaimed MiB, refreshes
+references, and retains cached sizes for surviving volumes. These prune modes
+require Docker 23+ (API 1.42+).
+
+Creating volumes and editing their configuration are not available.
 
 ## Docker connections
 
@@ -264,8 +352,8 @@ daemon disconnects, FerryDock retries the connection automatically.
 ## Current limits
 
 Individual container controls and Compose project Start/Stop/Restart and
-Rebuild & restart are available. Down and network, volume, and cleanup pages
-are planned.
+Rebuild & restart are available. Images and Volumes have their own workspaces.
+Down, network, and cleanup pages are planned.
 
 Container logs and combined project logs each retain up to 1,500 lines; project
 streams begin with the last 200 lines per container and merge output as received.
@@ -277,7 +365,8 @@ for terminal applications. **Disconnect** detaches FerryDock from a shell;
 use `exit` when you want to end the shell process.
 
 FerryDock uses native Wayland when `WAYLAND_DISPLAY` is set, or X11/XWayland
-when only `DISPLAY` is set. macOS and Windows support are planned.
+when only `DISPLAY` is set. Apple Silicon macOS packages are previews pending
+native desktop verification; Windows support is planned.
 
 ## Contributing
 

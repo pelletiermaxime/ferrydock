@@ -52,12 +52,40 @@ pub enum Command {
         generation: u64,
     },
     CloseImages,
+    ImageDetails {
+        id: String,
+        generation: u64,
+    },
+    CloseImageDetails,
+    Volumes {
+        generation: u64,
+    },
+    CloseVolumes,
+    GatherVolumeSizes {
+        request: u64,
+    },
+    PruneVolumes {
+        mode: crate::volumes::PruneMode,
+        operation: u64,
+    },
+    RemoveVolume {
+        name: String,
+        operation: u64,
+    },
+    RemoveVolumes {
+        names: Vec<String>,
+        operation: u64,
+    },
     RemoveImage {
         id: String,
         operation: u64,
     },
     RemoveImages {
         ids: Vec<String>,
+        operation: u64,
+    },
+    PruneImages {
+        mode: crate::images::PruneMode,
         operation: u64,
     },
     ConfigureCompose {
@@ -144,6 +172,16 @@ pub enum Event {
         generation: u64,
         result: Result<Vec<crate::images::Image>, String>,
     },
+    ImageHistory {
+        id: String,
+        generation: u64,
+        result: Result<Vec<bollard::models::ImageHistoryResponseItem>, String>,
+    },
+    ImageInspection {
+        id: String,
+        generation: u64,
+        result: Result<String, String>,
+    },
     ImageRemoved {
         id: String,
         operation: u64,
@@ -152,6 +190,31 @@ pub enum Event {
     ImagesRemoved {
         operation: u64,
         results: Vec<crate::images::RemovalResult>,
+    },
+    ImagesPruned {
+        operation: u64,
+        result: Result<Option<u64>, String>,
+    },
+    Volumes {
+        generation: u64,
+        result: Result<Vec<crate::volumes::Volume>, String>,
+    },
+    VolumeRemoved {
+        name: String,
+        operation: u64,
+        result: Result<(), String>,
+    },
+    VolumesRemoved {
+        operation: u64,
+        results: Vec<crate::volumes::RemovalResult>,
+    },
+    VolumeSizes {
+        request: u64,
+        result: Result<Vec<crate::volumes::VolumeSize>, String>,
+    },
+    VolumesPruned {
+        operation: u64,
+        result: Result<crate::volumes::PruneResult, String>,
     },
     MetricsSession(u64),
     Metrics {
@@ -472,7 +535,27 @@ async fn connected(
         cancel.child_token(),
     ));
     let mut image_jobs = FuturesUnordered::new();
+    let (image_detail_requests, image_detail_receiver) = watch::channel(None);
+    tokio::spawn(crate::images::follow_details(
+        docker.clone(),
+        image_detail_receiver,
+        events.clone(),
+        cancel.child_token(),
+    ));
     let mut image_busy = HashSet::new();
+    let mut prune_jobs = FuturesUnordered::new();
+    let mut pruning = false;
+    let (volume_requests, volume_receiver) = watch::channel(None);
+    tokio::spawn(crate::volumes::follow(
+        docker.clone(),
+        volume_receiver,
+        events.clone(),
+        cancel.child_token(),
+    ));
+    let mut volume_jobs = FuturesUnordered::new();
+    let mut volume_busy = HashSet::new();
+    let mut volume_size_jobs = FuturesUnordered::new();
+    let mut volume_prune_jobs = FuturesUnordered::new();
     let mut logs_cancel = cancel.child_token();
     let mut project_logs_cancel = cancel.child_token();
     let (project_snapshots, snapshots) = watch::channel(Vec::new());
@@ -520,6 +603,9 @@ async fn connected(
             if image_requests.borrow().is_some() {
                 image_requests.send_modify(|_| {});
             }
+            if volume_requests.borrow().is_some() {
+                volume_requests.send_modify(|_| {});
+            }
             dirty = false;
         }
         tokio::select! {
@@ -548,17 +634,113 @@ async fn connected(
                 }
                 dirty = true;
             }
+            Some(result) = volume_jobs.next(), if !volume_jobs.is_empty() => {
+                let (operation, mut results, bulk): (u64, Vec<crate::volumes::RemovalResult>, bool) = result?;
+                for result in &results { volume_busy.remove(&result.name); }
+                if bulk { events.send(Event::VolumesRemoved { operation, results }).await?; }
+                else if let Some(crate::volumes::RemovalResult { name, result }) = results.pop() {
+                    events.send(Event::VolumeRemoved { name, operation, result }).await?;
+                }
+                dirty = true;
+            }
+            Some(result) = volume_size_jobs.next(), if !volume_size_jobs.is_empty() => {
+                let (request, result) = result?;
+                events.send(Event::VolumeSizes { request, result }).await?;
+            }
+            Some(result) = volume_prune_jobs.next(), if !volume_prune_jobs.is_empty() => {
+                let (operation, result) = result?;
+                pruning = false;
+                events.send(Event::VolumesPruned { operation, result }).await?;
+                dirty = true;
+            }
+            Some(result) = prune_jobs.next(), if !prune_jobs.is_empty() => {
+                let (operation, result) = result?;
+                pruning = false;
+                events.send(Event::ImagesPruned { operation, result }).await?;
+                dirty = true;
+            }
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(()); };
                 match command {
                     Command::Refresh => dirty = true,
                     Command::Images { generation } => { image_requests.send_replace(Some(generation)); },
                     Command::CloseImages => { image_requests.send_replace(None); },
+                    Command::ImageDetails { id, generation } => { image_detail_requests.send_replace(Some((id, generation))); },
+                    Command::CloseImageDetails => { image_detail_requests.send_replace(None); },
+                    Command::Volumes { generation } => { volume_requests.send_replace(Some(generation)); },
+                    Command::CloseVolumes => { volume_requests.send_replace(None); },
+                    Command::PruneVolumes { mode, operation } => {
+                        if pruning || !image_busy.is_empty() || !volume_busy.is_empty() || !compose_busy.is_empty() || !busy.is_empty() {
+                            events.send(Event::VolumesPruned { operation, result: Err("Wait for the current Docker operation before pruning volumes".into()) }).await?;
+                            continue;
+                        }
+                        pruning = true;
+                        let docker = docker.clone();
+                        let cancellation = cancel.child_token();
+                        volume_prune_jobs.push(tokio::spawn(async move {
+                            let result = tokio::select! {
+                                _ = cancellation.cancelled() => Err("Docker disconnected; refresh to check volume state".into()),
+                                result = crate::volumes::prune(&docker, mode) => result.map_err(|error| format!("{error:#}")),
+                            };
+                            (operation, result)
+                        }));
+                    }
+                    Command::GatherVolumeSizes { request } => {
+                        if !volume_size_jobs.is_empty() {
+                            events.send(Event::VolumeSizes { request, result: Err("Volume sizes are already being gathered".into()) }).await?;
+                            continue;
+                        }
+                        let endpoint = connection.endpoint.clone();
+                        let version = docker.client_version();
+                        let cancellation = cancel.child_token();
+                        volume_size_jobs.push(tokio::spawn(async move {
+                            let result = tokio::select! {
+                                _ = cancellation.cancelled() => Err("Docker disconnected while gathering volume sizes".into()),
+                                result = crate::volumes::gather_sizes(&endpoint, &version) => result.map_err(|error| format!("{error:#}")),
+                            };
+                            (request, result)
+                        }));
+                    }
+                    Command::RemoveVolume { name, operation } => {
+                        if volume_busy.contains(&name) { continue; }
+                        if pruning || !volume_busy.is_empty() || !image_busy.is_empty() || !compose_busy.is_empty() || !busy.is_empty() {
+                            events.send(Event::VolumeRemoved { name, operation, result: Err("Wait for the current Docker operation before removing a volume".into()) }).await?;
+                            continue;
+                        }
+                        volume_busy.insert(name.clone());
+                        let docker = docker.clone();
+                        let cancellation = cancel.child_token();
+                        volume_jobs.push(tokio::spawn(async move {
+                            let result = tokio::select! {
+                                _ = cancellation.cancelled() => Err("Docker disconnected; refresh to check volume state".into()),
+                                result = crate::volumes::remove(&docker, &name) => result.map_err(|error| format!("{error:#}")),
+                            };
+                            (operation, vec![crate::volumes::RemovalResult { name, result }], false)
+                        }));
+                    },
+                    Command::RemoveVolumes { names, operation } => {
+                        if names.is_empty() { continue; }
+                        if pruning || !volume_busy.is_empty() || !image_busy.is_empty() || !compose_busy.is_empty() || !busy.is_empty() {
+                            let results = names.into_iter().map(|name| crate::volumes::RemovalResult { name, result: Err("Wait for the current Docker operation before removing volumes".into()) }).collect();
+                            events.send(Event::VolumesRemoved { operation, results }).await?;
+                            continue;
+                        }
+                        volume_busy.extend(names.iter().cloned());
+                        let docker = docker.clone();
+                        let cancellation = cancel.child_token();
+                        volume_jobs.push(tokio::spawn(async move {
+                            let results = tokio::select! {
+                                _ = cancellation.cancelled() => names.iter().map(|name| crate::volumes::RemovalResult { name: name.clone(), result: Err("Docker disconnected; refresh to check volume state".into()) }).collect(),
+                                results = crate::volumes::remove_many(&docker, names.clone()) => results,
+                            };
+                            (operation, results, true)
+                        }));
+                    },
                     Command::RemoveImage { id, operation } => {
                         if image_busy.contains(&id) {
                             continue;
                         }
-                        if !image_busy.is_empty() || !compose_busy.is_empty() {
+                        if pruning || !image_busy.is_empty() || !volume_busy.is_empty() || !compose_busy.is_empty() {
                             events.send(Event::ImageRemoved { id, operation, result: Err("Wait for the current image or Compose operation before removing an image".into()) }).await?;
                             continue;
                         }
@@ -575,7 +757,7 @@ async fn connected(
                     }
                     Command::RemoveImages { ids, operation } => {
                         if ids.is_empty() { continue; }
-                        if !image_busy.is_empty() || !compose_busy.is_empty() {
+                        if pruning || !image_busy.is_empty() || !volume_busy.is_empty() || !compose_busy.is_empty() {
                             let results = ids.into_iter().map(|id| crate::images::RemovalResult { id, result: Err("Wait for the current image or Compose operation before removing images".into()) }).collect();
                             events.send(Event::ImagesRemoved { operation, results }).await?;
                             continue;
@@ -596,6 +778,22 @@ async fn connected(
                         tokio::spawn(crate::project_logs::follow(docker.clone(), project, generation, snapshots.clone(), events.clone(), project_logs_cancel.clone()));
                     }
                     Command::CloseProjectLogs => project_logs_cancel.cancel(),
+                    Command::PruneImages { mode, operation } => {
+                        if pruning || !image_busy.is_empty() || !volume_busy.is_empty() || !compose_busy.is_empty() || !busy.is_empty() {
+                            events.send(Event::ImagesPruned { operation, result: Err("Wait for the current Docker operation before pruning images".into()) }).await?;
+                            continue;
+                        }
+                        pruning = true;
+                        let docker = docker.clone();
+                        let cancellation = cancel.child_token();
+                        prune_jobs.push(tokio::spawn(async move {
+                            let result = tokio::select! {
+                                _ = cancellation.cancelled() => Err("Docker disconnected; refresh to check image state".into()),
+                                result = crate::images::prune(&docker, mode) => result.map_err(|error| format!("{error:#}")),
+                            };
+                            (operation, result)
+                        }));
+                    }
                     Command::ConfigureCompose { config } => {
                         let project = config.project.clone();
                         let result = (|| -> Result<compose::Config> {
@@ -608,7 +806,7 @@ async fn connected(
                         dirty = true;
                     }
                     Command::Compose { project, operation, action } => {
-                        let conflict = !image_busy.is_empty() || compose_busy.contains(&project) || busy.iter().any(|id| container_projects.get(id).and_then(Option::as_ref) == Some(&project));
+                        let conflict = pruning || !image_busy.is_empty() || !volume_busy.is_empty() || compose_busy.contains(&project) || busy.iter().any(|id| container_projects.get(id).and_then(Option::as_ref) == Some(&project));
                         let config = settings.config(&connection.endpoint, &project).cloned();
                         if let Some(config) = config.filter(|_| !conflict) {
                             compose_busy.insert(project.clone());
@@ -636,7 +834,7 @@ async fn connected(
                             let _ = events.send(Event::Inspection { generation, result }).await;
                         });
                     }
-                    Command::Action { id, action } if !busy.contains(&id) && !container_projects.get(&id).and_then(Option::as_ref).is_some_and(|project| compose_busy.contains(project)) => {
+                    Command::Action { id, action } if !pruning && volume_busy.is_empty() && !busy.contains(&id) && !container_projects.get(&id).and_then(Option::as_ref).is_some_and(|project| compose_busy.contains(project)) => {
                         busy.insert(id.clone());
                         let _ = events.send(Event::ActionStarted { id: id.clone(), action }).await;
                         let docker = docker.clone();
@@ -646,7 +844,7 @@ async fn connected(
                         }));
                     }
                     Command::Action { id, .. } => {
-                        let _ = events.send(Event::ActionFinished { id, result: Err("Another operation is running on this container or its Compose project".into()) }).await;
+                        let _ = events.send(Event::ActionFinished { id, result: Err("Another operation is running on this container, its Compose project, or a volume".into()) }).await;
                     },
                     Command::Terminal { id, generation, shell, columns, rows } => {
                         terminal_cancel.cancel(); terminal_cancel = cancel.child_token();

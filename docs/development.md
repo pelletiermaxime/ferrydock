@@ -18,6 +18,7 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | `container_list.rs` | Virtualized resource groups and Kit ListItem rows, tags, and empty states |
 | `metrics.rs` | Per-container resource history, freshness, compact rows and CPU/memory summary charts |
 | `images.rs` | Images workspace, search/selection, virtualized image and reference lists, removal review and operation feedback; Docker discovery/removal remains in `src/images.rs` |
+| `volumes.rs` | Volumes workspace, search/selection, virtualized inventory/references, metadata, age/size sorting, measured-size cache, single/bulk removal and prune review; Docker discovery/size gathering/removal remains in `src/volumes.rs` |
 | `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
 | `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
 | `projects.rs` | Compose associations, editable forms, operation state, and project controls |
@@ -70,7 +71,9 @@ truncating removal references. Both lists are virtualized, reference snapshots
 are shared across rendered frames, and snapshot generations reject stale results.
 Images has its own search, selection, and dock state; opening it preserves the
 container/project log and terminal sessions. Kit header buttons sort the visible
-indices by case-insensitive image name/ID, raw creation timestamp, size bytes, or container count.
+indices by case-insensitive image name/ID, age using raw creation timestamps,
+size bytes, or container count. Age cells use relative labels; ascending age
+sorts newer timestamps first. The detail panel retains the exact UTC timestamp.
 Cached sort keys avoid repeated name allocations during comparisons; ID ties
 keep ordering deterministic, and unavailable sizes/dates remain last in both directions.
 Search and fresh snapshots reapply the session's chosen sort without replacing
@@ -87,6 +90,33 @@ if they still exist; removed IDs are pruned without automatically selecting othe
 images. Compose operations and image removal are mutually exclusive in both UI
 and worker guards. Disconnects invalidate operation results and advise checking
 daemon state after reconnecting, since a batch may have partially completed.
+
+Image dock tabs live in `src/app/image_details.rs`. History and inspection load
+on demand through one cancellable selected-image worker, independently of the
+inventory. Selection, refresh, workspace closure and disconnect invalidate
+detail generations; both image ID and generation guard completions. Reads have
+15-second timeouts and a 4 MiB retained-data limit; history also caps at 2,000
+entries. `src/app/image_history.rs` uses Kit DataTable for virtualized rows and
+resizable columns in #/Command/Size/Created/Layer ID order. Its Kit Columns menu
+preserves selected rows and caches resize events by column identity, so widths
+survive hiding fields, filtering and image selection. History search filters
+commands while retaining original step numbers. Home/End capture the Kit actions
+to select first/last rows rather than columns. Double-click, Enter and the row
+menu open the complete instruction in a read-only Kit Editor dialog. Copy command
+retains original bytes, including multiline instructions; the table displays a
+single clipped line. Data is shared with the detail state through Arc. Inspect
+reuses Kit's read-only JSON Editor.
+
+The Images toolbar also opens a Kit prune dialog with untagged/all-unused modes.
+`PruneImages` runs Docker's prune API in a separate cancellable worker job with a
+120-second timeout; explicit `dangling=true/false` filters preserve Docker's
+running/stopped-container safeguards. It operates across the connected daemon,
+independent of search/selection. UI and worker guards exclude concurrent image,
+volume, Compose and container operations. Operation IDs reject stale completion;
+notifications report Docker's reclaimed bytes in MiB (or unavailable), and fresh
+discovery reconciles selection afterward. `tests/images_prune.rs` exercises the
+production API request/response against an owned temporary Unix socket fixture,
+without connecting to the user's Docker daemon.
 
 ## UI components and appearance
 
@@ -129,6 +159,58 @@ scope explicit. Standalone containers have no implied build recipe. Down must
 preserve volumes by default; volume removal and volume cleanup require an
 explicit choice. Account for references from stopped containers when presenting
 volume removal, and reconcile daemon state after operations.
+
+`src/volumes.rs` discovers volumes and all container mounts through a cancellable
+Tokio task. Discovery times out after 15 seconds and refuses inventories larger
+than 20,000 volumes, 50,000 containers, or 100,000 volume/container references.
+Docker inventory warnings and unnamed volume mounts fail explicitly. References
+include stopped containers and deduplicate repeated mounts of one volume in a
+container. Ordinary discovery does not request disk usage. Only
+`GatherVolumeSizes` requests `GET /v<negotiated>/system/df?type=volume&verbose=true`,
+using the current Unix endpoint and API 1.42+ so image/container/build-cache usage
+is excluded. This separate cancellable worker job has a 120-second timeout,
+32 MiB response bound and 20,000-volume bound. Bollard's generated disk-usage model
+only decodes the newer schema; the feature reuses its already locked Hyper/Unix
+transport packages to decode both legacy `Volumes` and modern `VolumeUsage.Items`.
+Missing/negative sizes are unavailable; zero is measured empty. Sizes are labelled
+in MiB and sorted by bytes, with unavailable values last in either direction.
+
+The app-session cache is separate from inventory events. Refresh replaces usage
+fields with cached measurements matched by name, driver, mountpoint and creation
+time; vanished/recreated volumes lose their entries. Successful gathering replaces
+measurements and the UTC completion timestamp; failure preserves both. Workspace
+changes and same-endpoint reconnects retain them; a different endpoint clears the
+cache. An independent request ID rejects late completions after disconnect, and
+closing the workspace does not cancel an explicit gather.
+The view uses Kit Input, ListItem, Dialog, Toolbar and Resizable controls; inventory,
+reference and metadata lists are virtualized. Generations and operation IDs reject
+stale results; disconnect invalidates review and pending state. Removal performs
+one fresh inventory per batch, then sequential `remove_volume(force=false)`
+requests with a 30-second timeout each. Batches continue after individual failures.
+Images and Volumes share elapsed-time wording through `src/resource_age.rs`.
+The selection uses a name set independent of the active detail volume. Kit header
+buttons sort name, driver, raw creation time (Age), measured bytes (Size), or
+reference count; unavailable ages/sizes stay last in either direction. Cached sort keys and virtualized rows bound
+rendering work. Hidden selections appear in the exact-name confirmation; successful
+results leave selection and failures stay selected while they remain in Docker.
+The UI and worker guard concurrent container, image and Compose mutations during
+removal or pruning. Other clients remain protected by Docker's reference checks.
+
+Volume prune is a separate explicit operation, with a Kit review dialog offering
+Anonymous or AllUnused and a generic Enter guard. `PruneVolumes` sends the chosen
+mode to the production worker; `all=false` preserves named volumes and `all=true`
+includes them. Both require API 1.42+ so older daemon semantics cannot accidentally
+prune named data in anonymous mode. Search and selection never become prune
+filters. A separate cancellable worker job uses a 120-second Docker/overall
+timeout and shares the mutation guard with image prune, removals and container/
+Compose controls. Completion reports returned deleted names and reclaimed bytes;
+missing/negative space is unavailable, and zero stays zero. The view immediately
+reconciles reported deletions and cached-size/selection state, then refreshes
+ordinary discovery without recalculating surviving sizes. Operation IDs and
+session invalidation reject stale/disconnected completions; navigation keeps an
+accepted prune running. Production daemon-wide prune effects are not executed by
+the verification fixtures: isolated Unix API requests and GPUI input/fixture
+results verify the two sides of this boundary.
 
 ## Build on Linux
 
@@ -238,6 +320,9 @@ UI behavior; real operations require the separate integration checks:
 | --- | --- |
 | `bash scripts/verify-docker.sh` | Real discovery/logs, Start/Stop/Restart, interactive shell I/O, PTY resize, ANSI parsing, full-screen vi, shell exit, missing Bash |
 | `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, changed build inputs and rebuilt image/container contents, build failure without stopping services, streamed failures, restart/rebuild/recreation log recovery, bounded batches |
+| `cargo test --locked --test volumes_prune` | Owned Unix HTTP fixtures: exact anonymous/all-unused filters, deleted names and reclaimed bytes, empty/zero/unavailable results, Docker errors and old-API refusal |
+| `cargo test --locked --test volume_sizes` | Owned Unix HTTP fixtures: volume-only query and legacy/modern response decoding, zero/unavailable values, errors and API version guard |
+| `bash scripts/verify-volumes.sh` | Explicit volume-only disk usage of a known 3 MiB file; production worker volume inventory/configuration, running/stopped references and deletion guards, single/bulk unused-volume deletion, per-target failures and reconciliation |
 | `bash scripts/verify-images.sh` | Production worker image discovery, immutable IDs and running/stopped references, blocked removal, multi-tag Docker conflict, selected-image removal and inventory reconciliation |
 | `python3 scripts/verify-log-performance.py` | Owned native window (Wayland preferred) and ten disposable containers; CPU/RSS and search under live log load |
 
@@ -261,6 +346,35 @@ The headless flow also drives Ctrl-click toggles, clearing the last selection,
 selection retention through sort/search/refresh, hidden-target review, partial
 bulk results and full success. The Docker fixture checks mixed batches with
 stopped-container/multi-tag refusals and successful two-image deletion.
+
+The volume check creates five uniquely named/labelled local volumes and one
+container using `alpine:3.23` with networking disabled. It has no host bind mounts
+or published ports and deletes only its owned container and volumes; the base
+image remains. Its used volume contains a known 3 MiB file; one explicit read-only
+size calculation covers all eligible volumes on the shared daemon, while mutation
+and cleanup stay restricted to owned fixtures. Settings/evidence are isolated under
+`.verification/volumes/`. Normal discovery is checked to emit no size results.
+For a focused UI loop, run `python3 scripts/verify-headless.py --flow volumes`;
+the default full application flow also includes volume checks.
+Headless volume checks drive sidebar/search, stopped-reference navigation,
+Cancel/Escape, exact-name confirmation, pending/success/failure, references
+appearing during review, stale results, disconnection, Light theme and a
+10,000-row inventory. Header sorting and age-column alignment, Ctrl-click toggles,
+empty/hidden selections, refresh retention, partial/full batch results and bulk
+stale/disconnected events are also driven. Size checks click Gather, guard duplicate
+requests, sort measured bytes with unavailable last, retain measurements through
+refresh/navigation/same-endpoint reconnect, preserve them on failure, invalidate
+recreated/other-endpoint entries and reject interrupted/stale gathers. The Docker
+fixture checks mixed
+referenced/missing/unused batches and successful two-volume deletion.
+Headless prune checks cover both modes with search/selection independence,
+Cancel/Escape and generic Enter protection, loading/duplicate and conflicting
+container/image controls, success/failure, zero/unavailable reclaimed space,
+survivor cache/selection retention, workspace changes and stale/disconnect guards.
+The isolated prune API fixtures never contact the user's daemon.
+These prove GPUI input/rendering and worker requests
+separately from daemon behavior. Native desktop Volumes interaction and macOS
+runtime remain unverified.
 
 Build with `cargo build --locked` before the native performance helper; use
 `--binary target/release/ferrydock` after a release build to measure shipping
@@ -329,7 +443,7 @@ Docker and Compose integration fixtures, and the headless UI flow with Mesa's
 software GPU driver. Headless and Compose evidence are retained as workflow
 artifacts for seven days.
 
-The Images worker integration fixture also runs in Linux CI and retains its
+The Images and Volumes worker integration fixtures also run in Linux CI and retain their
 discovery/removal/cleanup evidence for seven days.
 
 The reusable [macOS workflow](../.github/workflows/macos.yml) runs alongside

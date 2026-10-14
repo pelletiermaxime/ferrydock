@@ -1,5 +1,6 @@
 pub mod ansi;
 pub mod app;
+pub mod assets;
 pub mod compose;
 pub mod docker;
 mod docker_cli;
@@ -7,5 +8,7 @@ pub mod images;
 pub mod metrics;
 pub mod model;
 pub mod project_logs;
+mod resource_age;
 mod source_colors;
 pub mod terminal;
+pub mod volumes;

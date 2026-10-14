@@ -63,5 +63,5 @@ python3 - "$evidence" "$project" "$endpoint" <<'PY'
 import json, sys
 from pathlib import Path
 Path(sys.argv[1], 'result.json').write_text(json.dumps({'status':'passed', 'fixture':sys.argv[2], 'endpoint':sys.argv[3], 'cleanup_success':True,
-  'checks':['worker discovery', 'running and stopped references', 'guarded removal', 'multi-tag Docker conflict', 'partial bulk removal with per-image outcomes', 'successful two-image bulk removal', 'other images preserved']}, indent=2)+'\n')
+  'checks':['worker discovery', 'image history commands and inspection identity/configuration', 'running and stopped references', 'guarded removal', 'multi-tag Docker conflict', 'partial bulk removal with per-image outcomes', 'successful two-image bulk removal', 'other images preserved']}, indent=2)+'\n')
 PY

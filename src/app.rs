@@ -12,6 +12,8 @@ mod container_list;
 mod container_logs;
 mod containers;
 mod events;
+mod image_details;
+mod image_history;
 mod images;
 mod metrics;
 mod navigation;
@@ -21,6 +23,7 @@ mod resource_menu;
 mod shell;
 mod terminal;
 pub(crate) mod ui;
+mod volumes;
 
 use container_logs::ContainerLogs;
 use containers::Containers;
@@ -56,6 +59,8 @@ pub struct FerryDock {
     containers: Containers,
     images: images::Images,
     images_open: bool,
+    volumes: volumes::Volumes,
+    volumes_open: bool,
     metrics: metrics::Metrics,
     container_logs: ContainerLogs,
     terminal: Terminal,
@@ -136,6 +141,7 @@ impl FerryDock {
         let focus = cx.focus_handle();
         let compose_focus = cx.focus_handle();
         let images = images::Images::new(window, cx);
+        let volumes = volumes::Volumes::new(window, cx);
         Self {
             backend,
             events,
@@ -144,6 +150,8 @@ impl FerryDock {
             containers: Containers::new(search_input, search_focus, inspection),
             images,
             images_open: false,
+            volumes,
+            volumes_open: false,
             metrics: metrics::Metrics::default(),
             container_logs: ContainerLogs::default(),
             terminal: Terminal::default(),

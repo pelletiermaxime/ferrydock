@@ -81,7 +81,9 @@ impl Projects {
 
 impl FerryDock {
     pub(super) fn project_busy(&self, project: &str) -> bool {
-        !self.images.busy.is_empty()
+        self.volumes.mutating()
+            || self.images.pruning.is_some()
+            || !self.images.busy.is_empty()
             || self
                 .projects
                 .operations
