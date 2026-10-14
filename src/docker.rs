@@ -48,6 +48,18 @@ impl Action {
 
 pub enum Command {
     Refresh,
+    Images {
+        generation: u64,
+    },
+    CloseImages,
+    RemoveImage {
+        id: String,
+        operation: u64,
+    },
+    RemoveImages {
+        ids: Vec<String>,
+        operation: u64,
+    },
     ConfigureCompose {
         config: compose::Config,
     },
@@ -128,6 +140,19 @@ pub enum Event {
     Connected(Connection),
     Disconnected(String),
     Snapshot(Vec<Container>),
+    Images {
+        generation: u64,
+        result: Result<Vec<crate::images::Image>, String>,
+    },
+    ImageRemoved {
+        id: String,
+        operation: u64,
+        result: Result<(), String>,
+    },
+    ImagesRemoved {
+        operation: u64,
+        results: Vec<crate::images::RemovalResult>,
+    },
     MetricsSession(u64),
     Metrics {
         session: u64,
@@ -439,6 +464,15 @@ async fn connected(
     });
     let mut interval = time::interval(Duration::from_secs(10));
     let mut dirty = true;
+    let (image_requests, image_receiver) = watch::channel(None);
+    tokio::spawn(crate::images::follow(
+        docker.clone(),
+        image_receiver,
+        events.clone(),
+        cancel.child_token(),
+    ));
+    let mut image_jobs = FuturesUnordered::new();
+    let mut image_busy = HashSet::new();
     let mut logs_cancel = cancel.child_token();
     let mut project_logs_cancel = cancel.child_token();
     let (project_snapshots, snapshots) = watch::channel(Vec::new());
@@ -483,6 +517,9 @@ async fn connected(
                 ))
                 .await?;
             events.send(Event::Snapshot(containers)).await?;
+            if image_requests.borrow().is_some() {
+                image_requests.send_modify(|_| {});
+            }
             dirty = false;
         }
         tokio::select! {
@@ -501,10 +538,59 @@ async fn connected(
                 let _ = events.send(Event::ComposeFinished { project, operation, result }).await;
                 dirty = true;
             }
+            Some(result) = image_jobs.next(), if !image_jobs.is_empty() => {
+                let (operation, mut results, bulk): (u64, Vec<crate::images::RemovalResult>, bool) = result?;
+                for result in &results { image_busy.remove(&result.id); }
+                if bulk {
+                    events.send(Event::ImagesRemoved { operation, results }).await?;
+                } else if let Some(crate::images::RemovalResult { id, result }) = results.pop() {
+                    events.send(Event::ImageRemoved { id, operation, result }).await?;
+                }
+                dirty = true;
+            }
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(()); };
                 match command {
                     Command::Refresh => dirty = true,
+                    Command::Images { generation } => { image_requests.send_replace(Some(generation)); },
+                    Command::CloseImages => { image_requests.send_replace(None); },
+                    Command::RemoveImage { id, operation } => {
+                        if image_busy.contains(&id) {
+                            continue;
+                        }
+                        if !image_busy.is_empty() || !compose_busy.is_empty() {
+                            events.send(Event::ImageRemoved { id, operation, result: Err("Wait for the current image or Compose operation before removing an image".into()) }).await?;
+                            continue;
+                        }
+                        image_busy.insert(id.clone());
+                        let docker = docker.clone();
+                        let cancellation = cancel.child_token();
+                        image_jobs.push(tokio::spawn(async move {
+                            let result = tokio::select! {
+                                _ = cancellation.cancelled() => Err("Docker disconnected; refresh to check image state".into()),
+                                result = crate::images::remove(&docker, &id) => result.map_err(|error| format!("{error:#}")),
+                            };
+                            (operation, vec![crate::images::RemovalResult { id, result }], false)
+                        }));
+                    }
+                    Command::RemoveImages { ids, operation } => {
+                        if ids.is_empty() { continue; }
+                        if !image_busy.is_empty() || !compose_busy.is_empty() {
+                            let results = ids.into_iter().map(|id| crate::images::RemovalResult { id, result: Err("Wait for the current image or Compose operation before removing images".into()) }).collect();
+                            events.send(Event::ImagesRemoved { operation, results }).await?;
+                            continue;
+                        }
+                        image_busy.extend(ids.iter().cloned());
+                        let docker = docker.clone();
+                        let cancellation = cancel.child_token();
+                        image_jobs.push(tokio::spawn(async move {
+                            let results = tokio::select! {
+                                _ = cancellation.cancelled() => ids.iter().map(|id| crate::images::RemovalResult { id: id.clone(), result: Err("Docker disconnected; refresh to check image state".into()) }).collect(),
+                                results = crate::images::remove_many(&docker, ids.clone()) => results,
+                            };
+                            (operation, results, true)
+                        }));
+                    }
                     Command::ProjectLogs { project, generation } => {
                         project_logs_cancel.cancel(); project_logs_cancel = cancel.child_token();
                         tokio::spawn(crate::project_logs::follow(docker.clone(), project, generation, snapshots.clone(), events.clone(), project_logs_cancel.clone()));
@@ -522,7 +608,7 @@ async fn connected(
                         dirty = true;
                     }
                     Command::Compose { project, operation, action } => {
-                        let conflict = compose_busy.contains(&project) || busy.iter().any(|id| container_projects.get(id).and_then(Option::as_ref) == Some(&project));
+                        let conflict = !image_busy.is_empty() || compose_busy.contains(&project) || busy.iter().any(|id| container_projects.get(id).and_then(Option::as_ref) == Some(&project));
                         let config = settings.config(&connection.endpoint, &project).cloned();
                         if let Some(config) = config.filter(|_| !conflict) {
                             compose_busy.insert(project.clone());

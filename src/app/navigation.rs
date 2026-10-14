@@ -87,6 +87,10 @@ impl FerryDock {
         if self.settings_open {
             return;
         }
+        if self.images_open {
+            self.images_key(event, window, cx);
+            return;
+        }
         match key.key.as_str() {
             "enter" if self.focus.is_focused(window) && self.projects.selected.is_none() => {
                 self.open_terminal(window, cx)

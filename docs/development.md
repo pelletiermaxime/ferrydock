@@ -17,6 +17,7 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | `containers.rs` | Discovery/search state, selection, container actions, and the container detail panel |
 | `container_list.rs` | Virtualized resource groups and Kit ListItem rows, tags, and empty states |
 | `metrics.rs` | Per-container resource history, freshness, compact rows and CPU/memory summary charts |
+| `images.rs` | Images workspace, search/selection, virtualized image and reference lists, removal review and operation feedback; Docker discovery/removal remains in `src/images.rs` |
 | `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
 | `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
 | `projects.rs` | Compose associations, editable forms, operation state, and project controls |
@@ -59,6 +60,33 @@ follows usage; configured limits and utilization stay in the footer. The latest
 contiguous history spans the plot width, up to two minutes; missing readings or
 collection gaps start a new plotted series. A container dock defaults to 430px
 and has a 400px minimum to retain room for the taller charts and tab content.
+
+`src/images.rs` discovers images and all container references by immutable image
+ID in a separate cancellable Tokio task. It refreshes on daemon changes, manual
+requests, and a ten-second interval only while the Images workspace is subscribed.
+Discovery has a 15-second timeout and retains at most 20,000 images and 50,000
+container references; an oversized inventory fails explicitly rather than
+truncating removal references. Both lists are virtualized, reference snapshots
+are shared across rendered frames, and snapshot generations reject stale results.
+Images has its own search, selection, and dock state; opening it preserves the
+container/project log and terminal sessions. Kit header buttons sort the visible
+indices by case-insensitive image name/ID, raw creation timestamp, size bytes, or container count.
+Cached sort keys avoid repeated name allocations during comparisons; ID ties
+keep ordering deterministic, and unavailable sizes/dates remain last in both directions.
+Search and fresh snapshots reapply the session's chosen sort without replacing
+the selected image ID. Ctrl-click selection uses an ID set independently of the
+active detail image; filtering retains hidden selections and a Kit modal dialog
+lists the exact captured IDs. Cancel/Escape closes it, and stale discovery or
+disconnects invalidate the confirmation. Removal uses a separate operation ID and a fresh
+inventory. Batches remove images sequentially with `force=false` and `noprune=true`,
+continue after individual failures, and show completion counts with at most three
+failure examples in the existing notification system. No removal-results panel
+or retained UI report is added to the Images workspace. Docker
+also enforces references created after preflight. Failed images remain selected
+if they still exist; removed IDs are pruned without automatically selecting other
+images. Compose operations and image removal are mutually exclusive in both UI
+and worker guards. Disconnects invalidate operation results and advise checking
+daemon state after reconnecting, since a batch may have partially completed.
 
 ## UI components and appearance
 
@@ -210,6 +238,7 @@ UI behavior; real operations require the separate integration checks:
 | --- | --- |
 | `bash scripts/verify-docker.sh` | Real discovery/logs, Start/Stop/Restart, interactive shell I/O, PTY resize, ANSI parsing, full-screen vi, shell exit, missing Bash |
 | `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, changed build inputs and rebuilt image/container contents, build failure without stopping services, streamed failures, restart/rebuild/recreation log recovery, bounded batches |
+| `bash scripts/verify-images.sh` | Production worker image discovery, immutable IDs and running/stopped references, blocked removal, multi-tag Docker conflict, selected-image removal and inventory reconciliation |
 | `python3 scripts/verify-log-performance.py` | Owned native window (Wayland preferred) and ten disposable containers; CPU/RSS and search under live log load |
 
 Docker checks create unique Compose fixtures on the existing daemon and remove
@@ -218,6 +247,20 @@ labelled built images, including superseded images; Docker's build cache and the
 `alpine:3.23` base image remain. Compose settings and build inputs are isolated
 under the evidence directory. Fixtures
 have no host mounts, published ports, or persistent volumes.
+
+The image check owns four uniquely labelled/tagged images and one container with
+networking disabled. It removes only those resources and preserves the Alpine
+base image and Docker build cache. Settings and evidence are isolated under
+`.verification/images/`. Headless image checks drive sidebar navigation, tag/ID
+search, a 10,000-image virtualized inventory, removal review/cancellation,
+stopped-container reference guards, success/failure and stale-event handling,
+rendered column alignment, and Light theme. These prove GPUI input/rendering
+and worker requests, separately from the real Docker integration check; native
+desktop Images interaction and OS clipboard behavior remain unverified.
+The headless flow also drives Ctrl-click toggles, clearing the last selection,
+selection retention through sort/search/refresh, hidden-target review, partial
+bulk results and full success. The Docker fixture checks mixed batches with
+stopped-container/multi-tag refusals and successful two-image deletion.
 
 Build with `cargo build --locked` before the native performance helper; use
 `--binary target/release/ferrydock` after a release build to measure shipping
@@ -286,6 +329,9 @@ Docker and Compose integration fixtures, and the headless UI flow with Mesa's
 software GPU driver. Headless and Compose evidence are retained as workflow
 artifacts for seven days.
 
+The Images worker integration fixture also runs in Linux CI and retains its
+discovery/removal/cleanup evidence for seven days.
+
 The reusable [macOS workflow](../.github/workflows/macos.yml) runs alongside
 Linux CI on the `macos-15` Apple Silicon runner. It runs Clippy and unit tests,
 builds the release binary, and packages/verifies the ad hoc signed DMG. The
@@ -333,8 +379,8 @@ For a release, update the Cargo version and lockfile, add user-facing notes in
 `docs/releases/v<version>.md`, commit the changes, and push the matching tag:
 
 ```sh
-git tag -a v0.6.0 -m "FerryDock 0.6.0"
-git push --atomic origin main v0.6.0
+git tag -a v0.7.0 -m "FerryDock 0.7.0"
+git push --atomic origin main v0.7.0
 ```
 
 Replace the example version with the version being released. The tag must match
@@ -346,7 +392,7 @@ To package a locally built release on an Ubuntu 24.04 x86-64 host, install
 build the binary and run:
 
 ```sh
-bash scripts/package-linux.sh v0.6.0
+bash scripts/package-linux.sh v0.7.0
 ```
 
 Output goes to `target/packages/`. Local builds on newer distributions may

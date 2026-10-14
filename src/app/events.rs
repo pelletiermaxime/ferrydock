@@ -20,6 +20,9 @@ impl FerryDock {
             Event::Snapshot(_) | Event::ProjectLog { .. } | Event::ProjectLogBatch { .. }
         );
         match event {
+            event @ (Event::Images { .. }
+            | Event::ImageRemoved { .. }
+            | Event::ImagesRemoved { .. }) => self.image_event(event, window, cx),
             Event::MetricsSession(session) => {
                 self.metrics.session = Some(session);
                 self.metrics.containers.clear();
@@ -139,6 +142,9 @@ impl FerryDock {
             Event::Connected(connection) => {
                 self.connection = Some(connection);
                 self.connection_error = None;
+                if self.images_open {
+                    self.refresh();
+                }
                 window.remove_notification::<FeedbackNotification>(cx);
                 self.container_logs.reopen = true;
                 if let Some(project) = self.projects.selected.clone() {
@@ -146,6 +152,13 @@ impl FerryDock {
                 }
             }
             Event::Disconnected(error) => {
+                self.images.generation += 1;
+                self.images.loading = false;
+                self.images.loaded = false;
+                if self.images.confirmation.take().is_some() {
+                    window.close_dialog(cx);
+                }
+                self.images.interrupt_removal();
                 self.metrics.session = None;
                 self.container_logs.generation += 1;
                 self.terminal.generation += 1;

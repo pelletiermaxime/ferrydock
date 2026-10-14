@@ -31,6 +31,10 @@ the terminal, and container details close at hand.
   images and restart its services, and watch its operation output.
 - **Inspect container configuration.** Read syntax-highlighted JSON with line
   numbers, text selection, folding, and built-in search. The view is read-only.
+- **Manage local images.** Open **Images** to search tags, digests, or image IDs,
+  read sizes and creation dates, and see every container using an image,
+  including stopped containers. Ctrl-click to select several images, then review
+  and remove them together with completion feedback.
 - **Adjust the workspace.** Drag the divider between the container list and
   detail panel. Action buttons show loading state, and notifications report
   completed operations and copy feedback.
@@ -69,12 +73,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.6.0`; replace it with the version you downloaded.
+The examples below use `0.7.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.6.0_amd64.deb
+sudo apt install ./ferrydock_0.7.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -82,11 +86,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.6.0-linux-x86_64.AppImage`:
+`ferrydock-0.7.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.6.0-linux-x86_64.AppImage
-./ferrydock-0.6.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.7.0-linux-x86_64.AppImage
+./ferrydock-0.7.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -95,7 +99,7 @@ Wayland libraries and Vulkan/EGL graphics driver stack, and Docker. If FUSE
 mounting is unavailable, run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.6.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.7.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in
@@ -194,6 +198,40 @@ Ctrl+F searches the JSON, Enter moves to the next match, and Escape closes searc
 Inside the terminal, control keys go to the shell. Drag to select text, then use
 **Ctrl+Shift+C** to copy. Paste with **Ctrl+Shift+V** or **Shift+Insert**, and
 scroll with the mouse wheel or **Shift+PageUp / Shift+PageDown**.
+
+## Manage images
+
+Choose **Images** in the sidebar. The list refreshes automatically while this
+workspace is open; **Refresh** or **Ctrl+R** reloads it manually. **Ctrl+F**
+focuses image search, and Up/Down selects an image when the list has focus.
+Each image appears once, with all its local tags in the detail panel. Untagged
+images remain visible. Click **Image / ID**, **Created (UTC)**, **Size (MiB)**, or **References** to
+sort that column; click again to reverse the order. An arrow marks the active
+direction. Sorting stays active through search and refreshes, and preserves the
+selected image. Unavailable sizes and creation dates stay last in either direction.
+Sizes use MiB and include shared layers, so they do not
+represent the space that removal would recover. **Created (UTC)** is the image's
+creation date and time, rather than when it was pulled to this computer.
+
+The detail panel shows the full image ID and running or stopped container
+references. Click a referenced container to open its existing container view.
+**Ctrl-click** adds or removes an image from the selection; a normal click
+selects only that image. Selected IDs stay selected through sorting, searches,
+and refreshes. The selected count also identifies images hidden by your search.
+
+**Remove image…** or **Remove selected (N)…** opens a confirmation popup listing every selected
+image, including hidden selections, with **Cancel** and **Remove N images** controls.
+Removal is unavailable while discovery is unavailable, an image/Compose operation
+is in progress, or all selected images are in use. FerryDock checks a fresh
+inventory, then asks Docker to remove each selected image without force or
+automatic deletion of parent images. Images used by running or stopped containers
+are kept. A failure does not stop the rest of the batch; a notification reports
+the completion counts and up to three failure examples. Cancel or Escape closes
+the popup without removing anything.
+Successfully removed images leave the selection; failures stay selected while
+they remain in Docker. Docker conflicts, including images with multiple tags,
+leave those images in place. Pulling, tagging, registry browsing, and bulk pruning
+are not available in this Images workspace.
 
 ## Docker connections
 

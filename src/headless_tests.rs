@@ -263,6 +263,17 @@ impl Harness {
 
     fn click(&mut self, selector: &str) {
         self.click_button(selector, MouseButton::Left);
+        if selector == "image-remove" && self.observe(|v| v.images.confirmation.is_some()) {
+            self.settle_ui(300);
+        }
+    }
+
+    fn dismiss_image_feedback(&mut self) {
+        self.settle_ui(300);
+        if self.notification_count() > 0 {
+            self.click("close");
+            self.settle_ui(300);
+        }
     }
 
     fn hover(&mut self, selector: &str, horizontal: f32) {
@@ -330,6 +341,21 @@ impl Harness {
     }
 
     fn click_button(&mut self, selector: &str, button: MouseButton) {
+        self.click_with_modifiers(selector, button, Modifiers::none());
+    }
+
+    fn ctrl_click(&mut self, selector: &str) {
+        self.click_with_modifiers(
+            selector,
+            MouseButton::Left,
+            Modifiers {
+                control: true,
+                ..Modifiers::none()
+            },
+        );
+    }
+
+    fn click_with_modifiers(&mut self, selector: &str, button: MouseButton, modifiers: Modifiers) {
         // Bounds come from the painted element, never desktop coordinates.
         let bounds = self
             .cx
@@ -338,7 +364,7 @@ impl Harness {
             .unwrap_or_else(|| panic!("No rendered control {selector}"));
         let position = bounds.center();
         self.actions.push(
-            json!({"input": "click", "selector": selector, "button": format!("{button:?}"),
+            json!({"input": "click", "selector": selector, "button": format!("{button:?}"), "control":modifiers.control,
             "x": f32::from(position.x), "y": f32::from(position.y)}),
         );
         self.cx
@@ -347,7 +373,7 @@ impl Harness {
                     MouseMoveEvent {
                         position,
                         pressed_button: None,
-                        modifiers: Modifiers::none(),
+                        modifiers,
                     }
                     .to_platform_input(),
                     cx,
@@ -358,7 +384,7 @@ impl Harness {
                     MouseDownEvent {
                         position,
                         button,
-                        modifiers: Modifiers::none(),
+                        modifiers,
                         click_count: 1,
                         first_mouse: false,
                     }
@@ -369,7 +395,7 @@ impl Harness {
                     MouseUpEvent {
                         position,
                         button,
-                        modifiers: Modifiers::none(),
+                        modifiers,
                         click_count: 1,
                     }
                     .to_platform_input(),
@@ -1971,7 +1997,9 @@ fn headless_gpu_user_flow() {
     )
     .unwrap();
 
-    let report = json!({
+    verify_images_workspace(&mut h);
+
+    let mut report = json!({
         "status": "passed", "renderer": "GPUI Kit gpui-pre WgpuHeadlessRenderer",
         "display": null, "wayland_display": null, "docker_worker_started": false,
         "logical_width": 1180, "logical_height": 820,
@@ -1993,8 +2021,22 @@ fn headless_gpu_user_flow() {
             "ordered files, environment files and profiles", "unassociated and conflicting actions blocked",
             "Compose Start Stop Restart Rebuild requests", "Rebuild toolbar and project menu requests", "Rebuild duplicate and conflicting project/container actions blocked", "Rebuild live output and success", "Rebuild failure output retained after leaving and returning", "streamed operation output and retained failure",
             "project log request without association", "combined service prefixes", "project service filter rendered rows",
-            "project log follow pause and copy feedback", "recreated member log rendering", "return to container log routing"]
+            "project log follow pause and copy feedback", "recreated member log rendering", "return to container log routing",
+            "Images sidebar and preserved container session", "Images tag and ID keyboard search", "Images virtualized 10000-row inventory", "Images stopped-container reference prevents removal", "Images review Cancel confirm duplicate guards", "Images removal success failure and refreshed references", "Images stale discovery and disconnected operation guards", "Images light-theme rendering"]
     });
+    report["checks"].as_array_mut().unwrap().extend(
+        [
+            "Images column-header clicks sort ascending and descending with rendered row order",
+            "Images numeric size sorting keeps unavailable last",
+            "Images sorting survives search and refresh without selection or session changes",
+            "Images Ctrl-click toggles multiple highlighted rows and supports empty selection",
+            "Images multi-selection survives sorting filtering and refreshed snapshots",
+            "Images bulk review includes hidden selections and sends exact immutable IDs",
+            "Images partial bulk results retain failed selections; full success clears selection",
+            "Images bulk duplicate and stale-operation guards",
+        ]
+        .map(Value::from),
+    );
     std::fs::write(
         h.evidence.join("headless.json"),
         serde_json::to_vec_pretty(&report).unwrap(),
@@ -2006,4 +2048,557 @@ fn headless_gpu_user_flow() {
     )
     .unwrap();
     println!("Headless GPU evidence: {}", h.evidence.display());
+}
+
+fn verify_images_workspace(h: &mut Harness) {
+    use crate::images::{Image, ImageContainer};
+    let unused = Image {
+        id: format!("sha256:{}", "a".repeat(64)),
+        tags: vec!["ferrydock-demo:latest".into()],
+        digests: vec![],
+        size: Some(128 * 1_048_576),
+        created: 1_792_000_000,
+        containers: vec![].into(),
+    };
+    let used = Image {
+        id: format!("sha256:{}", "b".repeat(64)),
+        tags: vec!["postgres:demo".into()],
+        digests: vec![],
+        size: Some(32 * 1_048_576),
+        created: 1_791_913_600,
+        containers: vec![ImageContainer {
+            id: "fixture-probe-stopped".into(),
+            name: "demo-database-stopped".into(),
+            state: "exited".into(),
+        }]
+        .into(),
+    };
+    let untagged = Image {
+        id: format!("sha256:{}", "c".repeat(64)),
+        tags: vec![],
+        size: None,
+        created: 0,
+        containers: vec![].into(),
+        ..unused.clone()
+    };
+    let inventory = vec![unused.clone(), used.clone(), untagged.clone()];
+    h.settle_ui(5500);
+    let session = h.observe(|v| {
+        (
+            v.containers.selected.clone(),
+            v.container_logs.generation,
+            v.terminal.generation,
+            v.project_logs.generation,
+        )
+    });
+    h.drain_commands();
+    h.click("0-1"); // Kit's Workspace group, Images sidebar item.
+    assert!(h.observe(|v| v.images_open));
+    let mut generation = h.observe(|v| v.images.generation);
+    assert!(h.drain_commands().iter().any(|command| matches!(command, Command::Images { generation: current } if *current == generation)));
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.capture("images-inventory");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let row = window.find("image-row-aaaaaaaaaaaa").bounds();
+        let size = window.find("image-size-aaaaaaaaaaaa").bounds();
+        assert!(
+            window.find("image-sort-name").bounds().size.width < px(200.0),
+            "Image sort header must stay aligned with the image names"
+        );
+        assert!(
+            size.origin.x > row.origin.x + row.size.width / 2.0,
+            "Image sizes must align in their own column"
+        );
+        assert!(
+            size.origin.y >= row.origin.y && size.bottom() <= row.bottom(),
+            "Image metadata must stay within its rendered row"
+        );
+    })
+    .unwrap();
+    verify_image_sorting(h, &inventory, generation);
+    verify_image_multiselection(h, &inventory);
+    generation = h.observe(|v| v.images.generation);
+    h.click("image-row-bbbbbbbbbbbb");
+    h.click("image-remove");
+    assert!(h.observe(|v| v.images.confirmation.is_none()));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::RemoveImage { .. }))
+    );
+    h.capture("images-stopped-reference");
+    h.key("ctrl-f");
+    h.type_text("FERRYDOCK-DEMO");
+    assert_eq!(h.observe(|v| v.images.visible.len()), 1);
+    h.capture("images-search");
+    h.key("ctrl-a");
+    h.type_text("no-such-image");
+    assert!(h.observe(|v| v.images.visible.is_empty()));
+    h.capture("images-no-matches");
+    h.key("ctrl-a");
+    h.type_text("cccccccccccc");
+    assert_eq!(h.observe(|v| v.images.visible.len()), 1);
+    h.key("escape");
+    h.key("down");
+    assert_eq!(
+        h.observe(|v| v.images.selected.clone()),
+        Some(untagged.id.clone())
+    );
+    h.capture("images-untagged-unavailable-size");
+    h.key("ctrl-f");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    h.click("image-row-aaaaaaaaaaaa");
+    h.click("image-remove");
+    assert_eq!(
+        h.observe(|v| v.images.confirmation.clone()),
+        Some(vec![unused.id.clone()])
+    );
+    h.capture("images-removal-review");
+    assert!(
+        h.cx.update_window(h.window.into(), |_, window, cx| window
+            .has_active_dialog(cx))
+            .unwrap()
+    );
+    h.click("image-cancel-remove");
+    assert!(h.observe(|v| v.images.confirmation.is_none()));
+    h.click("image-remove");
+    h.key("escape");
+    assert!(h.observe(|v| v.images.confirmation.is_none()));
+    h.click("image-remove");
+    // A newly attached stopped container cancels an already open review.
+    let mut referenced = unused.clone();
+    referenced.containers = used.containers.clone();
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(vec![referenced, used.clone(), untagged.clone()]),
+    });
+    assert!(h.observe(|v| v.images.confirmation.is_none()));
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.click("image-remove");
+    h.click("image-confirm-remove");
+    let commands = h.drain_commands();
+    let operation = commands
+        .iter()
+        .find_map(|command| match command {
+            Command::RemoveImage { id, operation } if *id == unused.id => Some(*operation),
+            _ => None,
+        })
+        .expect("Confirmed image removal must send the reviewed immutable ID");
+    h.click("image-remove");
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::RemoveImage { .. }))
+    );
+    h.capture("images-removing");
+    h.deliver(Event::ImageRemoved {
+        id: unused.id.clone(),
+        operation,
+        result: Err("Docker refused removal: image has multiple tags".into()),
+    });
+    h.capture("images-removal-failed");
+    h.dismiss_image_feedback();
+    let generation = h.observe(|v| v.images.generation);
+    h.deliver(Event::Images {
+        generation: generation - 1,
+        result: Ok(vec![]),
+    });
+    assert_eq!(h.observe(|v| v.images.items.len()), 3);
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(inventory.clone()),
+    });
+    h.click("image-remove");
+    h.click("image-confirm-remove");
+    let operation = h
+        .drain_commands()
+        .iter()
+        .find_map(|command| match command {
+            Command::RemoveImage { id, operation } if *id == unused.id => Some(*operation),
+            _ => None,
+        })
+        .unwrap();
+    h.deliver(Event::ImageRemoved {
+        id: unused.id.clone(),
+        operation,
+        result: Ok(()),
+    });
+    assert!(!h.observe(|v| v.images.items.iter().any(|image| image.id == unused.id)));
+    let generation = h.observe(|v| v.images.generation);
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(vec![used.clone(), untagged.clone()]),
+    });
+    h.capture("images-removed");
+    h.dismiss_image_feedback();
+    h.click("settings");
+    h.click("theme-light");
+    h.click("settings");
+    assert!(h.observe(|v| v.images_open && !v.settings_open));
+    h.capture("images-light");
+    h.click("settings");
+    h.click("theme-reset");
+    h.click("settings");
+    let many = (0..10_000)
+        .map(|index| Image {
+            id: format!("sha256:{index:064x}"),
+            tags: vec![format!("fixture-image-{index:05}:latest")],
+            ..unused.clone()
+        })
+        .collect();
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(many),
+    });
+    h.capture("images-large-inventory");
+    assert!(
+        h.observe(|v| v.images.rows_rendered.get()) < 40,
+        "Image list must virtualize a large inventory"
+    );
+    h.key("ctrl-f");
+    h.type_text("fixture-image-09999");
+    h.key("escape");
+    h.key("down");
+    assert_eq!(h.observe(|v| v.images.visible.len()), 1);
+    assert_eq!(
+        h.observe(|v| v.images.selected.clone()),
+        Some(format!("sha256:{:064x}", 9999))
+    );
+    h.capture("images-large-search");
+    h.click("0-0");
+    assert!(!h.observe(|v| v.images_open));
+    assert_eq!(
+        session,
+        h.observe(|v| (
+            v.containers.selected.clone(),
+            v.container_logs.generation,
+            v.terminal.generation,
+            v.project_logs.generation
+        ))
+    );
+    h.click("0-1");
+    let generation = h.observe(|v| v.images.generation);
+    h.key("ctrl-f");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(vec![unused.clone(), used.clone(), untagged.clone()]),
+    });
+    h.click("image-row-bbbbbbbbbbbb");
+    h.click("image-container-fixture-probe-stopped");
+    assert!(!h.observe(|v| v.images_open));
+    assert!(!h.observe(|v| v.containers.running_only));
+    assert_eq!(
+        h.observe(|v| v.containers.selected.clone()),
+        Some("fixture-probe-stopped".into())
+    );
+    h.capture("images-reference-navigation");
+    h.click("0-1");
+    h.drain_commands();
+    h.key("ctrl-r");
+    let generation = h.observe(|v| v.images.generation);
+    let commands = h.drain_commands();
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::Refresh))
+    );
+    assert!(commands.iter().any(|command| matches!(command, Command::Images { generation: current } if *current == generation)));
+    h.deliver(Event::Images {
+        generation,
+        result: Err("Fixture inventory failure".into()),
+    });
+    h.capture("images-discovery-failed");
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(vec![unused.clone(), used, untagged]),
+    });
+    h.click("image-row-aaaaaaaaaaaa");
+    h.click("image-remove");
+    h.click("image-confirm-remove");
+    let operation = h.observe(|v| v.images.busy[&unused.id]);
+    h.deliver(Event::Disconnected("Fixture Docker disconnect".into()));
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(inventory),
+    });
+    h.deliver(Event::ImageRemoved {
+        id: unused.id,
+        operation,
+        result: Ok(()),
+    });
+    assert!(!h.observe(|v| v.images.loaded));
+    assert!(h.observe(|v| v.images.busy.is_empty()));
+    assert!(h.observe(|v| {
+        v.images
+            .items
+            .iter()
+            .any(|image| image.id == format!("sha256:{}", "a".repeat(64)))
+    }));
+    h.capture("images-disconnected");
+}
+
+fn verify_image_sorting(h: &mut Harness, inventory: &[crate::images::Image], generation: u64) {
+    let selected = h.observe(|v| v.images.selected.clone());
+    let assert_order = |h: &Harness, expected: &[usize]| {
+        let ids = h.observe(|v| {
+            v.images
+                .visible
+                .iter()
+                .map(|index| v.images.items[*index].id.clone())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            ids,
+            expected
+                .iter()
+                .map(|index| inventory[*index].id.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            h.observe(|v| v.images.selected.clone()),
+            selected,
+            "Sorting must preserve the selected image ID"
+        );
+    };
+    h.drain_commands();
+    h.click("image-sort-size");
+    assert_order(h, &[1, 0, 2]); // 32 MiB before 128 MiB; unavailable stays last.
+    h.capture("images-size-ascending");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let small = window.find("image-row-bbbbbbbbbbbb").bounds();
+        let large = window.find("image-row-aaaaaaaaaaaa").bounds();
+        let missing = window.find("image-row-cccccccccccc").bounds();
+        assert!(
+            small.origin.y < large.origin.y && large.origin.y < missing.origin.y,
+            "Sorted image order must reach the rendered rows"
+        );
+    })
+    .unwrap();
+    h.click("image-sort-size");
+    assert_order(h, &[0, 1, 2]);
+    h.capture("images-size-descending");
+    let mut refreshed = inventory.to_vec();
+    refreshed.reverse();
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(refreshed),
+    });
+    assert_order(h, &[0, 1, 2]);
+    h.click("image-sort-created");
+    assert_order(h, &[1, 0, 2]);
+    h.capture("images-created-oldest-first");
+    h.click("image-sort-created");
+    assert_order(h, &[0, 1, 2]);
+    h.capture("images-created-newest-first");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let created = window.find("image-created-aaaaaaaaaaaa").bounds();
+        let size = window.find("image-size-aaaaaaaaaaaa").bounds();
+        assert!(
+            created.origin.x < size.origin.x
+                && created.origin.y >= window.find("image-row-aaaaaaaaaaaa").bounds().origin.y,
+            "Created timestamps must render in their own aligned column"
+        );
+    })
+    .unwrap();
+    h.key("ctrl-f");
+    h.type_text("postgres");
+    assert_order(h, &[1]);
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    assert_order(h, &[0, 1, 2]);
+    h.click("image-sort-references");
+    assert_order(h, &[0, 2, 1]);
+    h.click("image-sort-references");
+    assert_order(h, &[1, 0, 2]);
+    h.capture("images-references-descending");
+    h.click("image-sort-name");
+    assert_order(h, &[0, 1, 2]);
+    h.click("image-sort-name");
+    assert_order(h, &[2, 1, 0]);
+    h.capture("images-name-descending");
+    h.click("image-sort-name");
+    assert_order(h, &[0, 1, 2]);
+    assert!(
+        h.drain_commands().is_empty(),
+        "Sorting must not restart worker sessions"
+    );
+}
+
+fn verify_image_multiselection(h: &mut Harness, inventory: &[crate::images::Image]) {
+    use crate::images::RemovalResult;
+    let ids = inventory
+        .iter()
+        .map(|image| image.id.clone())
+        .collect::<Vec<_>>();
+    h.click("image-row-aaaaaaaaaaaa");
+    h.ctrl_click("image-row-cccccccccccc");
+    assert_eq!(
+        h.observe(|v| v.images.selection.iter().cloned().collect::<Vec<_>>()),
+        vec![ids[0].clone(), ids[2].clone()]
+    );
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("image-row-aaaaaaaaaaaa").selected(), Some(true));
+        assert_eq!(window.find("image-row-cccccccccccc").selected(), Some(true));
+    })
+    .unwrap();
+    h.ctrl_click("image-row-cccccccccccc");
+    h.ctrl_click("image-row-aaaaaaaaaaaa");
+    assert!(h.observe(|v| v.images.selection.is_empty() && v.images.selected.is_none()));
+    h.drain_commands();
+    h.click("image-remove");
+    assert!(h.drain_commands().is_empty());
+    h.click("image-row-aaaaaaaaaaaa");
+    h.ctrl_click("image-row-cccccccccccc");
+    h.capture("images-multiple-selected");
+    h.click("image-sort-size");
+    assert_eq!(h.observe(|v| v.images.selection.len()), 2);
+    h.key("ctrl-f");
+    h.type_text("ferrydock-demo");
+    h.key("escape");
+    assert_eq!(h.observe(|v| v.images.visible.len()), 1);
+    let generation = h.observe(|v| v.images.generation);
+    let mut refreshed = inventory.to_vec();
+    refreshed.reverse();
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(refreshed),
+    });
+    assert_eq!(h.observe(|v| v.images.selection.len()), 2);
+    h.capture("images-multiple-hidden-selection");
+    h.click("image-remove");
+    assert_eq!(
+        h.observe(|v| v.images.confirmation.clone()),
+        Some(vec![ids[0].clone(), ids[2].clone()])
+    );
+    h.capture("images-multiple-hidden-review");
+    h.click("image-cancel-remove");
+    assert!(h.drain_commands().is_empty());
+    h.key("ctrl-f");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    h.click("image-sort-name");
+    h.ctrl_click("image-row-bbbbbbbbbbbb");
+    assert_eq!(h.observe(|v| v.images.selection.len()), 3);
+    h.click("image-remove");
+    h.capture("images-multiple-removal-review");
+    h.click("image-confirm-remove");
+    let operation = h.drain_commands().iter().find_map(|command| match command {
+        Command::RemoveImages { ids: selected, operation } if *selected == ids => Some(*operation), _ => None,
+    }).expect("Bulk deletion must send exactly the reviewed immutable IDs, including hidden selections");
+    assert_eq!(h.observe(|v| v.images.busy.len()), 3);
+    h.click("image-remove");
+    assert!(h.drain_commands().is_empty());
+    h.capture("images-multiple-removing");
+    h.deliver(Event::ImagesRemoved {
+        operation: operation - 1,
+        results: vec![RemovalResult {
+            id: ids[1].clone(),
+            result: Ok(()),
+        }],
+    });
+    assert_eq!(h.observe(|v| v.images.busy.len()), 3);
+    h.deliver(Event::ImagesRemoved {
+        operation,
+        results: vec![
+            RemovalResult {
+                id: ids[0].clone(),
+                result: Ok(()),
+            },
+            RemovalResult {
+                id: ids[1].clone(),
+                result: Err("Image is used by a stopped container".into()),
+            },
+            RemovalResult {
+                id: ids[2].clone(),
+                result: Err("Docker refused removal: image has multiple tags".into()),
+            },
+        ],
+    });
+    assert!(h.observe(|v| v.images.busy.is_empty()));
+    assert!(!h.observe(|v| v.images.items.iter().any(|image| image.id == ids[0])));
+    assert_eq!(
+        h.observe(|v| v.images.selection.iter().cloned().collect::<Vec<_>>()),
+        vec![ids[1].clone(), ids[2].clone()]
+    );
+    h.capture("images-multiple-partial-results");
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("image-removal-results").is_none());
+    })
+    .unwrap();
+    h.dismiss_image_feedback();
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let detail = window.find("image-detail").bounds();
+        assert!(
+            detail.size.height >= px(260.0) && detail.bottom() <= px(820.0),
+            "Deletion feedback must leave the detail panel inside the window"
+        );
+    })
+    .unwrap();
+    let generation = h.observe(|v| v.images.generation);
+    let mut available = inventory[1].clone();
+    available.containers = std::sync::Arc::from([]);
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(vec![available, inventory[2].clone()]),
+    });
+    assert_eq!(h.observe(|v| v.images.selection.len()), 2);
+    h.click("image-remove");
+    assert!(
+        h.observe(|v| v.images.confirmation.is_some()),
+        "Failed images must remain reviewable after inventory refresh"
+    );
+    h.click("image-confirm-remove");
+    let operation = h
+        .drain_commands()
+        .iter()
+        .find_map(|command| match command {
+            Command::RemoveImages { operation, .. } => Some(*operation),
+            _ => None,
+        })
+        .unwrap();
+    h.deliver(Event::ImagesRemoved {
+        operation,
+        results: vec![
+            RemovalResult {
+                id: ids[1].clone(),
+                result: Ok(()),
+            },
+            RemovalResult {
+                id: ids[2].clone(),
+                result: Ok(()),
+            },
+        ],
+    });
+    assert!(h.observe(|v| v.images.selection.is_empty()
+        && v.images.selected.is_none()
+        && v.images.items.is_empty()));
+    h.capture("images-multiple-removed");
+    h.dismiss_image_feedback();
+    let generation = h.observe(|v| v.images.generation);
+    h.deliver(Event::Images {
+        generation,
+        result: Ok(inventory.to_vec()),
+    });
+    h.click("image-row-aaaaaaaaaaaa");
+    assert_eq!(h.observe(|v| v.images.selection.len()), 1);
+    h.drain_commands();
 }

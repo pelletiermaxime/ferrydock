@@ -57,6 +57,8 @@ jobs:
         run: bash scripts/verify-docker.sh
       - name: Compose project integration tests
         run: bash scripts/verify-compose.sh
+      - name: Images integration tests
+        run: bash scripts/verify-images.sh
       - name: Headless UI tests
         run: python3 scripts/verify-headless.py --timeout 900
       - name: Retain headless test evidence
@@ -74,6 +76,15 @@ jobs:
         with:
           name: compose-project-evidence
           path: .verification/compose/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain Images test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: images-evidence
+          path: .verification/images/
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7

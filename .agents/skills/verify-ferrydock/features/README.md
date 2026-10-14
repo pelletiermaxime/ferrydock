@@ -1,6 +1,6 @@
 # FerryDock verification map
 
-This is an incremental map of the current Linux application. It covers the main list, container detail dock, and Compose project configuration/Start/Stop/Restart/Rebuild & restart workspace. Down, networks, volumes, and cleanup pages remain planned.
+This is an incremental map of the current Linux application. It covers the container list/detail dock, Images workspace, and Compose project configuration/Start/Stop/Restart/Rebuild & restart workspace. Down, networks, volumes, and bulk cleanup pages remain planned.
 
 Default development command: `python3 scripts/verify-headless.py`. It renders the real view through WGPU without a desktop window, drives GPUI input events, and checks commands at a fixture Docker boundary. It needs a usable Linux graphics driver and cached dependencies, but no Docker daemon. The flow retains screenshots and structured evidence under `.verification/headless/`; see the skill's Doctor and the [development guide](../../../../docs/development.md#verification).
 
@@ -12,6 +12,7 @@ Headless coverage includes the UI paths listed below, with fixture events at the
 | --- | --- | --- |
 | [Appearance and resource menus](appearance.md) | Headless theme switching/reset/persistence, Light logs and terminal, session/focus preservation, menus and unavailable actions | Native settings/menu interactions, OS clipboard, and responsive layouts outside the tested 1180x820 view require separate proof. |
 | [Containers and search](containers.md) | Project isolation, selection, empty search, restore filter, all/running toggle | Row clicks, scrolling, manual Refresh and alternate disconnected states require separate proof. |
+| [Images](images.md) | Headless search/sort including Created, Ctrl-click selection, hidden-target modal confirmation and Cancel/Escape, completion notifications, rendered columns, 10k-row virtualization, reference/removal and stale-event guards, and Light; real worker single/bulk removal with scoped cleanup | Native desktop Images and OS clipboard remain unverified; pulling/tagging and daemon-wide pruning are outside the feature. |
 | [CPU and memory](metrics.md) | Headless rows/cards/native area charts, pointer hover values/crosshairs, labelled axes and low-usage scale, missing/stale/stopped/unlimited states, session guards and terminal summary; real Docker worker CPU baseline, usage and configured limits | Physical desktop metrics, macOS and saturation measurements require separate proof. |
 | [Logs](logs.md) | Headless initial/live output, follow/pause, tabs and scrollbar dragging | Native refresh, scroll gestures and stream errors require separate proof. |
 | [Embedded terminal](terminal.md) | Enter opens shell; type command; corroborate file/PTY; exit | Tab/Open shell buttons, Bash, resize, selection, copy/paste, alternate screen, wheel and error paths require separate native proof. |

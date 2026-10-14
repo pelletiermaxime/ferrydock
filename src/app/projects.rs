@@ -81,10 +81,12 @@ impl Projects {
 
 impl FerryDock {
     pub(super) fn project_busy(&self, project: &str) -> bool {
-        self.projects
-            .operations
-            .get(project)
-            .is_some_and(|operation| operation.running)
+        !self.images.busy.is_empty()
+            || self
+                .projects
+                .operations
+                .get(project)
+                .is_some_and(|operation| operation.running)
             || self.containers.items.iter().any(|container| {
                 container.project.as_deref() == Some(project)
                     && self.containers.busy.contains_key(&container.id)

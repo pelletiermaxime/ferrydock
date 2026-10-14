@@ -1,7 +1,6 @@
 //! Top-level window layout; feature panels render their own contents.
 use super::FerryDock;
 use super::ui::palette;
-use crate::docker::Command;
 use gpui::{prelude::*, *};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{
@@ -63,9 +62,15 @@ impl Render for FerryDock {
                 SidebarGroup::new("Workspace").children([
                     SidebarMenuItem::new("Containers")
                         .icon(IconName::LayoutDashboard)
-                        .active(!self.settings_open)
+                        .active(!self.settings_open && !self.images_open)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_settings(false, window, cx);
+                            this.show_images(false, window, cx);
+                        })),
+                    SidebarMenuItem::new("Images")
+                        .icon(gpui_kit::assets::IconName::HardDrive)
+                        .active(!self.settings_open && self.images_open)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_images(true, window, cx);
                         })),
                     SidebarMenuItem::new("Settings")
                         .icon(IconName::Settings)
@@ -104,7 +109,11 @@ impl Render for FerryDock {
             .child(
                 Self::button("refresh", "Refresh", false, false, cx)
                     .icon(IconName::RefreshCw)
-                    .on_click(cx.listener(|this, _, _, _| this.backend.send(Command::Refresh))),
+                    .tooltip("Refresh Docker resources (Ctrl+R)")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.refresh();
+                        cx.notify();
+                    })),
             )
             .child(
                 Self::button("settings", "Settings", self.settings_open, false, cx)
@@ -116,6 +125,8 @@ impl Render for FerryDock {
             );
         let main = if self.settings_open {
             self.appearance_settings(cx).into_any_element()
+        } else if self.images_open {
+            self.images_workspace(cx).into_any_element()
         } else {
             let search = div()
                 .id("search")

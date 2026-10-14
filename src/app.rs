@@ -12,6 +12,7 @@ mod container_list;
 mod container_logs;
 mod containers;
 mod events;
+mod images;
 mod metrics;
 mod navigation;
 mod project_logs;
@@ -53,6 +54,8 @@ pub struct FerryDock {
     connection: Option<Connection>,
     connection_error: Option<String>,
     containers: Containers,
+    images: images::Images,
+    images_open: bool,
     metrics: metrics::Metrics,
     container_logs: ContainerLogs,
     terminal: Terminal,
@@ -132,12 +135,15 @@ impl FerryDock {
         .detach();
         let focus = cx.focus_handle();
         let compose_focus = cx.focus_handle();
+        let images = images::Images::new(window, cx);
         Self {
             backend,
             events,
             connection: None,
             connection_error: None,
             containers: Containers::new(search_input, search_focus, inspection),
+            images,
+            images_open: false,
             metrics: metrics::Metrics::default(),
             container_logs: ContainerLogs::default(),
             terminal: Terminal::default(),
