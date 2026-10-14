@@ -77,6 +77,17 @@ impl FerryDock {
                         }),
                 );
             }
+            let owner = owner.clone();
+            let project = project.clone();
+            menu = menu.separator().item(
+                PopupMenuItem::new("Stop & cleanup…")
+                    .disabled(!configured || !connected || busy || this.projects.form.is_some())
+                    .on_click(move |_, window, cx| {
+                        let _ = owner.update(cx, |this, cx| {
+                            this.review_project_cleanup(project.clone(), window, cx);
+                        });
+                    }),
+            );
             menu
         }
     }

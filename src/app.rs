@@ -18,6 +18,7 @@ mod image_history;
 mod images;
 mod metrics;
 mod navigation;
+mod project_cleanup;
 mod project_logs;
 mod projects;
 mod resource_menu;

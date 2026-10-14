@@ -19,6 +19,16 @@ impl FerryDock {
             &event,
             Event::Snapshot(_) | Event::ProjectLog { .. } | Event::ProjectLogBatch { .. }
         );
+        let check_cleanup = matches!(
+            &event,
+            Event::Snapshot(_)
+                | Event::ComposeProjects(_)
+                | Event::ComposeConfigured { .. }
+                | Event::Connected(_)
+                | Event::Disconnected(_)
+                | Event::ActionStarted { .. }
+                | Event::ActionFinished { .. }
+        );
         match event {
             event @ (Event::Volumes { .. }
             | Event::VolumeSizes { .. }
@@ -370,6 +380,9 @@ impl FerryDock {
         }
         if sync_services && self.projects.selected.is_some() {
             self.sync_service_filter(window, cx);
+        }
+        if check_cleanup {
+            self.invalidate_cleanup_review(window, cx);
         }
     }
 }

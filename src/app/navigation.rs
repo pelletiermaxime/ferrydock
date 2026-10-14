@@ -79,6 +79,9 @@ impl FerryDock {
         cx: &mut Context<Self>,
     ) {
         let key = &event.keystroke;
+        if self.projects.cleanup.is_some() {
+            return;
+        }
         if key.modifiers.control && key.key == "," {
             self.show_settings(!self.settings_open, window, cx);
             cx.stop_propagation();

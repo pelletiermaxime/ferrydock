@@ -1,5 +1,5 @@
 //! Compose configuration belongs to a project on a particular Docker endpoint.
-//! Labels suggest paths; only an explicitly saved association enables controls.
+//! Accessible labeled files associate automatically; saved configurations win.
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -12,6 +12,9 @@ use tokio::{io::AsyncReadExt, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{docker::Event, model::Container};
+
+mod cleanup;
+mod source;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -99,6 +102,9 @@ impl Config {
         for profile in &self.profiles {
             args.extend(["--profile".into(), profile.clone()]);
         }
+        if action.is_cleanup() {
+            args.extend(["--profile".into(), "*".into()]);
+        }
         args.extend(action.args().iter().map(|arg| (*arg).into()));
         args
     }
@@ -110,6 +116,7 @@ pub enum Action {
     Stop,
     Restart,
     Rebuild,
+    Cleanup { volumes: bool, images: bool },
 }
 impl Action {
     pub fn label(self) -> &'static str {
@@ -118,14 +125,25 @@ impl Action {
             Self::Stop => "Stop",
             Self::Restart => "Restart",
             Self::Rebuild => "Rebuild & restart",
+            Self::Cleanup { .. } => "Stop & cleanup",
         }
     }
-    fn args(self) -> &'static [&'static str] {
+    pub fn is_cleanup(self) -> bool {
+        matches!(self, Self::Cleanup { .. })
+    }
+    fn args(self) -> Vec<&'static str> {
         match self {
-            Self::Start => &["up", "--detach", "--no-build"],
-            Self::Stop => &["stop"],
-            Self::Restart => &["restart"],
-            Self::Rebuild => &["up", "--detach", "--build", "--force-recreate"],
+            Self::Start => vec!["up", "--detach", "--no-build"],
+            Self::Stop => vec!["stop"],
+            Self::Restart => vec!["restart"],
+            Self::Rebuild => vec!["up", "--detach", "--build", "--force-recreate"],
+            Self::Cleanup { volumes, .. } => {
+                let mut args = vec!["down", "--remove-orphans"];
+                if volumes {
+                    args.push("--volumes");
+                }
+                args
+            }
         }
     }
 }
@@ -135,6 +153,8 @@ pub struct Project {
     pub name: String,
     pub config: Option<Config>,
     pub hint: Config,
+    /// Verified linked checkout containing the primary Compose file.
+    pub worktree: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -180,11 +200,21 @@ impl Settings {
             endpoint: endpoint.into(),
             config,
         });
+        settings.persist(path)
+    }
+    pub fn forget(path: &Path, endpoint: &str, project: &str) -> Result<Self> {
+        let mut settings = Self::load(path)?;
+        settings
+            .associations
+            .retain(|entry| entry.endpoint != endpoint || entry.config.project != project);
+        settings.persist(path)
+    }
+    fn persist(self, path: &Path) -> Result<Self> {
         std::fs::create_dir_all(path.parent().context("Configuration path has no parent")?)?;
         let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-        std::fs::write(&temporary, serde_json::to_vec_pretty(&settings)?)?;
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&self)?)?;
         std::fs::rename(&temporary, path)?;
-        Ok(settings)
+        Ok(self)
     }
     pub fn projects(&self, endpoint: &str, containers: &[Container]) -> Vec<Project> {
         let mut projects = BTreeMap::new();
@@ -200,6 +230,7 @@ impl Settings {
                         env_files: container.compose_env_files.clone(),
                         profiles: vec![],
                     },
+                    worktree: None,
                 });
             }
         }
@@ -214,6 +245,7 @@ impl Settings {
                     name: association.config.project.clone(),
                     config: Some(association.config.clone()),
                     hint: association.config.clone(),
+                    worktree: None,
                 });
         }
         projects.into_values().collect()
@@ -229,12 +261,44 @@ pub async fn run(
     cancel: CancellationToken,
 ) -> Result<()> {
     let config = config.validated()?;
+    let images = if matches!(action, Action::Cleanup { images: true, .. }) {
+        cleanup::generated_images(&config, &endpoint, &cancel).await?
+    } else {
+        Vec::new()
+    };
+    run_process(
+        &config,
+        &endpoint,
+        config.args(&endpoint, action),
+        action,
+        operation,
+        &events,
+        &cancel,
+    )
+    .await?;
+    if !images.is_empty() {
+        let mut args = vec![
+            "--host".into(),
+            endpoint.clone(),
+            "image".into(),
+            "rm".into(),
+        ];
+        args.extend(images);
+        run_process(
+            &config, &endpoint, args, action, operation, &events, &cancel,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn command(config: &Config, endpoint: &str, args: Vec<String>) -> tokio::process::Command {
     let mut command = crate::docker_cli::command();
     command
-        .args(config.args(&endpoint, action))
+        .args(args)
         .current_dir(&config.directory)
         .env_remove("DOCKER_CONTEXT")
-        .env("DOCKER_HOST", &endpoint)
+        .env("DOCKER_HOST", endpoint)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -246,6 +310,19 @@ pub async fn run(
             command.env_remove(name);
         }
     }
+    command
+}
+
+async fn run_process(
+    config: &Config,
+    endpoint: &str,
+    args: Vec<String>,
+    action: Action,
+    operation: u64,
+    events: &mpsc::Sender<Event>,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let mut command = command(config, endpoint, args);
     let mut child = command
         .spawn()
         .context("Cannot launch Docker Compose v2; install the docker compose plugin")?;
@@ -318,5 +395,47 @@ mod tests {
         };
         assert_eq!(settings.projects("unix:///a", &[]).len(), 1);
         assert!(settings.projects("unix:///b", &[]).is_empty());
+    }
+    #[test]
+    fn cleanup_is_project_scoped_and_respects_retention_options() {
+        let config = Config {
+            project: "owned".into(),
+            directory: "/tmp/owned".into(),
+            files: vec!["compose.yaml".into()],
+            profiles: vec!["extra".into()],
+            ..Default::default()
+        };
+        for volumes in [false, true] {
+            for images in [false, true] {
+                let args = config.args("unix:///owned.sock", Action::Cleanup { volumes, images });
+                assert!(
+                    args.windows(2)
+                        .any(|pair| pair == ["--project-name", "owned"])
+                );
+                assert!(args.windows(2).any(|pair| pair == ["--profile", "*"]));
+                assert!(args.contains(&"down".into()) && args.contains(&"--remove-orphans".into()));
+                assert_eq!(args.contains(&"--volumes".into()), volumes);
+                // Image removal is a separate explicit-name step. Compose's
+                // --rmi local also deletes custom-tagged builds in some versions.
+                assert!(!args.contains(&"--rmi".into()));
+                assert!(!args.contains(&"all".into()));
+            }
+        }
+    }
+    #[test]
+    fn forgetting_association_preserves_other_endpoints_and_projects() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("compose.json");
+        let config = |project: &str| Config {
+            project: project.into(),
+            ..Default::default()
+        };
+        Settings::save(&path, "unix:///a", config("owned")).unwrap();
+        Settings::save(&path, "unix:///b", config("owned")).unwrap();
+        Settings::save(&path, "unix:///a", config("other")).unwrap();
+        let settings = Settings::forget(&path, "unix:///a", "owned").unwrap();
+        assert!(settings.config("unix:///a", "owned").is_none());
+        assert!(settings.config("unix:///b", "owned").is_some());
+        assert!(settings.config("unix:///a", "other").is_some());
     }
 }

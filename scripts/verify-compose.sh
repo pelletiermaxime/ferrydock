@@ -16,8 +16,11 @@ mkdir -p .verification/compose
 evidence="$(mktemp -d "$PWD/.verification/compose/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")"
 export XDG_CONFIG_HOME="$evidence/settings"
 fixture_directory="$evidence/fixture"
-mkdir -p "$fixture_directory"
-cp verify/compose-project.yaml verify/compose-project.override.yaml verify/compose-project.env verify/compose-project.Dockerfile "$fixture_directory/"
+# Keep a real, owned linked checkout in the evidence for source discovery proof.
+git init --quiet "$evidence/repository"
+git -C "$evidence/repository" -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit --quiet --allow-empty -m fixture
+git -C "$evidence/repository" worktree add --quiet --detach "$fixture_directory"
+cp verify/compose-project.yaml verify/compose-project.override.yaml verify/compose-project.cleanup.yaml verify/compose-project.env verify/compose-project.Dockerfile "$fixture_directory/"
 printf 'before-rebuild\n' > "$fixture_directory/rebuild-marker"
 printf '\nFERRY_COMPOSE_BUILD_IMAGE=ferrydock-compose-verify:%s\nFERRY_COMPOSE_BUILD_PROJECT=%s\n' "$project" "$project" >> "$fixture_directory/compose-project.env"
 fixture=(docker --host "$endpoint" compose --project-name "$project" --project-directory "$fixture_directory" --file "$fixture_directory/compose-project.yaml" --file "$fixture_directory/compose-project.override.yaml" --env-file "$fixture_directory/compose-project.env" --profile extra)
@@ -35,6 +38,25 @@ cleanup() {
   done < <(docker --host "$endpoint" image ls -q --filter "label=dev.ferrydock.fixture.project=$project" | sort -u)
   remaining="$(docker --host "$endpoint" image ls -q --filter "label=dev.ferrydock.fixture.project=$project")"
   [[ -z "$remaining" ]]
+  # Cleanup-specific test resources, including owned external preservation probes.
+  local volume network
+  while IFS= read -r volume; do
+    [[ -z "$volume" ]] || docker --host "$endpoint" volume rm "$volume" >>"$evidence/cleanup.log" 2>&1
+  done < <(docker --host "$endpoint" volume ls -q --filter "label=dev.ferrydock.fixture.project=$project")
+  while IFS= read -r network; do
+    [[ -z "$network" ]] || docker --host "$endpoint" network rm "$network" >>"$evidence/cleanup.log" 2>&1
+  done < <(docker --host "$endpoint" network ls -q --filter "label=dev.ferrydock.fixture.project=$project")
+  [[ -z "$(docker --host "$endpoint" volume ls -q --filter "label=dev.ferrydock.fixture.project=$project")" ]]
+  [[ -z "$(docker --host "$endpoint" network ls -q --filter "label=dev.ferrydock.fixture.project=$project")" ]]
+  # The test records this exact anonymous mount from its owned fixture container.
+  if [[ -f "$fixture_directory/cleanup-anonymous-volume" ]]; then
+    local anonymous
+    anonymous="$(cat "$fixture_directory/cleanup-anonymous-volume")"
+    [[ "$anonymous" =~ ^[a-f0-9]{64}$ ]]
+    if [[ -n "$(docker --host "$endpoint" volume ls -q --filter "name=^$anonymous$")" ]]; then
+      docker --host "$endpoint" volume rm "$anonymous" >>"$evidence/cleanup.log" 2>&1
+    fi
+  fi
   echo "Scoped cleanup passed: $project"
 }
 trap cleanup EXIT

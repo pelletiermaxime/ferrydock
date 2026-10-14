@@ -1,0 +1,30 @@
+services:
+  cleanup-local:
+    build:
+      context: .
+      dockerfile: compose-project.Dockerfile
+      labels:
+        dev.ferrydock.fixture: "true"
+        dev.ferrydock.fixture.project: ${FERRY_COMPOSE_BUILD_PROJECT:?fixture project required}
+    command: ["sleep", "3600"]
+    stop_grace_period: 1s
+    profiles: [cleanup]
+    labels:
+      dev.ferrydock.fixture: "true"
+    volumes:
+      - cleanup-data:/data
+      - cleanup-external:/external
+      - ./cleanup-bind:/bind
+    networks: [default, cleanup-external]
+volumes:
+  cleanup-data:
+    labels:
+      dev.ferrydock.fixture: "true"
+      dev.ferrydock.fixture.project: ${FERRY_COMPOSE_BUILD_PROJECT:?fixture project required}
+  cleanup-external:
+    external: true
+    name: ${FERRY_COMPOSE_BUILD_PROJECT:?fixture project required}-external-volume
+networks:
+  cleanup-external:
+    external: true
+    name: ${FERRY_COMPOSE_BUILD_PROJECT:?fixture project required}-external-network

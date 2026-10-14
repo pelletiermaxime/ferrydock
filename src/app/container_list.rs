@@ -13,6 +13,7 @@ use gpui_kit::component::{
     scroll::{Scrollbar, ScrollbarMode},
     spinner::Spinner,
     tag::Tag,
+    tooltip::Tooltip,
 };
 
 enum ResourceRow {
@@ -164,6 +165,20 @@ impl FerryDock {
                                 GroupKey::Standalone => None,
                             };
                             let menu_project = compose_project.clone();
+                            let source = compose_project.as_ref().and_then(|name| {
+                                this.projects
+                                    .items
+                                    .iter()
+                                    .find(|project| &project.name == name)
+                            });
+                            let source_label = if matches!(project, GroupKey::Compose(_)) {
+                                source
+                                    .map(|project| project.source_label())
+                                    .unwrap_or_else(|| "Compose file path unavailable".into())
+                            } else {
+                                "Individual containers".into()
+                            };
+                            let source_tooltip = source.map(|project| project.source_tooltip());
                             let group = project.clone();
                             let expanded = this.containers.group_expanded(project);
                             let toggle_id = match project {
@@ -247,21 +262,72 @@ impl FerryDock {
                                             .min_w_0()
                                             .child(
                                                 div()
-                                                    .text_ellipsis()
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .child(project.label().to_owned()),
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .min_w_0()
+                                                            .text_ellipsis()
+                                                            .font_weight(FontWeight::SEMIBOLD)
+                                                            .child(project.label().to_owned()),
+                                                    )
+                                                    .when(
+                                                        source.is_some_and(|project| {
+                                                            project.worktree.is_some()
+                                                        }),
+                                                        |title| {
+                                                            title.child(
+                                                                div()
+                                                                    .id(SharedString::from(
+                                                                        format!(
+                                                                            "worktree-{}",
+                                                                            project.label()
+                                                                        ),
+                                                                    ))
+                                                                    .test_support()
+                                                                    .flex_shrink_0()
+                                                                    .debug_selector({
+                                                                        let name = project
+                                                                            .label()
+                                                                            .to_owned();
+                                                                        move || {
+                                                                            format!(
+                                                                                "worktree-{name}"
+                                                                            )
+                                                                        }
+                                                                    })
+                                                                    .child(
+                                                                        Tag::secondary()
+                                                                            .small()
+                                                                            .outline()
+                                                                            .child("Git worktree"),
+                                                                    ),
+                                                            )
+                                                        },
+                                                    ),
                                             )
                                             .child(
                                                 div()
+                                                    .id(SharedString::from(format!(
+                                                        "source-{}",
+                                                        project.label()
+                                                    )))
+                                                    .test_support()
+                                                    .debug_selector({
+                                                        let name = project.label().to_owned();
+                                                        move || format!("source-{name}")
+                                                    })
+                                                    .text_ellipsis()
                                                     .text_size(px(10.0))
                                                     .text_color(rgb(colors.muted))
-                                                    .child(
-                                                        if matches!(project, GroupKey::Compose(_)) {
-                                                            "Compose project"
-                                                        } else {
-                                                            "Individual containers"
-                                                        },
-                                                    ),
+                                                    .when_some(source_tooltip, |line, text| {
+                                                        line.tooltip(move |window, cx| {
+                                                            Tooltip::new(text.clone())
+                                                                .build(window, cx)
+                                                        })
+                                                    })
+                                                    .child(source_label),
                                             ),
                                     )
                                     .child(

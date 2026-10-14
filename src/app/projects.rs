@@ -64,6 +64,7 @@ pub(super) struct Projects {
     pub(super) operations: HashMap<String, ComposeOperation>,
     pub(super) next_operation: u64,
     pub(super) tab: ProjectTab,
+    pub(super) cleanup: Option<super::project_cleanup::CleanupReview>,
 }
 impl Projects {
     pub(super) fn new(focus: FocusHandle) -> Self {
@@ -75,6 +76,7 @@ impl Projects {
             operations: HashMap::new(),
             next_operation: 0,
             tab: ProjectTab::Logs,
+            cleanup: None,
         }
     }
 }
@@ -176,6 +178,9 @@ impl FerryDock {
     }
 
     pub(super) fn compose_action(&mut self, action: compose::Action, cx: &mut Context<Self>) {
+        if action.is_cleanup() && !self.cleanup_review_available() {
+            return;
+        }
         let Some(project) = self.projects.selected.clone() else {
             return;
         };
@@ -205,7 +210,10 @@ impl FerryDock {
         );
         if matches!(
             action,
-            compose::Action::Stop | compose::Action::Restart | compose::Action::Rebuild
+            compose::Action::Stop
+                | compose::Action::Restart
+                | compose::Action::Rebuild
+                | compose::Action::Cleanup { .. }
         ) && self
             .selected_container()
             .is_some_and(|container| container.project.as_ref() == Some(&project))

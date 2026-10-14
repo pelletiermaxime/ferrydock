@@ -593,6 +593,7 @@ async fn connected(
     let mut compose_jobs = FuturesUnordered::new();
     let mut compose_busy = HashSet::new();
     let mut container_projects = std::collections::HashMap::new();
+    let mut project_configs = std::collections::HashMap::new();
     let mut settings =
         match compose::Settings::path().and_then(|path| compose::Settings::load(&path)) {
             Ok(settings) => settings,
@@ -611,11 +612,24 @@ async fn connected(
                 .iter()
                 .map(|container| (container.id.clone(), container.project.clone()))
                 .collect();
-            events
-                .send(Event::ComposeProjects(
-                    settings.projects(&connection.endpoint, &containers),
-                ))
-                .await?;
+            let mut projects = settings.projects(&connection.endpoint, &containers);
+            let projects = tokio::task::spawn_blocking(move || {
+                for project in &mut projects {
+                    project.discover_local_source();
+                }
+                projects
+            })
+            .await?;
+            project_configs = projects
+                .iter()
+                .filter_map(|project| {
+                    project
+                        .config
+                        .clone()
+                        .map(|config| (project.name.clone(), config))
+                })
+                .collect();
+            events.send(Event::ComposeProjects(projects)).await?;
             events.send(Event::Snapshot(containers)).await?;
             if image_requests.borrow().is_some() {
                 image_requests.send_modify(|_| {});
@@ -636,7 +650,13 @@ async fn connected(
                 dirty = true;
             }
             Some(result) = compose_jobs.next(), if !compose_jobs.is_empty() => {
-                let (project, operation, result) = result?;
+                let (project, operation, action, mut result): (String, u64, compose::Action, Result<(), String>) = result?;
+                if result.is_ok() && action.is_cleanup() && settings.config(&connection.endpoint, &project).is_some() {
+                    match compose::Settings::path().and_then(|path| compose::Settings::forget(&path, &connection.endpoint, &project)) {
+                        Ok(updated) => settings = updated,
+                        Err(error) => result = Err(format!("Docker cleanup completed, but the saved association could not be removed: {error:#}")),
+                    }
+                }
                 compose_busy.remove(&project);
                 let _ = events.send(Event::ComposeFinished { project, operation, result }).await;
                 dirty = true;
@@ -826,7 +846,8 @@ async fn connected(
                     }
                     Command::Compose { project, operation, action } => {
                         let conflict = pruning || !image_busy.is_empty() || !volume_busy.is_empty() || compose_busy.contains(&project) || busy.iter().any(|id| container_projects.get(id).and_then(Option::as_ref) == Some(&project));
-                        let config = settings.config(&connection.endpoint, &project).cloned();
+                        let config = settings.config(&connection.endpoint, &project)
+                            .or_else(|| project_configs.get(&project)).cloned();
                         if let Some(config) = config.filter(|_| !conflict) {
                             compose_busy.insert(project.clone());
                             let endpoint = connection.endpoint.clone();
@@ -834,7 +855,7 @@ async fn connected(
                             let cancellation = cancel.child_token();
                             compose_jobs.push(tokio::spawn(async move {
                                 let result = compose::run(config, endpoint, action, operation, events, cancellation).await.map_err(|error| format!("{error:#}"));
-                                (project, operation, result)
+                                (project, operation, action, result)
                             }));
                         } else {
                             let _ = events.send(Event::ComposeFinished { project, operation, result: Err(if conflict { "Another operation is running on this project" } else { "Associate and save this project's Compose configuration first" }.into()) }).await;

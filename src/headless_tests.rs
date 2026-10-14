@@ -1499,13 +1499,24 @@ fn headless_gpu_user_flow() {
     h.deliver(Event::ComposeProjects(vec![ComposeProject {
         name: "headless-fixture".into(),
         config: None,
+        worktree: Some("/fixture/project".into()),
         hint: ComposeConfig {
             project: "headless-fixture".into(),
             directory: "/fixture/project".into(),
-            files: vec!["compose.yaml".into()],
+            files: vec!["compose.yaml".into(), "compose.dev.yaml".into()],
             ..Default::default()
         },
     }]));
+    let source_frame = h.capture("compose-source-worktree");
+    h.require_glyph_color(&source_frame, "source-headless-fixture", 0x9eb2a8);
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "worktree-headless-fixture")
+            .unwrap()
+            .is_some()
+    );
+    h.hover("source-headless-fixture", 0.3);
+    h.settle_ui(1200);
+    h.capture("compose-source-tooltip");
     h.click("project-headless-fixture");
     assert!(h.drain_commands().iter().any(|command| matches!(command, Command::ProjectLogs { project, .. } if project == "headless-fixture")));
     let generation = h.observe(|v| v.project_logs.generation);
@@ -2035,6 +2046,8 @@ fn headless_gpu_user_flow() {
     }));
     h.capture("compose-rebuild-completed");
 
+    verify_project_cleanup(&mut h);
+
     h.click_tab("project-tabs", 0);
     let generation = h.observe(|v| v.project_logs.generation);
     let ingestion_started = Instant::now();
@@ -2171,6 +2184,12 @@ fn headless_gpu_user_flow() {
     });
     report["checks"].as_array_mut().unwrap().extend(
         [
+            "Compose source path and linked worktree tag",
+            "Pointer-hover ordered Compose files and worktree tooltip",
+            "Project menu cleanup review Cancel and Escape prevent execution",
+            "Cleanup checkboxes send exact volume and image retention options",
+            "Cleanup review invalidates on changed configuration and membership",
+            "Cleanup failure remains visible; successful discovery removes project heading",
             "Compose and standalone chevrons collapse and expand rendered groups",
             "Folding preserves the detail session and survives inventory refresh",
             "Search reveals folded matches and restores folds when cleared",
@@ -2311,6 +2330,146 @@ fn verify_image_prune(h: &mut Harness, inventory: &[crate::images::Image]) {
     h.key("backspace");
     h.key("escape");
     h.drain_commands();
+}
+
+fn verify_project_cleanup(h: &mut Harness) {
+    fn open(h: &mut Harness) {
+        h.drain_commands();
+        h.click("project-more");
+        h.actions.push(json!({"input":"menu-click", "menu":"project-more", "index":8, "action":"Stop & cleanup"}));
+        h.cx.update_window(h.window.into(), |_, window, cx| {
+            window.within("popup-menu").click(8, cx);
+        })
+        .unwrap();
+        h.cx.run_until_parked();
+        h.settle_ui(300);
+        assert!(h.observe(|v| v.projects.cleanup.is_some()));
+        assert!(
+            !h.drain_commands()
+                .iter()
+                .any(|command| matches!(command, Command::Compose { .. }))
+        );
+    }
+    let projects = h.observe(|v| v.projects.items.clone());
+    let containers = h.observe(|v| v.containers.items.clone());
+    open(h);
+    h.capture("compose-cleanup-review");
+    h.click("compose-cleanup-cancel");
+    assert!(h.observe(|v| v.projects.cleanup.is_none()));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::Compose { .. }))
+    );
+
+    open(h);
+    h.key("escape");
+    h.settle_ui(300);
+    assert!(h.observe(|v| v.projects.cleanup.is_none()));
+
+    open(h);
+    h.click("compose-cleanup-volumes");
+    h.click("compose-cleanup-images");
+    h.capture("compose-cleanup-keep-data");
+    h.click("compose-cleanup-confirm");
+    let operation = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Compose {
+                project,
+                operation,
+                action:
+                    compose::Action::Cleanup {
+                        volumes: false,
+                        images: false,
+                    },
+            } if project == "headless-fixture" => Some(operation),
+            _ => None,
+        })
+        .expect("Reviewed cleanup options must reach worker");
+    h.deliver(Event::ComposeOutput {
+        project: "headless-fixture".into(),
+        operation,
+        data: b"Removing project containers\n".to_vec(),
+    });
+    h.capture("compose-cleanup-live");
+    h.deliver(Event::ComposeFinished {
+        project: "headless-fixture".into(),
+        operation,
+        result: Err("Fixture network still in use".into()),
+    });
+    assert!(h.observe(|v| v.projects.items[0].config.is_some()));
+    h.capture("compose-cleanup-failed");
+
+    open(h);
+    let mut changed = projects.clone();
+    changed[0]
+        .config
+        .as_mut()
+        .unwrap()
+        .profiles
+        .push("changed".into());
+    h.deliver(Event::ComposeProjects(changed));
+    assert!(h.observe(|v| v.projects.cleanup.is_none()));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|command| matches!(command, Command::Compose { .. }))
+    );
+    h.deliver(Event::ComposeProjects(projects.clone()));
+
+    open(h);
+    let mut changed = containers.clone();
+    changed.push(container(
+        "cleanup-new-member",
+        "headless-fixture-new",
+        "running",
+        Some("headless-fixture"),
+    ));
+    h.deliver(Event::Snapshot(changed));
+    assert!(h.observe(|v| v.projects.cleanup.is_none()));
+    h.deliver(Event::Snapshot(containers.clone()));
+
+    open(h);
+    h.click("compose-cleanup-confirm");
+    let operation = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Compose {
+                project,
+                operation,
+                action:
+                    compose::Action::Cleanup {
+                        volumes: true,
+                        images: true,
+                    },
+            } if project == "headless-fixture" => Some(operation),
+            _ => None,
+        })
+        .expect("Default cleanup must remove project volumes and local images");
+    h.deliver(Event::ComposeFinished {
+        project: "headless-fixture".into(),
+        operation,
+        result: Ok(()),
+    });
+    h.deliver(Event::ComposeProjects(vec![]));
+    h.deliver(Event::Snapshot(
+        containers
+            .iter()
+            .filter(|container| container.project.as_deref() != Some("headless-fixture"))
+            .cloned()
+            .collect(),
+    ));
+    h.capture("compose-cleanup-completed");
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "project-headless-fixture")
+            .unwrap()
+            .is_none()
+    );
+    h.deliver(Event::ComposeProjects(projects));
+    h.deliver(Event::Snapshot(containers));
 }
 
 fn verify_images_workspace(h: &mut Harness) {

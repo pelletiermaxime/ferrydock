@@ -78,12 +78,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.9.0`; replace it with the version you downloaded.
+The examples below use `0.10.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.9.0_amd64.deb
+sudo apt install ./ferrydock_0.10.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -91,11 +91,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.9.0-linux-x86_64.AppImage`:
+`ferrydock-0.10.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.9.0-linux-x86_64.AppImage
-./ferrydock-0.9.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.10.0-linux-x86_64.AppImage
+./ferrydock-0.10.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -104,7 +104,7 @@ Wayland libraries and Vulkan/EGL graphics driver stack, and Docker. If FUSE
 mounting is unavailable, run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.9.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.10.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in
@@ -143,8 +143,15 @@ its terminal session; open a new shell after it starts again.
 
 ### Manage a Compose project
 
-Click a Compose project heading to open its controls in the bottom dock. Choose
-**Associate files** to review the suggested project directory and Compose files.
+Project headings show the Compose file path; hover it to see all files in order.
+A **Git worktree** tag identifies a locally verified linked checkout containing
+the primary Compose file. Paths unavailable on this computer cannot be verified.
+
+FerryDock automatically associates accessible Compose files from Docker labels,
+including labeled environment files. Click a project heading to open its controls
+in the bottom dock. Use **Configuration** to review or change the detected files
+and add profiles; saved configurations take precedence over automatic discovery.
+If the labeled paths are missing or unavailable, choose **Associate files**.
 Enter files in override order, one per line, and include the environment files
 and profiles you normally use. Save the association to enable **Start**, **Stop**,
 **Restart**, and **Rebuild & restart**. **Configuration** lets you edit it later.
@@ -155,6 +162,18 @@ can be folded too. Folding keeps the current detail panel and session open.
 Groups remember their folded state while FerryDock is open, including through
 refreshes. Search temporarily reveals matching containers in folded groups;
 clearing search restores the folds. Up/Down skips folded container rows.
+
+**Stop** keeps containers, images and volume data so you can start the project
+again. With **Running only** checked, stopped containers are hidden but their
+project heading remains available.
+
+Choose **More → Stop & cleanup…** to stop and remove a project, including stopped
+containers and orphaned services. Review the containers and choose whether to
+delete project volumes permanently and remove Compose-generated local images.
+Both options are selected initially. External volumes and networks, bind-mounted
+files, explicitly tagged images and build cache are kept. Successful cleanup
+removes the saved association and the empty project heading. Progress and errors
+appear in **Operations**; an error can leave a partially cleaned project.
 
 The project's **Logs** tab combines output from all its containers, with a coloured
 service/container prefix on each line that matches the container's list marker.

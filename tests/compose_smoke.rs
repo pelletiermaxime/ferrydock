@@ -13,6 +13,288 @@ async fn receive(events: &mut mpsc::Receiver<Event>) -> Result<Event> {
         .context("Worker exited")
 }
 
+async fn fixture_cli(endpoint: &str, args: &[&str]) -> Result<String> {
+    let output = time::timeout(
+        Duration::from_secs(45),
+        tokio::process::Command::new("docker")
+            .args(["--host", endpoint])
+            .args(args)
+            .output(),
+    )
+    .await??;
+    if !output.status.success() {
+        bail!(
+            "Fixture command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
+async fn save_association(
+    backend: &Backend,
+    events: &mut mpsc::Receiver<Event>,
+    config: &Config,
+) -> Result<()> {
+    backend.send(Command::ConfigureCompose {
+        config: config.clone(),
+    });
+    loop {
+        if let Event::ComposeConfigured { project, result } = receive(events).await?
+            && project == config.project
+        {
+            return result.map(|_| ()).map_err(anyhow::Error::msg);
+        }
+    }
+}
+
+async fn verify_cleanup(
+    backend: &Backend,
+    events: &mut mpsc::Receiver<Event>,
+    config: &Config,
+    endpoint: &str,
+) -> Result<serde_json::Value> {
+    let project = &config.project;
+    let directory = &config.directory;
+    let external_volume = format!("{project}-external-volume");
+    let external_network = format!("{project}-external-network");
+    let ownership = format!("dev.ferrydock.fixture.project={project}");
+    fixture_cli(
+        endpoint,
+        &[
+            "volume",
+            "create",
+            "--label",
+            "dev.ferrydock.fixture=true",
+            "--label",
+            &ownership,
+            &external_volume,
+        ],
+    )
+    .await?;
+    fixture_cli(
+        endpoint,
+        &[
+            "network",
+            "create",
+            "--label",
+            "dev.ferrydock.fixture=true",
+            "--label",
+            &ownership,
+            &external_network,
+        ],
+    )
+    .await?;
+    let bind = directory.join("cleanup-bind");
+    std::fs::create_dir(&bind)?;
+    std::fs::write(bind.join("marker"), "bind data must survive")?;
+    let mut cleanup = config.clone();
+    cleanup
+        .files
+        .push(directory.join("compose-project.cleanup.yaml"));
+    // Setup enables the fixture's profiled local-build service. The saved
+    // configuration omits that profile so cleanup must cover all profiles.
+    let mut setup = cleanup.clone();
+    setup.profiles.push("cleanup".into());
+    let setup_output = time::timeout(
+        Duration::from_secs(45),
+        tokio::process::Command::new("docker")
+            .args(setup.args(endpoint, compose::Action::Rebuild))
+            .output(),
+    )
+    .await??;
+    assert!(
+        setup_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup_output.stderr)
+    );
+    let local_image = format!("{project}-cleanup-local");
+    let named_volume = format!("{project}_cleanup-data");
+    save_association(backend, events, &cleanup).await?;
+    let (result, kept_output) = operation(
+        backend,
+        events,
+        project,
+        compose::Action::Cleanup {
+            volumes: false,
+            images: false,
+        },
+        80,
+    )
+    .await?;
+    result.map_err(anyhow::Error::msg)?;
+    fixture_cli(endpoint, &["volume", "inspect", &named_volume]).await?;
+    fixture_cli(endpoint, &["image", "inspect", &local_image]).await?;
+    assert!(
+        Settings::load(&Settings::path()?)?
+            .config(endpoint, project)
+            .is_none()
+    );
+
+    let anonymous_file = directory.join("cleanup-anonymous.yaml");
+    std::fs::write(
+        &anonymous_file,
+        "services:\n  cleanup-local:\n    volumes:\n      - /scratch\n",
+    )?;
+    cleanup.files.push(anonymous_file);
+    setup = cleanup.clone();
+    setup.profiles.push("cleanup".into());
+    let output = time::timeout(
+        Duration::from_secs(45),
+        tokio::process::Command::new("docker")
+            .args(setup.args(endpoint, compose::Action::Start))
+            .output(),
+    )
+    .await??;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let container_filter = format!("label=com.docker.compose.project={project}");
+    let local_container = fixture_cli(
+        endpoint,
+        &[
+            "ps",
+            "-q",
+            "--filter",
+            &container_filter,
+            "--filter",
+            "label=com.docker.compose.service=cleanup-local",
+        ],
+    )
+    .await?;
+    let mounts: serde_json::Value = serde_json::from_str(
+        &fixture_cli(
+            endpoint,
+            &["inspect", "--format", "{{json .Mounts}}", &local_container],
+        )
+        .await?,
+    )?;
+    let anonymous = mounts
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|mount| mount["Destination"] == "/scratch")
+        .and_then(|mount| mount["Name"].as_str())
+        .context("Anonymous fixture volume")?
+        .to_owned();
+    // Record the exact anonymous mount of this owned fixture for interrupted-run cleanup.
+    std::fs::write(directory.join("cleanup-anonymous-volume"), &anonymous)?;
+    let orphan = format!("{project}-cleanup-orphan");
+    let project_label = format!("com.docker.compose.project={project}");
+    fixture_cli(
+        endpoint,
+        &[
+            "run",
+            "-d",
+            "--name",
+            &orphan,
+            "--label",
+            &project_label,
+            "--label",
+            "com.docker.compose.service=removed-service",
+            "--label",
+            "com.docker.compose.config-hash=fixture",
+            "--label",
+            "dev.ferrydock.fixture=true",
+            "alpine:3.23",
+            "sleep",
+            "3600",
+        ],
+    )
+    .await?;
+    save_association(backend, events, &cleanup).await?;
+    let (result, removed_output) = operation(
+        backend,
+        events,
+        project,
+        compose::Action::Cleanup {
+            volumes: true,
+            images: true,
+        },
+        81,
+    )
+    .await?;
+    result.map_err(anyhow::Error::msg)?;
+    assert!(
+        fixture_cli(endpoint, &["ps", "-aq", "--filter", &container_filter])
+            .await?
+            .is_empty()
+    );
+    assert!(
+        fixture_cli(
+            endpoint,
+            &[
+                "volume",
+                "ls",
+                "-q",
+                "--filter",
+                &format!("name=^{named_volume}$")
+            ]
+        )
+        .await?
+        .is_empty()
+    );
+    assert!(
+        fixture_cli(
+            endpoint,
+            &[
+                "volume",
+                "ls",
+                "-q",
+                "--filter",
+                &format!("name=^{anonymous}$")
+            ]
+        )
+        .await?
+        .is_empty()
+    );
+    assert!(
+        fixture_cli(endpoint, &["image", "ls", "-q", &local_image])
+            .await?
+            .is_empty()
+    );
+    assert!(
+        fixture_cli(
+            endpoint,
+            &[
+                "network",
+                "ls",
+                "-q",
+                "--filter",
+                &format!("name=^{project}_default$")
+            ]
+        )
+        .await?
+        .is_empty()
+    );
+    fixture_cli(endpoint, &["volume", "inspect", &external_volume]).await?;
+    fixture_cli(endpoint, &["network", "inspect", &external_network]).await?;
+    let tagged_image = format!("ferrydock-compose-verify:{project}");
+    fixture_cli(endpoint, &["image", "inspect", &tagged_image]).await?;
+    fixture_cli(endpoint, &["image", "inspect", "alpine:3.23"]).await?;
+    assert_eq!(
+        std::fs::read_to_string(bind.join("marker"))?,
+        "bind data must survive"
+    );
+    assert!(
+        Settings::load(&Settings::path()?)?
+            .config(endpoint, project)
+            .is_none()
+    );
+    loop {
+        if let Event::ComposeProjects(projects) = receive(events).await?
+            && !projects.iter().any(|item| &item.name == project)
+        {
+            break;
+        }
+    }
+    Ok(
+        serde_json::json!({"kept_volumes_and_images":true,"removed_containers_and_orphans":true,"removed_named_and_anonymous_volumes":true,"removed_local_generated_image":true,"removed_project_network":true,"preserved_external_resources_tagged_images_and_bind_data":true,"removed_saved_association_and_project":true,"keep_output":kept_output,"remove_output":removed_output}),
+    )
+}
+
 async fn operation(
     backend: &Backend,
     events: &mut mpsc::Receiver<Event>,
@@ -153,7 +435,11 @@ async fn compose_project_controls_and_association() -> Result<()> {
                 .iter()
                 .find(|item| item.name == project)
                 .context("Project discovery")?;
-            assert!(found.config.is_none());
+            let automatic = found.config.as_ref().context("Automatic association")?;
+            assert_eq!(automatic.files, config.files);
+            assert_eq!(automatic.env_files, config.env_files);
+            assert!(automatic.profiles.is_empty());
+            assert_eq!(found.worktree, Some(directory.canonicalize()?));
             assert_eq!(found.hint.files, config.files);
             break;
         }
@@ -237,12 +523,44 @@ async fn compose_project_controls_and_association() -> Result<()> {
         "Backlog must be coalesced, not delivered as individual UI messages"
     );
     let busy_logs = serde_json::json!({"lines":burst_lines,"batches":burst_batches,"wall_seconds":burst_started.elapsed().as_secs_f64()});
+    let probe = owned
+        .iter()
+        .find(|container| container.service.as_deref() == Some("probe"))
+        .context("Probe fixture")?;
+    let before_auto_restart = docker
+        .inspect_container(&probe.id, None)
+        .await?
+        .state
+        .and_then(|state| state.started_at);
     let (result, _) =
-        operation(&backend, &mut events, &project, compose::Action::Rebuild, 1).await?;
-    assert!(
-        result.is_err(),
-        "Unassociated project operation must be refused"
+        operation(&backend, &mut events, &project, compose::Action::Restart, 1).await?;
+    result
+        .map_err(anyhow::Error::msg)
+        .context("Automatically associated Restart")?;
+    let after_auto_restart = docker
+        .inspect_container(&probe.id, None)
+        .await?
+        .state
+        .and_then(|state| state.started_at);
+    assert_ne!(
+        before_auto_restart, after_auto_restart,
+        "Auto-associated action must reach Docker"
     );
+    assert!(
+        Settings::load(&Settings::path()?)?
+            .config(&endpoint, &project)
+            .is_none(),
+        "Discovery must not replace explicit saved settings"
+    );
+    let (result, _) = operation(
+        &backend,
+        &mut events,
+        "ferrydock-unknown-project",
+        compose::Action::Rebuild,
+        100,
+    )
+    .await?;
+    assert!(result.is_err(), "Unknown project operation must be refused");
     backend.send(Command::ConfigureCompose {
         config: config.clone(),
     });
@@ -549,15 +867,16 @@ async fn compose_project_controls_and_association() -> Result<()> {
         Settings::load(&Settings::path()?)?.config(&endpoint, &project),
         Some(&config)
     );
+    let cleanup_result = verify_cleanup(&backend, &mut events, &config, &endpoint).await?;
     drop(backend);
     std::fs::write(
         evidence.join("result.json"),
         serde_json::to_vec_pretty(
-            &serde_json::json!({"status":"passed", "project":project,"endpoint":endpoint,"configuration":config,"operations":transcripts,"project_logs":{"initial":initial_logs,"after_restart":restarted_logs,"recreated":recreated_logs,"after_rebuild":rebuild_logs,"busy":busy_logs},"checks":["label discovery","association required","persistent endpoint-scoped configuration","ordered override and env file","profiled service","Stop Start Restart side effects","changed build input produces new image and container with updated contents","rebuild restarts profiled image-only service","project logs reattach after rebuild","failed build streams errors and preserves running services","streamed CLI output","ambient Compose overrides ignored","real CLI failure output and nonzero exit","invalid association preserves existing settings","combined project stdout and stderr with source identity","live logs after restart","recreated service stream discovery without reopening","10000-line busy project burst coalesced without lost lines"]}),
+            &serde_json::json!({"status":"passed", "project":project,"endpoint":endpoint,"configuration":config,"operations":transcripts,"cleanup":cleanup_result,"project_logs":{"initial":initial_logs,"after_restart":restarted_logs,"recreated":recreated_logs,"after_rebuild":rebuild_logs,"busy":busy_logs},"checks":["label discovery","linked Git worktree discovery","automatic ordered-file and environment association","automatic Restart changes container start time without saving settings","unknown project refused","persistent endpoint-scoped configuration","ordered override and env file","profiled service","Stop Start Restart side effects","changed build input produces new image and container with updated contents","rebuild restarts profiled image-only service","project logs reattach after rebuild","failed build streams errors and preserves running services","streamed CLI output","ambient Compose overrides ignored","real CLI failure output and nonzero exit","invalid association preserves existing settings","combined project stdout and stderr with source identity","live logs after restart","recreated service stream discovery without reopening","10000-line busy project burst coalesced without lost lines"]}),
         )?,
     )?;
     println!(
-        "PASS Compose discovery, saved association, Stop/Start/Restart/Rebuild, build failure, output and scoped configuration"
+        "PASS Compose source/worktree discovery, automatic and saved association, Stop/Start/Restart/Rebuild, build failure, output and scoped configuration"
     );
     Ok(())
 }

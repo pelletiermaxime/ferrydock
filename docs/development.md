@@ -24,6 +24,7 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
 | `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
 | `projects.rs` | Compose associations, editable forms, operation state, and project controls |
+| `project_cleanup.rs` | Kit teardown review, volume/image retention options, captured configuration/membership and stale-review guards |
 | `project_logs.rs` | Combined project log history, service filtering, follow/scroll state, and rendering; streaming remains in `src/project_logs.rs` |
 | `navigation.rs` | Keyboard shortcuts and transitions between feature panels |
 | `events.rs` | Worker event dispatch and shared session/selection invariants |
@@ -45,6 +46,26 @@ dispatch starts collecting substantial feature-specific logic, move that logic
 into handlers in the owning module. Extract a separate GPUI entity when a panel
 needs an independent lifecycle, rather than splitting components merely to meet
 a line count.
+
+Compose source metadata lives in `src/compose/source.rs`. Each discovery round
+resolves Docker's labeled files and validates automatic associations in
+`spawn_blocking`; saved endpoint/project configurations take precedence.
+Worktree detection verifies the primary file's ancestor Git metadata, common
+directory and checkout back pointer, distinguishing linked checkouts from
+ordinary repositories and separate Git directories. Rendering uses the worker
+snapshot without filesystem reads. Automatic associations are rediscovered;
+only explicit Configuration saves persist settings and profiles.
+
+Project cleanup uses the same cancellable Compose worker and operation output as
+other controls. It runs `down --remove-orphans` with all profiles, adding
+`--volumes` only when selected. Image cleanup first resolves the Compose model
+and existing generated image names, then removes those explicit names without
+force after teardown. Plan reads have a 15-second timeout, a 4 MiB stdout cap,
+64 KiB stderr cap and at most 2,000 services. It avoids Compose's version-dependent
+`--rmi local` behavior, which can delete custom-tagged project builds. It never
+prunes the daemon or deletes bind mounts. External resources and explicit image
+tags are preserved. Only successful teardown forgets that endpoint/project's
+saved association; failures preserve settings and output for inspection.
 
 `src/metrics.rs` samples running containers through a separate Tokio worker task,
 with up to 16 concurrent one-shot Docker stats requests, a two-second pause between
@@ -189,11 +210,11 @@ files, profiles, and the displayed endpoint. Stream output, retain failures,
 and reject conflicting container/project operations. Cancelling or closing
 terminates the tracked process; it does not roll back Docker effects.
 
-For future Rebuild/Down and resource pages, keep service and project action
-scope explicit. Standalone containers have no implied build recipe. Down must
-preserve volumes by default; volume removal and volume cleanup require an
-explicit choice. Account for references from stopped containers when presenting
-volume removal, and reconcile daemon state after operations.
+Keep service and project action scope explicit. Standalone containers have no
+implied build recipe. Stop preserves data; Stop & cleanup requires a review with
+visible volume/image deletion choices and a separate confirmation. Account for
+references from stopped containers when presenting volume removal, and reconcile
+daemon state after operations.
 
 `src/volumes.rs` discovers volumes and all container mounts through a cancellable
 Tokio task. Discovery times out after 15 seconds and refuses inventories larger
