@@ -12,6 +12,7 @@ mod container_list;
 mod container_logs;
 mod containers;
 mod events;
+mod image_analysis;
 mod image_details;
 mod image_history;
 mod images;

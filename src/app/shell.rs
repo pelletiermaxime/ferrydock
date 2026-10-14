@@ -51,10 +51,16 @@ impl Render for FerryDock {
                     },
                 ),
                 ("ctrl-3", "Inspect"),
-                ("ctrl-4", "Project logs"),
+                (
+                    "ctrl-4",
+                    if self.images_open {
+                        "Analysis"
+                    } else {
+                        "Project logs"
+                    },
+                ),
             ]
             .into_iter()
-            .filter(|(key, _)| !self.images_open || *key != "ctrl-4")
             .map(|(key, label)| {
                 div()
                     .flex()

@@ -78,12 +78,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.8.0`; replace it with the version you downloaded.
+The examples below use `0.9.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.8.0_amd64.deb
+sudo apt install ./ferrydock_0.9.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -91,11 +91,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.8.0-linux-x86_64.AppImage`:
+`ferrydock-0.9.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.8.0-linux-x86_64.AppImage
-./ferrydock-0.8.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.9.0-linux-x86_64.AppImage
+./ferrydock-0.9.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -104,7 +104,7 @@ Wayland libraries and Vulkan/EGL graphics driver stack, and Docker. If FUSE
 mounting is unavailable, run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.8.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.9.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in
@@ -235,6 +235,16 @@ while metadata-only instructions can have a zero size.
 **Inspect** shows read-only, syntax-highlighted image JSON with selection,
 folding, and Ctrl+F search, just like container Inspect. Ctrl+1, Ctrl+2, and
 Ctrl+3 switch between Overview, History, and Inspect in the Images workspace.
+**Analysis** (Ctrl+4) exports the selected local image and shows each build
+instruction, added/replaced/deleted file paths, the largest final files, and
+estimated waste from payloads replaced or removed in later layers. Choose
+**Analyze image** to start, **Cancel** to stop, or **Reanalyze** to read it again.
+Layer sizes and file payloads use MiB; metadata-only instructions are labelled.
+Waste excludes archive overhead and duplicate-content scanning, and does not
+measure the Docker disk space that removing the image would recover. Empty
+images show efficiency as unavailable. Large images can reach an explicit
+analysis limit. Switching image tabs retains the report; selection, refresh,
+workspace closure, or disconnect clears it.
 **Refresh** retries detail reads. Click a referenced container to open its existing container view.
 **Ctrl-click** adds or removes an image from the selection; a normal click
 selects only that image. Selected IDs stay selected through sorting, searches,

@@ -4,6 +4,7 @@ pub mod assets;
 pub mod compose;
 pub mod docker;
 mod docker_cli;
+pub mod image_analysis;
 pub mod images;
 pub mod metrics;
 pub mod model;

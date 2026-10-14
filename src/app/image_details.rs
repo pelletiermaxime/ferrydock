@@ -22,6 +22,7 @@ pub(super) enum ImageTab {
     Overview,
     History,
     Inspect,
+    Analysis,
 }
 
 pub(super) struct ImageDetails {
@@ -32,6 +33,7 @@ pub(super) struct ImageDetails {
     pub(super) history: Option<Result<Arc<[ImageHistoryResponseItem]>, String>>,
     pub(super) inspection: Option<Result<(), String>>,
     pub(super) editor: Entity<EditorState>,
+    pub(super) analysis: super::image_analysis::Analysis,
     pub(super) history_view: ImageHistory,
 }
 
@@ -51,10 +53,12 @@ impl ImageDetails {
                     .soft_wrap(false)
             }),
             history_view: ImageHistory::new(window, cx),
+            analysis: super::image_analysis::Analysis::new(cx),
         }
     }
 
     pub(super) fn reset(&mut self) {
+        self.analysis.invalidate();
         self.generation += 1;
         self.id = None;
         self.requested = false;
@@ -68,6 +72,10 @@ impl FerryDock {
         if self.images.details.requested {
             self.backend.send(Command::CloseImageDetails);
         }
+        if self.images.details.analysis.loading {
+            self.backend.send(Command::CloseImageAnalysis);
+        }
+        self.images.details.analysis.reset(cx);
         self.images.details.reset();
         self.images
             .details
@@ -88,7 +96,10 @@ impl FerryDock {
         }
         if self.images_open
             && self.connection.is_some()
-            && self.images.details.tab != ImageTab::Overview
+            && matches!(
+                self.images.details.tab,
+                ImageTab::History | ImageTab::Inspect
+            )
             && !self.images.details.requested
             && let Some(id) = id
         {
@@ -219,7 +230,12 @@ impl FerryDock {
     }
 
     pub(super) fn image_tabs(&self, cx: &mut Context<Self>) -> TabBar {
-        let tabs = [ImageTab::Overview, ImageTab::History, ImageTab::Inspect];
+        let tabs = [
+            ImageTab::Overview,
+            ImageTab::History,
+            ImageTab::Inspect,
+            ImageTab::Analysis,
+        ];
         TabBar::new("image-tabs")
             .small()
             .underline()
@@ -229,7 +245,9 @@ impl FerryDock {
                     .position(|tab| *tab == self.images.details.tab)
                     .unwrap_or(0),
             )
-            .children(["Overview", "History", "Inspect"].map(|name| Tab::new().label(name)))
+            .children(
+                ["Overview", "History", "Inspect", "Analysis"].map(|name| Tab::new().label(name)),
+            )
             .on_click(cx.listener(move |this, index: &usize, window, cx| {
                 this.switch_image_tab(tabs[*index], window, cx);
             }))

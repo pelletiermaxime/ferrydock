@@ -57,6 +57,11 @@ pub enum Command {
         generation: u64,
     },
     CloseImageDetails,
+    AnalyzeImage {
+        id: String,
+        generation: u64,
+    },
+    CloseImageAnalysis,
     Volumes {
         generation: u64,
     },
@@ -176,6 +181,11 @@ pub enum Event {
         id: String,
         generation: u64,
         result: Result<Vec<bollard::models::ImageHistoryResponseItem>, String>,
+    },
+    ImageAnalysis {
+        id: String,
+        generation: u64,
+        result: Result<std::sync::Arc<crate::image_analysis::Report>, String>,
     },
     ImageInspection {
         id: String,
@@ -542,6 +552,13 @@ async fn connected(
         events.clone(),
         cancel.child_token(),
     ));
+    let (analysis_requests, analysis_receiver) = watch::channel(None);
+    tokio::spawn(crate::image_analysis::follow(
+        docker.clone(),
+        analysis_receiver,
+        events.clone(),
+        cancel.child_token(),
+    ));
     let mut image_busy = HashSet::new();
     let mut prune_jobs = FuturesUnordered::new();
     let mut pruning = false;
@@ -667,6 +684,8 @@ async fn connected(
                     Command::CloseImages => { image_requests.send_replace(None); },
                     Command::ImageDetails { id, generation } => { image_detail_requests.send_replace(Some((id, generation))); },
                     Command::CloseImageDetails => { image_detail_requests.send_replace(None); },
+                    Command::AnalyzeImage { id, generation } => { analysis_requests.send_replace(Some((id,generation))); },
+                    Command::CloseImageAnalysis => { analysis_requests.send_replace(None); },
                     Command::Volumes { generation } => { volume_requests.send_replace(Some(generation)); },
                     Command::CloseVolumes => { volume_requests.send_replace(None); },
                     Command::PruneVolumes { mode, operation } => {

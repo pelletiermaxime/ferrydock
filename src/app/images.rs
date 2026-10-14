@@ -319,6 +319,9 @@ impl FerryDock {
         if self.images.details.requested {
             self.backend.send(Command::CloseImageDetails);
         }
+        if self.images.details.analysis.loading {
+            self.backend.send(Command::CloseImageAnalysis);
+        }
         self.images.details.reset();
         self.images.generation += 1;
         self.images.loading = true;
@@ -557,6 +560,7 @@ impl FerryDock {
     ) {
         let was_confirming = self.images.confirmation.is_some();
         match event {
+            event @ Event::ImageAnalysis { .. } => self.image_analysis_event(event, cx),
             event @ (Event::ImageHistory { .. } | Event::ImageInspection { .. }) => {
                 self.image_details_event(event, window, cx);
             }
@@ -692,6 +696,7 @@ impl FerryDock {
             "1" if key.modifiers.control => self.switch_image_tab(ImageTab::Overview, window, cx),
             "2" if key.modifiers.control => self.switch_image_tab(ImageTab::History, window, cx),
             "3" if key.modifiers.control => self.switch_image_tab(ImageTab::Inspect, window, cx),
+            "4" if key.modifiers.control => self.switch_image_tab(ImageTab::Analysis, window, cx),
             "f" if key.modifiers.control => self.images.search_focus.focus(window, cx),
             "r" if key.modifiers.control => self.refresh(),
             "escape" => {
@@ -920,6 +925,7 @@ impl FerryDock {
             ImageTab::Overview => self.image_overview(image, cx),
             ImageTab::History => self.image_history_view(cx),
             ImageTab::Inspect => self.image_inspect_view(),
+            ImageTab::Analysis => self.image_analysis_view(cx),
         };
         detail
             .child(div().flex_1().min_h_0().child(content))

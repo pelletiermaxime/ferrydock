@@ -95,3 +95,28 @@ Build cache and the Alpine base remain. Require the integration test to pass,
 Native desktop Images clicks, OS clipboard, macOS runtime, additional viewport
 sizes, pulling/tagging and real daemon pruning effects are outside this proof. CI wiring alone
 does not establish that a run passed; record observed evidence in the change.
+
+## Layer analysis
+
+Open Images, select an image, choose Analysis (or Ctrl+4), then Analyze image.
+Use the virtualized layer list and expandable Kit file tree; Findings shows
+replaced/deleted payload waste and largest final file paths. Reanalyze reads it
+again; Cancel stops a pending request. Other tabs retain the report. Selection,
+refresh, workspace closure and disconnect invalidate it.
+
+`python3 scripts/verify-headless.py --flow analysis` exercises explicit
+Analyze/Cancel requests, stale/wrong-image results, retry, layer selection,
+folder expansion, Files/Findings, metadata-only and unavailable-efficiency
+states, keyboard navigation, 2,000 layers/10,000 files and Light rendering.
+Inspect Files, expanded-folder, Findings, Light and disconnected frames.
+This uses fixture events at the Docker worker boundary.
+
+`bash scripts/verify-image-analysis.sh` independently builds an owned labelled
+Alpine image, adds/removes a 1 MiB payload, and checks production worker export,
+exact wasted bytes, added/deleted rows, metadata-only history, largest files and
+missing-image failure. Require result status passed, cleanup_success true and
+scoped cleanup confirmation. Build cache and Alpine remain; no containers,
+volumes, mounts or ports are created. This does not drive native GPUI input.
+Native desktop Analysis, macOS and combined live UI/daemon interaction remain
+unverified. Core unit tests cover whiteouts, directory/path replacement, hard
+links, compression, cancellation and explicit limits.

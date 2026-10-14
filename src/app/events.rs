@@ -26,6 +26,7 @@ impl FerryDock {
             | Event::VolumeRemoved { .. }
             | Event::VolumesRemoved { .. }) => self.volume_event(event, window, cx),
             event @ (Event::Images { .. }
+            | Event::ImageAnalysis { .. }
             | Event::ImageHistory { .. }
             | Event::ImageInspection { .. }
             | Event::ImageRemoved { .. }

@@ -1,6 +1,7 @@
 # Developing FerryDock
 
-FerryDock is one Cargo package with separate UI, model, Docker worker, and
+FerryDock is a Cargo workspace with a desktop package and a small offline
+`crates/image-analysis-core` library. The desktop has separate UI, model, Docker worker, and
 terminal modules. Docker I/O runs on a two-thread Tokio runtime away from the
 GPUI thread. Event delivery is bounded, view updates are batched, and streams
 are cancelled when selection changes or the window closes.
@@ -18,6 +19,7 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | `container_list.rs` | Virtualized resource groups and Kit ListItem rows, tags, and empty states |
 | `metrics.rs` | Per-container resource history, freshness, compact rows and CPU/memory summary charts |
 | `images.rs` | Images workspace, search/selection, virtualized image and reference lists, removal review and operation feedback; Docker discovery/removal remains in `src/images.rs` |
+| `image_analysis.rs` | Analysis request state, layer selection, Kit file tree and Findings; export/scheduling remains in `src/image_analysis.rs`, offline accounting in `crates/image-analysis-core` |
 | `volumes.rs` | Volumes workspace, search/selection, virtualized inventory/references, metadata, age/size sorting, measured-size cache, single/bulk removal and prune review; Docker discovery/size gathering/removal remains in `src/volumes.rs` |
 | `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
 | `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
@@ -106,6 +108,32 @@ menu open the complete instruction in a read-only Kit Editor dialog. Copy comman
 retains original bytes, including multiline instructions; the table displays a
 single clipped line. Data is shared with the detail state through Arc. Inspect
 reuses Kit's read-only JSON Editor.
+
+Image Analysis is explicitly requested for the selected immutable ID. Its
+worker exports through Bollard to a scoped temporary archive, then runs the
+standalone core in `spawn_blocking`. A worker-local semaphore permits one parser;
+cancelled readers keep their permit and temporary directory until they exit.
+Dropping the request signals cooperative cancellation at metadata entries,
+64 KiB decoded reads and accounting checkpoints. A two-minute timeout, 2 GiB
+export cap and 16 MiB serialized report cap fail visibly. The core bounds
+history/layers at 2,000, archive and layer entries at 30,000, path depth at 64,
+individual paths at 4,096 bytes, aggregate paths/JSON at 4 MiB, accumulated
+file-tree nodes at 60,000 and decoded layer reads at 8 GiB, with a 128 MiB Zstd decode window. Sparse files, unsafe
+or non-UTF-8 paths, multiple manifests and unresolved/cyclic hard links fail
+explicitly. The core reads uncompressed outer Docker save archives with plain,
+Gzip or Zstd layers; it does not extract files or connect to a registry. Waste
+counts regular file payloads with no final path, sharing hard-link payloads
+without double counting. Directory metadata retains children; whiteouts apply
+to lower-layer state before current-layer additions. No content hashing occurs.
+
+The UI retains one report, with independent request generations, virtualized
+layer/file lists, and Kit Tree/TabBar/Resizable/Alert controls. Zero-payload
+images have unavailable efficiency. Analyze/Cancel, tree expansion, findings,
+errors/retry, stale results, keyboard tabs, large lists and Light rendering are
+covered by `python3 scripts/verify-headless.py --flow analysis`. The separate
+`bash scripts/verify-image-analysis.sh` checks the production worker using an
+owned labelled Alpine image with a deleted 1 MiB file and scoped image cleanup.
+These checks do not prove a combined native desktop Analysis session.
 
 The Images toolbar also opens a Kit prune dialog with untagged/all-unused modes.
 `PruneImages` runs Docker's prune API in a separate cancellable worker job with a
@@ -297,8 +325,8 @@ Run checks from the repository root:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --all-targets --all-features --locked -- -D warnings
-cargo test --lib --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --lib --locked
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 python3 scripts/verify-headless.py
 ```

@@ -31,9 +31,9 @@ jobs:
           shared-key: macos-arm64
           cache-on-failure: true
       - name: Clippy
-        run: cargo clippy --all-targets --locked --target aarch64-apple-darwin -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --target aarch64-apple-darwin -- -D warnings
       - name: Unit tests
-        run: cargo test --lib --locked --target aarch64-apple-darwin
+        run: cargo test --workspace --lib --locked --target aarch64-apple-darwin
       - name: Build release binary
         run: cargo build --release --locked --target aarch64-apple-darwin
       - name: Package and verify ad hoc signed app and DMG
