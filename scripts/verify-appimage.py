@@ -152,6 +152,9 @@ def verify(appimage, evidence):
         run("xdotool", "key", "--window", window, "ctrl+f", env=env)
         run("xdotool", "type", "--window", window, "--clearmodifiers", "--delay", "50",
             "appimageverified", env=env)
+        # Leave the field as a user would: the focus outline/caret can merge
+        # with small glyphs in OCR. Keep requiring the exact painted value.
+        run("xdotool", "key", "--window", window, "Escape", env=env)
         capture("02-search-input", ["appimageverified"])
         result["render_and_input_check"] = "passed"
         result["status"] = "passed"
