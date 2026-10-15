@@ -335,6 +335,7 @@ impl FerryDock {
     }
 
     pub(super) fn show_volumes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_networks();
         if self.images_open {
             self.show_images(false, window, cx);
         }

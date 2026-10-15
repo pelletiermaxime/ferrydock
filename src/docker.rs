@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bollard::{
     API_DEFAULT_VERSION, Docker,
-    exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults},
+    exec::{ResizeExecOptions, StartExecOptions, StartExecResults},
     query_parameters::{
         ListContainersOptionsBuilder, LogsOptionsBuilder, RestartContainerOptionsBuilder,
         StopContainerOptionsBuilder,
@@ -66,6 +66,15 @@ pub enum Command {
         generation: u64,
     },
     CloseVolumes,
+    Networks {
+        generation: u64,
+    },
+    CloseNetworks,
+    NetworkDetails {
+        id: String,
+        generation: u64,
+    },
+    CloseNetworkDetails,
     GatherVolumeSizes {
         request: u64,
     },
@@ -123,6 +132,15 @@ pub enum Command {
         id: String,
         generation: u64,
         shell: Shell,
+        columns: u16,
+        rows: u16,
+    },
+    FavoriteTerminal {
+        id: String,
+        generation: u64,
+        endpoint: String,
+        target: crate::favorites::Target,
+        command: String,
         columns: u16,
         rows: u16,
     },
@@ -208,6 +226,15 @@ pub enum Event {
     Volumes {
         generation: u64,
         result: Result<Vec<crate::volumes::Volume>, String>,
+    },
+    Networks {
+        generation: u64,
+        result: Result<Vec<crate::networks::Network>, String>,
+    },
+    NetworkDetails {
+        id: String,
+        generation: u64,
+        result: Result<crate::networks::Network, String>,
     },
     VolumeRemoved {
         name: String,
@@ -586,6 +613,20 @@ async fn connected(
         events.clone(),
         cancel.child_token(),
     ));
+    let (network_requests, network_receiver) = watch::channel(None);
+    tokio::spawn(crate::networks::follow(
+        docker.clone(),
+        network_receiver,
+        events.clone(),
+        cancel.child_token(),
+    ));
+    let (network_detail_requests, network_detail_receiver) = watch::channel(None);
+    tokio::spawn(crate::networks::follow(
+        docker.clone(),
+        network_detail_receiver,
+        events.clone(),
+        cancel.child_token(),
+    ));
     let mut terminal_cancel = cancel.child_token();
     let mut terminal = None::<(u64, mpsc::UnboundedSender<TerminalCommand>)>;
     let mut busy = HashSet::new();
@@ -708,6 +749,10 @@ async fn connected(
                     Command::CloseImageAnalysis => { analysis_requests.send_replace(None); },
                     Command::Volumes { generation } => { volume_requests.send_replace(Some(generation)); },
                     Command::CloseVolumes => { volume_requests.send_replace(None); },
+                    Command::Networks { generation } => { network_requests.send_replace(Some((None,generation))); },
+                    Command::NetworkDetails { id, generation } => { network_detail_requests.send_replace(Some((Some(id),generation))); },
+                    Command::CloseNetworks => { network_requests.send_replace(None); network_detail_requests.send_replace(None); },
+                    Command::CloseNetworkDetails => { network_detail_requests.send_replace(None); },
                     Command::PruneVolumes { mode, operation } => {
                         if pruning || !image_busy.is_empty() || !volume_busy.is_empty() || !compose_busy.is_empty() || !busy.is_empty() {
                             events.send(Event::VolumesPruned { operation, result: Err("Wait for the current Docker operation before pruning volumes".into()) }).await?;
@@ -889,7 +934,36 @@ async fn connected(
                     Command::Terminal { id, generation, shell, columns, rows } => {
                         terminal_cancel.cancel(); terminal_cancel = cancel.child_token();
                         let (tx, rx) = mpsc::unbounded_channel(); terminal = Some((generation, tx));
-                        tokio::spawn(terminal_session(docker.clone(), id, generation, shell, columns, rows, rx, events.clone(), terminal_cancel.clone()));
+                        tokio::spawn(terminal_session(docker.clone(), id, generation, shell.command(), columns, rows, rx, events.clone(), terminal_cancel.clone()));
+                    }
+                    Command::FavoriteTerminal { id, generation, endpoint, target, command, columns, rows } => {
+                        // A favorite never replaces another terminal, including one still connecting.
+                        let available = endpoint == connection.endpoint && terminal.is_none() && !pruning && volume_busy.is_empty() && !busy.contains(&id) && !container_projects.get(&id).and_then(Option::as_ref).is_some_and(|p| compose_busy.contains(p));
+                        if !available {
+                            let _ = events.send(Event::TerminalEnded { generation, error: Some("Cannot run favorite: terminal or Docker operation is active, or endpoint changed".into()) }).await;
+                            continue;
+                        }
+                        let token = cancel.child_token();
+                        terminal_cancel = token.clone();
+                        let (tx, rx) = mpsc::unbounded_channel(); terminal = Some((generation, tx));
+                        let docker = docker.clone(); let events = events.clone();
+                        tokio::spawn(async move {
+                            let valid = tokio::time::timeout(Duration::from_secs(15), docker.inspect_container(&id, None)).await
+                                .ok().and_then(Result::ok).is_some_and(|info| {
+                                    let labels = info.config.and_then(|c| c.labels).unwrap_or_default();
+                                    let scope_matches = match target {
+                                        crate::favorites::Target::Service { project, service } => labels.get("com.docker.compose.project") == Some(&project) && labels.get("com.docker.compose.service") == Some(&service),
+                                        crate::favorites::Target::Container { name } => info.name.as_deref().map(|n| n.trim_start_matches('/')) == Some(name.as_str()) && !labels.contains_key("com.docker.compose.project"),
+                                    };
+                                    scope_matches && info.state.and_then(|s| s.running) == Some(true)
+                                });
+                            if token.is_cancelled() { return; }
+                            if !valid {
+                                let _ = events.send(Event::TerminalEnded { generation, error: Some("Favorite target is stopped, absent, changed, or unavailable".into()) }).await;
+                                return;
+                            }
+                            terminal_session(docker, id, generation, vec!["sh".into(), "-c".into(), command], columns, rows, rx, events, token).await;
+                        });
                     }
                     Command::Input { generation, data } => {
                         if let Some((active, sender)) = &terminal && generation == *active { let _ = sender.send(TerminalCommand::Input(data)); }
@@ -1045,7 +1119,7 @@ async fn terminal_session(
     docker: Docker,
     id: String,
     generation: u64,
-    shell: Shell,
+    command: Vec<String>,
     columns: u16,
     rows: u16,
     mut commands: mpsc::UnboundedReceiver<TerminalCommand>,
@@ -1056,12 +1130,14 @@ async fn terminal_session(
         let exec = docker
             .create_exec(
                 &id,
-                CreateExecOptions {
+                bollard::models::ExecConfig {
+                    // Fast commands can query their PTY before the post-start resize.
+                    console_size: Some(vec![usize::from(rows), usize::from(columns)]),
                     attach_stdin: Some(true),
                     attach_stdout: Some(true),
                     attach_stderr: Some(true),
                     tty: Some(true),
-                    cmd: Some(shell.command()),
+                    cmd: Some(command),
                     env: Some(vec![
                         "TERM=xterm-256color".into(),
                         "COLORTERM=truecolor".into(),
@@ -1090,29 +1166,36 @@ async fn terminal_session(
         else {
             bail!("Docker did not attach the terminal");
         };
-        docker
-            .resize_exec(
-                &exec.id,
-                ResizeExecOptions {
-                    height: rows,
-                    width: columns,
-                },
-            )
-            .await?;
+        // ConsoleSize initializes the PTY before execution. A post-start resize
+        // can race a short-lived favorite and fail before its output is read.
         let _ = events.send(Event::TerminalReady { generation }).await;
+        let mut completed = false;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => { let _ = input.shutdown().await; break; },
                 frame = output.next() => match frame {
                     Some(Ok(frame)) => { events.send(Event::TerminalData { generation, data: frame.into_bytes().to_vec() }).await?; }
                     Some(Err(error)) => return Err(error.into()),
-                    None => break,
+                    None => { completed = true; break; },
                 },
                 command = commands.recv() => match command {
                     Some(TerminalCommand::Input(data)) => { input.write_all(&data).await?; input.flush().await?; },
-                    Some(TerminalCommand::Resize(columns, rows)) => { docker.resize_exec(&exec.id, ResizeExecOptions { height: rows, width: columns }).await?; },
+                    Some(TerminalCommand::Resize(columns, rows)) => {
+                        if let Err(error) = docker.resize_exec(&exec.id, ResizeExecOptions { height: rows, width: columns }).await {
+                            // A completed command still has buffered output to drain.
+                            if docker.inspect_exec(&exec.id).await?.running != Some(false) { return Err(error.into()); }
+                        }
+                    },
                     None => { let _ = input.shutdown().await; break; },
                 }
+            }
+        }
+        if completed {
+            let info = time::timeout(Duration::from_secs(3), docker.inspect_exec(&exec.id))
+                .await
+                .context("Could not read terminal exit status in time")??;
+            if let Some(code) = info.exit_code.filter(|code| *code != 0) {
+                bail!("Command exited with status {code}");
             }
         }
         Ok::<_, anyhow::Error>(())

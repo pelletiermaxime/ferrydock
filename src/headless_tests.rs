@@ -109,7 +109,15 @@ impl Harness {
         let mut content = None;
         let window = cx
             .open_window(size(px(1180.0), px(820.0)), |window, cx| {
-                let view = cx.new(|cx| FerryDock::with_backend(backend, receiver, window, cx));
+                let view = cx.new(|cx| {
+                    FerryDock::with_backend(
+                        backend,
+                        receiver,
+                        super::favorites::Favorites::with_path(Ok(evidence.join("favorites.json"))),
+                        window,
+                        cx,
+                    )
+                });
                 view.update(cx, |view, cx| view.focus(window, cx));
                 content = Some(view.clone());
                 cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
@@ -1277,7 +1285,7 @@ fn headless_gpu_user_flow() {
     h.capture("stop-requested");
     h.click("container-more");
     h.cx.update_window(h.window.into(), |_, window, cx| {
-        window.within("popup-menu").click(7, cx);
+        window.within("popup-menu").click(8, cx);
     })
     .unwrap();
     h.cx.run_until_parked();
@@ -4950,3 +4958,6 @@ fn headless_gpu_image_analysis_flow() {
     )
     .unwrap();
 }
+
+include!("networks_headless.rs");
+include!("favorites_headless.rs");

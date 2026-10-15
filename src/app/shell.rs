@@ -61,6 +61,7 @@ impl Render for FerryDock {
                 ),
             ]
             .into_iter()
+            .filter(|(key, _)| !self.networks_open || matches!(*key, "ctrl-f" | "ctrl-r"))
             .map(|(key, label)| {
                 div()
                     .flex()
@@ -77,7 +78,12 @@ impl Render for FerryDock {
                 SidebarGroup::new("Workspace").children([
                     SidebarMenuItem::new("Containers")
                         .icon(IconName::LayoutDashboard)
-                        .active(!self.settings_open && !self.images_open && !self.volumes_open)
+                        .active(
+                            !self.settings_open
+                                && !self.images_open
+                                && !self.volumes_open
+                                && !self.networks_open,
+                        )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.show_images(false, window, cx);
                         })),
@@ -91,6 +97,12 @@ impl Render for FerryDock {
                         .icon(gpui_kit::assets::IconName::Database)
                         .active(!self.settings_open && self.volumes_open)
                         .on_click(cx.listener(|this, _, window, cx| this.show_volumes(window, cx))),
+                    SidebarMenuItem::new("Networks")
+                        .icon(IconName::Network)
+                        .active(!self.settings_open && self.networks_open)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.show_networks(window, cx)),
+                        ),
                     SidebarMenuItem::new("Settings")
                         .icon(IconName::Settings)
                         .active(self.settings_open)
@@ -144,6 +156,8 @@ impl Render for FerryDock {
             );
         let main = if self.settings_open {
             self.appearance_settings(cx).into_any_element()
+        } else if self.networks_open {
+            self.networks_workspace(cx).into_any_element()
         } else if self.volumes_open {
             self.volumes_workspace(cx).into_any_element()
         } else if self.images_open {

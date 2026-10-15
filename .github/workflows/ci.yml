@@ -69,6 +69,12 @@ jobs:
         run: cargo test --locked --test volumes_prune
       - name: Volumes integration tests
         run: bash scripts/verify-volumes.sh
+      - name: Networks integration tests
+        run: bash scripts/verify-networks.sh
+      - name: Headless Favorites UI tests
+        run: python3 scripts/verify-headless.py --flow favorites --timeout 900
+      - name: Headless Networks UI tests
+        run: python3 scripts/verify-headless.py --flow networks --timeout 900
       - name: Headless UI tests
         run: python3 scripts/verify-headless.py --timeout 900
       - name: Headless image analysis UI tests
@@ -97,6 +103,15 @@ jobs:
         with:
           name: images-evidence
           path: .verification/images/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain Networks test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: networks-evidence
+          path: .verification/networks/
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7

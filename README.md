@@ -26,6 +26,10 @@ the terminal, and container details close at hand.
   disconnected, and stale readings are labelled instead of reported as zero.
 - **Open a terminal inside a container.** Use Bash or sh with colors, scrollback,
   text selection, copy and paste, and support for full-screen terminal programs.
+- **Keep favorite commands.** Save labelled commands for a Compose service or
+  standalone container on the connected Docker endpoint. Review the command,
+  choose a running instance when a service has replicas, and run it manually
+  in the integrated interactive terminal.
 - **Start, stop, and restart containers.** See progress and any errors in the
   detail panel. Associate Compose files to control a whole project, rebuild its
   images and restart its services, and watch its operation output.
@@ -40,6 +44,9 @@ the terminal, and container details close at hand.
   project, inspect configuration, and find running or stopped container references.
   Review permanent deletion before removing selected volumes, or prune unused
   anonymous volumes or all unused volumes.
+- **Explore local networks.** Browse networks, subnets and gateways, then see configured
+  containers with their IPv4/IPv6 addresses and DNS aliases. Open a container
+  directly or choose **More → View networks** to find its neighbours.
 - **Adjust the workspace.** Drag the divider between the container list and
   detail panel. Action buttons show loading state, and notifications report
   completed operations and copy feedback.
@@ -140,6 +147,35 @@ display and Docker environment.
 
 Type `exit` to end a shell normally. Stopping or restarting a container closes
 its terminal session; open a new shell after it starts again.
+
+### Favorite commands
+
+Click **Favorites** in a container or Compose project toolbar. For a project,
+choose the service, then **Add command**. Enter a label and a command using
+`sh` syntax; multiline commands are supported. **Save favorite** stores it on
+this computer without executing it. Use **Edit** or **Delete** beside a saved
+command to update or remove it.
+
+Choose **Run…** to review the complete command. If several instances are running,
+choose the exact container, then click **Run in terminal**. The command runs
+once through `sh -c` in a new PTY, supports interactive input and full-screen
+programs, and stays visible above its output. After it exits, its output remains
+in Terminal. Use **Disconnect** before another run; a favorite never replaces
+an existing shell or command session. Closing the Favorites dialog restores
+its previous focus.
+
+A stopped or missing service cannot run commands. Start or recreate it first,
+then reopen the command to refresh the instance choices. FerryDock does not
+start services automatically. It rechecks the chosen container before execution
+and never silently switches to a different instance.
+
+Favorites belong to the Docker endpoint and Compose project/service names,
+so they survive container recreation. Standalone favorites use the container
+name. Changing endpoints keeps each endpoint's recipes separate. Recipes are
+stored in `$XDG_CONFIG_HOME/ferrydock/favorites.json` (normally
+`~/.config/ferrydock/favorites.json`); they are local plaintext, so avoid saving
+secrets in commands. File errors appear in the dialog and unreadable files are
+preserved.
 
 ### Manage a Compose project
 
@@ -357,6 +393,37 @@ require Docker 23+ (API 1.42+).
 
 Creating volumes and editing their configuration are not available.
 
+## Explore networks
+
+Choose **Networks** in the sidebar. Search by network name, ID, driver, Compose
+project or subnet. Up/Down selects a network; **Ctrl+F** focuses search and
+**Refresh** or **Ctrl+R** reloads the inventory and selected details. Both refresh
+automatically every ten seconds while the workspace is open.
+
+The list shows drivers, scopes, subnets in CIDR notation and configured container
+counts, including stopped containers. Select a network to see its gateways,
+internal/IPv6 settings and container endpoints. IPv4/IPv6 addresses include their
+prefix lengths. Missing addresses and unreported DNS information show
+**Unavailable**; an explicitly empty alias/DNS list shows **None reported**.
+Stopped containers can retain configured aliases without an active address.
+Endpoint read failures are reported on their row. **Copy** copies the full
+container name, state, addresses, aliases/DNS names and any read error; hover it
+to read values that do not fit the columns.
+
+Click a container name to open its existing detail view. Containers absent from
+the local inventory cannot be opened. In a container's **More** or right-click
+menu, choose **View networks** to show only its configured networks and their
+neighbours; **All networks** removes this filter. Ordinary network search retains
+the selected detail. Switching workspaces preserves container/terminal sessions.
+
+This workspace is read-only. It does not create/remove networks or connect/disconnect
+containers. Host/none networks do not assign container IPs. Containers sharing
+another container's network namespace and remote Swarm tasks may not appear as
+local configured endpoints. Discovery and details are separate Docker reads,
+so a changing attachment can briefly appear with an explicit detail error until
+refresh. Local inventories are bounded; oversized inventories or slow detail
+reads fail explicitly. The view does not test DNS resolution or connectivity.
+
 ## Docker connections
 
 FerryDock uses `DOCKER_CONTEXT` if set, then `DOCKER_HOST`, then your active Docker
@@ -389,7 +456,7 @@ daemon disconnects, FerryDock retries the connection automatically.
 
 Individual container controls and Compose project Start/Stop/Restart and
 Rebuild & restart are available. Images and Volumes have their own workspaces.
-Down, network, and cleanup pages are planned.
+A dedicated daemon-wide cleanup page is planned.
 
 Container logs and combined project logs each retain up to 1,500 lines; project
 streams begin with the last 200 lines per container and merge output as received.

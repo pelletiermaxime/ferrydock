@@ -79,6 +79,9 @@ impl FerryDock {
         cx: &mut Context<Self>,
     ) {
         let key = &event.keystroke;
+        if self.favorites_dialog_open() {
+            return;
+        }
         if self.projects.cleanup.is_some() {
             return;
         }
@@ -88,6 +91,10 @@ impl FerryDock {
             return;
         }
         if self.settings_open {
+            return;
+        }
+        if self.networks_open {
+            self.networks_key(event, window, cx);
             return;
         }
         if self.volumes_open {

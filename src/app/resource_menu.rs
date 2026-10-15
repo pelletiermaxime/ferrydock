@@ -144,6 +144,19 @@ impl FerryDock {
                         }),
                 );
             }
+            {
+                let owner = owner.clone();
+                let id = id.clone();
+                menu = menu.item(
+                    PopupMenuItem::new("View networks")
+                        .disabled(this.connection.is_none())
+                        .on_click(move |_, window, cx| {
+                            let _ = owner.update(cx, |this, cx| {
+                                this.show_container_networks(id.clone(), window, cx)
+                            });
+                        }),
+                );
+            }
             menu = menu.separator();
             for (label, value) in [
                 ("Copy container name", container.name.clone()),

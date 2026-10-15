@@ -283,6 +283,7 @@ impl FerryDock {
 
     pub(super) fn show_images(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.close_volumes(window, cx);
+        self.close_networks();
         let changed = self.images_open != open;
         self.images_open = open;
         self.settings_open = false;
@@ -312,6 +313,9 @@ impl FerryDock {
         }
         if self.volumes_open {
             self.refresh_volumes();
+        }
+        if self.networks_open {
+            self.refresh_networks();
         }
     }
 

@@ -229,6 +229,18 @@ impl FerryDock {
                             }
                         })),
                     )
+                    .child(
+                        Self::button(
+                            "container-favorites",
+                            "Favorites",
+                            false,
+                            self.connection.is_none(),
+                            cx,
+                        )
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.container_favorites(window, cx)),
+                        ),
+                    )
                     .content(
                         Self::button("container-more", "More", false, false, cx)
                             .icon(IconName::Ellipsis)

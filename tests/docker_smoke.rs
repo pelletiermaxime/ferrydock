@@ -357,3 +357,133 @@ async fn docker_daily_loop_and_interactive_terminal() -> Result<()> {
     println!("PASS shell exit and missing-Bash error");
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "Runs only in the disposable project owned by scripts/verify-docker.sh"]
+async fn favorite_command_uses_an_interactive_pty_and_preserves_busy_session() -> Result<()> {
+    use ferrydock::favorites::Target;
+    let id = env::var("FERRYDOCK_TEST_CONTAINER").context("Run scripts/verify-docker.sh")?;
+    let connection = docker::resolve_connection().await?;
+    let docker = docker::connect(&connection).await?;
+    let info = docker.inspect_container(&id, None).await?;
+    let labels = info
+        .config
+        .and_then(|config| config.labels)
+        .unwrap_or_default();
+    let project = labels
+        .get("com.docker.compose.project")
+        .context("Missing project")?
+        .clone();
+    if labels.get("dev.ferrydock.fixture").map(String::as_str) != Some("true")
+        || !project.starts_with("ferrydock-verify-")
+    {
+        bail!("Refusing a non-owned favorite-command fixture");
+    }
+    let target = Target::Service {
+        project,
+        service: "probe".into(),
+    };
+    let (backend, mut events) = Backend::start();
+    loop {
+        match receive(&mut events).await? {
+            Event::Connected(_) => break,
+            Event::Disconnected(error) => bail!("Connection failed: {error}"),
+            _ => {}
+        }
+    }
+    let generation = 701;
+    backend.send(Command::FavoriteTerminal {
+        id: id.clone(), generation, endpoint: connection.endpoint.clone(), target: target.clone(),
+        command: "stty size; printf 'FAVORITE_READY\\n'; read answer; printf '%s\\n' \"$answer\" > /tmp/ferrydock-favorite-proof; printf 'FAVORITE_DONE\\n'".into(),
+        columns: 96, rows: 28,
+    });
+    let mut terminal = TerminalCore::new(96, 28);
+    wait_for_text(&mut events, &mut terminal, generation, "FAVORITE_READY").await?;
+    assert!(
+        terminal
+            .visible_text()
+            .lines()
+            .any(|line| line.trim() == "28 96")
+    );
+    backend.send(Command::FavoriteTerminal {
+        id: id.clone(),
+        generation: 702,
+        endpoint: connection.endpoint.clone(),
+        target: target.clone(),
+        command: "touch /tmp/ferrydock-favorite-must-not-run".into(),
+        columns: 80,
+        rows: 24,
+    });
+    loop {
+        if let Event::TerminalEnded {
+            generation: 702,
+            error,
+        } = receive(&mut events).await?
+        {
+            assert!(
+                error.is_some(),
+                "A favorite cannot replace the occupied PTY"
+            );
+            break;
+        }
+    }
+    backend.send(Command::Input {
+        generation,
+        data: b"favorite-interactive-proof\r".to_vec(),
+    });
+    wait_for_text(&mut events, &mut terminal, generation, "FAVORITE_DONE").await?;
+    let exec = docker.create_exec(&id, bollard::exec::CreateExecOptions {
+        attach_stdout: Some(true), attach_stderr: Some(true),
+        cmd: Some(vec!["sh", "-c", "cat /tmp/ferrydock-favorite-proof; test ! -e /tmp/ferrydock-favorite-must-not-run && echo BUSY_PRESERVED"]),
+        ..Default::default()
+    }).await?;
+    let bollard::exec::StartExecResults::Attached { mut output, .. } =
+        docker.start_exec(&exec.id, None).await?
+    else {
+        bail!("Missing independent proof output");
+    };
+    let mut proof = Vec::new();
+    while let Some(frame) = output.next().await {
+        proof.extend(frame?.into_bytes());
+    }
+    let proof = String::from_utf8(proof)?;
+    assert!(proof.contains("favorite-interactive-proof"));
+    assert!(proof.contains("BUSY_PRESERVED"));
+    backend.send(Command::CloseTerminal);
+    let fast_generation = 703;
+    backend.send(Command::FavoriteTerminal {
+        id,
+        generation: fast_generation,
+        endpoint: connection.endpoint,
+        target,
+        command: "printf 'FAVORITE_FAST_DONE\\n'".into(),
+        columns: 96,
+        rows: 28,
+    });
+    backend.send(Command::Resize {
+        generation: fast_generation,
+        columns: 92,
+        rows: 26,
+    });
+    let mut fast = TerminalCore::new(96, 28);
+    wait_for_text(
+        &mut events,
+        &mut fast,
+        fast_generation,
+        "FAVORITE_FAST_DONE",
+    )
+    .await?;
+    loop {
+        if let Event::TerminalEnded { generation, error } = receive(&mut events).await?
+            && generation == fast_generation
+        {
+            assert!(error.is_none(), "Short command failed: {error:?}");
+            break;
+        }
+    }
+    backend.send(Command::CloseTerminal);
+    println!(
+        "PASS favorite command PTY 28x96, interactive input, independent file read, occupied session preserved, immediate command output/exit"
+    );
+    Ok(())
+}

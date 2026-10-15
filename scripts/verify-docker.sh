@@ -8,4 +8,4 @@ trap cleanup EXIT
 "${fixture[@]}" up -d
 export FERRYDOCK_TEST_CONTAINER
 FERRYDOCK_TEST_CONTAINER="$("${fixture[@]}" ps -q probe)"
-cargo test --offline --locked "$@" --test docker_smoke -- --ignored --nocapture
+cargo test --offline --locked "$@" --test docker_smoke -- --ignored --nocapture --test-threads=1

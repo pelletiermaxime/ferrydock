@@ -20,8 +20,10 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | `metrics.rs` | Per-container resource history, freshness, compact rows and CPU/memory summary charts |
 | `images.rs` | Images workspace, search/selection, virtualized image and reference lists, removal review and operation feedback; Docker discovery/removal remains in `src/images.rs` |
 | `image_analysis.rs` | Analysis request state, layer selection, Kit file tree and Findings; export/scheduling remains in `src/image_analysis.rs`, offline accounting in `crates/image-analysis-core` |
+| `networks.rs` | Read-only network inventory, configured endpoints, aliases/DNS, virtualized lists and container routing; cancellable discovery/details remain in `src/networks.rs` |
 | `volumes.rs` | Volumes workspace, search/selection, virtualized inventory/references, metadata, age/size sorting, measured-size cache, single/bulk removal and prune review; Docker discovery/size gathering/removal remains in `src/volumes.rs` |
 | `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
+| `favorites/` | Favorite command dialog/editor, service and replica selection, bounded serial file worker, guarded manual terminal launch |
 | `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
 | `projects.rs` | Compose associations, editable forms, operation state, and project controls |
 | `project_cleanup.rs` | Kit teardown review, volume/image retention options, captured configuration/membership and stale-review guards |
@@ -166,6 +168,19 @@ notifications report Docker's reclaimed bytes in MiB (or unavailable), and fresh
 discovery reconciles selection afterward. `tests/images_prune.rs` exercises the
 production API request/response against an owned temporary Unix socket fixture,
 without connecting to the user's Docker daemon.
+
+Network discovery joins Docker's network list with all container summaries by
+network ID, falling back to name for stopped endpoints without an ID. It retains
+at most 20,000 networks, 50,000 containers and 100,000 configured references.
+Selected details inspect the network and its containers, with at most sixteen
+concurrent reads and three-second per-container deadlines inside a fifteen-second
+overall deadline. Partial endpoint errors stay on their rows. Aliases and DNS
+names come from container inspect; absent and empty lists remain distinct.
+Inventory and detail subscriptions poll every ten seconds, cancel in-flight work
+on request changes, and stop when the workspace closes. Independent generations,
+selected IDs and connection state reject obsolete results. Endpoint changes
+clear inventory/selection and container scoping. Lists are virtualized; a cached
+set of locally discovered container IDs guards navigation without per-row scans.
 
 ## UI components and appearance
 
@@ -491,6 +506,28 @@ pruning. Preview existing-run pruning with
 `python3 scripts/verification_evidence.py --dry-run`; omit `--dry-run` to apply it.
 Pin or export evidence used by durable reports.
 
+Terminal exec creation includes Docker's initial `ConsoleSize` before starting
+an interactive shell or favorite command. Later resize requests follow window
+changes. Avoid a mandatory resize after start: an immediate command can already
+have exited, and its buffered output must still be read. The two
+`scripts/verify-docker.sh` tests run serially because they share one owned fixture;
+its favorite check covers initial PTY size, interactive input, occupied-session
+protection, independent file proof and immediate-command output/exit.
+
+For the focused Networks input/rendering flow, run
+`python3 scripts/verify-headless.py --flow networks`. It exercises search,
+selection, configured stopped endpoints, full-value copying in the virtual
+clipboard, errors/retry, stale guards, container routing and large-list
+virtualization. Inspect its endpoint, scoped-network and Light screenshots.
+`bash scripts/verify-networks.sh` separately verifies production worker reads
+against two uniquely labelled bridge networks and two Alpine containers, one
+stopped. The fixture has no published ports, host mounts or volumes. Its test
+disconnects only its owned running endpoint to verify membership reconciliation;
+cleanup removes only the fixture's labelled containers/networks. Require
+`.verification/networks/<run>/result.json` with `status: passed` and
+`cleanup_success: true`. Headless screenshots do not prove native desktop input;
+worker tests do not prove user-interface interactions or DNS reachability.
+
 ## CI and releases
 
 [Tests](../.github/workflows/ci.yml) runs on pushes to `main`, pull requests,
@@ -587,6 +624,24 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/target/packages:/packages:ro
 ```
 
 Use a new evidence directory for each run; the verifier refuses an existing one.
+
+## Favorite command verification
+
+`src/favorites.rs` owns the endpoint/target recipes and private atomic JSON
+replacement. The feature's serial file worker handles loading and mutations off
+the UI thread; the shared event tick only polls its bounded result channel.
+Files cap at 2 MiB / 2,048 recipes, labels at 120 bytes and commands at 16 KiB.
+The dialog virtualizes its recipe list. The Docker worker independently checks
+the endpoint, terminal/operation guards, and fresh running container identity
+before attaching `sh -c` with the saved command as a separate argument.
+
+Run `python3 scripts/verify-headless.py --flow favorites` for the dedicated GPUI
+input and screenshot flow. Preferences use the harness's isolated evidence path.
+`bash scripts/verify-docker.sh favorite_command_uses_an_interactive_pty`
+exercises the production worker in its owned fixture: PTY dimensions, interactive
+input, independent file read, and refusal to replace the active session. The
+headless flow does not prove native desktop integration; the Docker check does
+not drive native clicks. See the [favorites map](../.agents/skills/verify-ferrydock/features/favorites.md).
 
 ## Dependency licenses
 

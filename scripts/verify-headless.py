@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, help="New evidence directory; existing paths are refused")
-    parser.add_argument("--flow", choices=("all", "volumes", "analysis"), default="all", help="Full application or focused Volumes/Analysis input/rendering flow")
+    parser.add_argument("--flow", choices=("all", "volumes", "analysis", "networks", "favorites"), default="all", help="Full application or focused workspace input/rendering flow")
     parser.add_argument("--timeout", type=int, default=600, help="Build plus test timeout in seconds")
     parser.add_argument("--keep-runs", type=keep_runs, default=8,
                         help="Completed default-path runs to retain; 0 keeps all")
@@ -31,7 +31,13 @@ def main():
     env.pop("DISPLAY", None)
     env.pop("WAYLAND_DISPLAY", None)
     env["FERRYDOCK_HEADLESS_EVIDENCE"] = str(evidence)
-    test_name = "headless_tests::headless_gpu_image_analysis_flow" if args.flow == "analysis" else "headless_tests::headless_gpu_volume_flow" if args.flow == "volumes" else "headless_tests::headless_gpu_user_flow"
+    test_name = {
+        "all": "headless_tests::headless_gpu_user_flow",
+        "volumes": "headless_tests::headless_gpu_volume_flow",
+        "analysis": "headless_tests::headless_gpu_image_analysis_flow",
+        "networks": "headless_tests::headless_gpu_network_flow",
+        "favorites": "headless_tests::headless_gpu_favorites_flow",
+    }[args.flow]
     command = ["cargo", "test", "--lib", "--features", "headless-tests", "--locked", "--offline",
                test_name, "--", "--nocapture", "--test-threads=1"]
     manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())

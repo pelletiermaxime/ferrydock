@@ -30,6 +30,9 @@ impl FerryDock {
                 | Event::ActionFinished { .. }
         );
         match event {
+            event @ (Event::Networks { .. } | Event::NetworkDetails { .. }) => {
+                self.network_event(event)
+            }
             event @ (Event::Volumes { .. }
             | Event::VolumeSizes { .. }
             | Event::VolumesPruned { .. }
@@ -160,9 +163,10 @@ impl FerryDock {
             }
             Event::Connected(connection) => {
                 self.volumes_connected(&connection.endpoint);
+                self.networks_connected(&connection.endpoint);
                 self.connection = Some(connection);
                 self.connection_error = None;
-                if self.images_open || self.volumes_open {
+                if self.images_open || self.volumes_open || self.networks_open {
                     self.refresh();
                 }
                 window.remove_notification::<FeedbackNotification>(cx);
@@ -172,6 +176,7 @@ impl FerryDock {
                 }
             }
             Event::Disconnected(error) => {
+                self.networks_disconnected();
                 self.volumes_disconnected(window, cx);
                 self.images.generation += 1;
                 self.invalidate_image_details(window, cx);
@@ -239,6 +244,7 @@ impl FerryDock {
                     .selected
                     .as_ref()
                     .is_some_and(|id| containers.iter().any(|container| &container.id == id));
+                self.networks_container_snapshot(&containers);
                 self.containers.items = containers;
                 self.project_logs.history.retain_sources(
                     self.containers

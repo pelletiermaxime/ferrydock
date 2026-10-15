@@ -12,12 +12,14 @@ mod container_list;
 mod container_logs;
 mod containers;
 mod events;
+mod favorites;
 mod image_analysis;
 mod image_details;
 mod image_history;
 mod images;
 mod metrics;
 mod navigation;
+mod networks;
 mod project_cleanup;
 mod project_logs;
 mod projects;
@@ -63,9 +65,12 @@ pub struct FerryDock {
     images_open: bool,
     volumes: volumes::Volumes,
     volumes_open: bool,
+    networks: networks::Networks,
+    networks_open: bool,
     metrics: metrics::Metrics,
     container_logs: ContainerLogs,
     terminal: Terminal,
+    favorites: favorites::Favorites,
     projects: Projects,
     project_logs: ProjectLogs,
     tab: Tab,
@@ -81,12 +86,13 @@ impl FerryDock {
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (backend, events) = Backend::start();
-        Self::with_backend(backend, events, window, cx)
+        Self::with_backend(backend, events, favorites::Favorites::new(), window, cx)
     }
 
     fn with_backend(
         backend: Backend,
         events: tokio::sync::mpsc::Receiver<Event>,
+        favorites: favorites::Favorites,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -116,6 +122,7 @@ impl FerryDock {
                 if this
                     .update_in(cx, |this, window, cx| {
                         let mut changed = this.metrics.expire();
+                        changed |= this.poll_favorites(window, cx);
                         let started = Instant::now();
                         for _ in 0..64 {
                             match this.events.try_recv() {
@@ -144,6 +151,7 @@ impl FerryDock {
         let compose_focus = cx.focus_handle();
         let images = images::Images::new(window, cx);
         let volumes = volumes::Volumes::new(window, cx);
+        let networks = networks::Networks::new(window, cx);
         Self {
             backend,
             events,
@@ -154,9 +162,12 @@ impl FerryDock {
             images_open: false,
             volumes,
             volumes_open: false,
+            networks,
+            networks_open: false,
             metrics: metrics::Metrics::default(),
             container_logs: ContainerLogs::default(),
             terminal: Terminal::default(),
+            favorites,
             projects: Projects::new(compose_focus),
             project_logs: ProjectLogs::new(window, cx),
             tab: Tab::Logs,
