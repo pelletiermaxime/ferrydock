@@ -11,6 +11,7 @@ Watch all Compose service/container streams from one project workspace.
 - `project-logs.copy`: copy the filtered retained history.
 - `project-logs.retry`: resume existing IDs with timestamp replay suppression.
 - `project-logs.ansi`: cached per-container payload colours/styles independent of source-label colours and clean copied text.
+- `project-logs.order`: Docker timestamp order across services, including older tails arriving after recent restart output.
 
 ## How to get to it (user POV)
 
@@ -25,9 +26,11 @@ Watch all Compose service/container streams from one project workspace.
 
 Run `python3 scripts/verify-headless.py`. The flow verifies a project stream request without configuration, combined source rows, filtered rendered bounds, follow/pause and copy feedback, a replacement member's line, and correct routing back to individual logs. Inspect all/filter/recreated project frames. This uses fixture records and proves GPUI input/rendering, not real Docker or native clipboard.
 
+The flow also clicks Refresh logs, receives recent restart output before 80 older records from another service, and requires that restart to stay visible at the bottom with Following active. Inspect project-logs-restart-ordered and project-logs-restart-filtered for all-services and service-filtered rendering.
+
 Run `bash scripts/verify-compose.sh` separately. The production worker follows the uniquely owned two-service fixture with stdout/stderr markers. The check verifies both services, logs after project restart and a new container ID after force-recreating the fixture's extra service without reopening the log view. It retains source samples, isolates settings, and confirms scoped cleanup. It does not drive desktop input.
 
-Unit checks prove retry replay counts (including identical same-timestamp lines), late live-line acceptance, global history bounds and service-filtered copy formatting. A passing UI check alone does not establish those transport effects.
+Unit checks prove retry replay counts (including identical same-timestamp lines), late live-line acceptance, timestamp ordering across offsets, stable equal-time records, retention of recent output when older history exceeds the bound, ANSI continuation and service-filtered copy order. A passing UI check alone does not establish those transport effects.
 
 The headless all/filtered/recreated frames use distinct source colours matching the container-list markers, a green probe payload and neutral worker payload, with screenshot pixel checks scoped to row/marker bounds. The Light frame checks matching readable source labels and markers. Unit checks separately verify style continuation per container ID, isolation between replicas of one service, resets, Docker timestamp removal with application dates preserved, clean copy and decoder cleanup after a source disappears and its records expire. The raw transport/replay cursor still consumes original records; ANSI styling is applied in the cached UI history.
 
@@ -38,7 +41,7 @@ For native load, run `cargo build --locked` and `python3 scripts/verify-log-perf
 ## Gotchas
 
 - Project membership is scoped by labels on the displayed Docker endpoint. Do not associate files merely to read logs.
-- Initial tails are 200 lines per container; total retained history is 1,500 lines. Output is merged as received, not globally sorted by timestamp.
+- Initial tails are 200 lines per container; total retained history is the newest 1,500 lines ordered by Docker timestamp. Equal-time records preserve receive order; untimestamped diagnostics follow the newest retained record.
 - Follow paused freezes scrolling, not collection. Old records continue to expire at the bound.
 - Unsupported Docker logging drivers or stream failures appear as source-specific errors. Running streams retry with a short delay; stopped streams reopen when state changes.
 - Headless/worker checks do not prove native desktop or clipboard integration. The separate native performance helper proves owned Wayland or X11/XWayland log reading and search, with `--ansi` for real coloured UTF-8 output; filter/pause clicks and clipboard remain outside that helper. Native Wayland automation currently covers KDE/KWin. A partial list row at the dock boundary is normal scroll viewport clipping when no pixels overlap the dock.

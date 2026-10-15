@@ -35,6 +35,7 @@ pub struct Record {
     line: Line,
     pub styled: StyledLine,
     prefix: String,
+    timestamp: Option<DateTime<FixedOffset>>,
 }
 
 impl std::ops::Deref for Record {
@@ -72,7 +73,13 @@ pub struct History {
 }
 impl History {
     pub fn push(&mut self, mut line: Line) {
-        let (_, body) = crate::ansi::split_timestamp(&line.text);
+        let (stamp, body) = crate::ansi::split_timestamp(&line.text);
+        // Decode ANSI in each source's receive order, then merge the rendered
+        // records by Docker time. A slow historical tail must not displace a
+        // newer restart's output. Untimestamped diagnostics stay at the tail.
+        let timestamp = DateTime::parse_from_rfc3339(stamp.trim_end())
+            .ok()
+            .or_else(|| self.lines.back().and_then(|record| record.timestamp));
         let styled = if line.error {
             Decoder::default().record(body)
         } else {
@@ -84,11 +91,18 @@ impl History {
         let prefix = format!("[{} / {}] ", line.service, line.name);
         line.text = styled.text.clone();
         *self.services.entry(line.service.clone()).or_default() += 1;
-        self.lines.push_back(Record {
-            line,
-            styled,
-            prefix,
-        });
+        let index = self
+            .lines
+            .partition_point(|record| record.timestamp <= timestamp);
+        self.lines.insert(
+            index,
+            Record {
+                line,
+                styled,
+                prefix,
+                timestamp,
+            },
+        );
         while self.lines.len() > LogBuffer::MAX_LINES {
             if let Some(line) = self.lines.pop_front()
                 && let Some(count) = self.services.get_mut(&line.service)
@@ -271,7 +285,7 @@ pub async fn follow(
             })
             .count();
         let status = format!(
-            "{} project containers · {active} live streams · up to 1,500 lines · merged as received",
+            "{} project containers · {active} live streams · up to 1,500 lines · ordered by Docker time",
             members.len()
         );
         if status != last_status {
@@ -433,6 +447,65 @@ async fn emit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn historical_tails_keep_recent_restart_output_at_the_bottom() {
+        let mut history = History::default();
+        let line = |service: &str, text: &str| Line {
+            container: service.into(),
+            service: service.into(),
+            name: service.into(),
+            text: text.into(),
+            error: false,
+        };
+        history.push(line(
+            "pro",
+            "2026-10-15T00:57:00.000000002Z \x1b[32mrestarted",
+        ));
+        history.push(line("legacy", "2026-10-15T01:51:00+01:00 old history"));
+        history.push(line("pro", "2026-10-15T00:57:00.000000002Z ready\x1b[0m"));
+        assert_eq!(
+            history
+                .lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            ["old history", "restarted", "ready"]
+        );
+        assert_eq!(
+            history.lines[1].styled.spans[0].1.foreground,
+            Some(crate::ansi::PALETTE[2])
+        );
+        assert_eq!(
+            history.lines[2].styled.spans[0].1.foreground,
+            Some(crate::ansi::PALETTE[2])
+        );
+        assert_eq!(
+            history.text(Some("pro")),
+            "[pro / pro] restarted\n[pro / pro] ready"
+        );
+        history.push(Line {
+            error: true,
+            ..line("pro", "Logs unavailable")
+        });
+        history.push(line("legacy", "2026-10-15T00:52:00Z later old history"));
+        assert_eq!(history.lines.back().unwrap().text, "Logs unavailable");
+        for _ in 0..LogBuffer::MAX_LINES {
+            history.push(line("legacy", "2026-10-15T00:53:00Z old history"));
+        }
+        assert_eq!(history.lines.len(), LogBuffer::MAX_LINES);
+        assert_eq!(history.lines.back().unwrap().text, "Logs unavailable");
+        assert!(history.text(None).contains("restarted"));
+        assert!(history.services().any(|service| service == "pro"));
+        history.push(line(
+            "pro",
+            "2026-10-15T00:58:00Z 2026-10-15 application date",
+        ));
+        assert_eq!(
+            history.lines.back().unwrap().text,
+            "2026-10-15 application date"
+        );
+    }
+
     #[test]
     fn retries_skip_replays_without_losing_identical_lines() {
         let line = "2026-10-12T23:30:00.123456789Z same";

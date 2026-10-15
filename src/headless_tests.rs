@@ -1567,7 +1567,7 @@ fn headless_gpu_user_flow() {
     }
     h.deliver(Event::ProjectLogsStatus {
         generation,
-        status: "3 project containers · 2 live streams · merged as received".into(),
+        status: "3 project containers · 2 live streams · ordered by Docker time".into(),
     });
     h.click("project-more");
     h.capture("project-action-menu");
@@ -1693,6 +1693,54 @@ fn headless_gpu_user_flow() {
         "source-color-fixture-worker-recreated",
         worker_color,
     );
+    h.click("project-log-refresh");
+    let generation = h.observe(|v| v.project_logs.generation);
+    assert!(h.drain_commands().iter().any(|command| matches!(command, Command::ProjectLogs { generation: current, .. } if *current == generation)));
+    let restarted = crate::project_logs::Line {
+        container: "fixture-probe-running".into(),
+        service: "probe".into(),
+        name: "headless-fixture-probe-1".into(),
+        text: "2026-10-12T23:31:00Z \x1b[32mProbe restarted and ready\x1b[0m".into(),
+        error: false,
+    };
+    let lines = std::iter::once(restarted)
+        .chain((0..80).map(|index| crate::project_logs::Line {
+            container: "fixture-worker-recreated".into(),
+            service: "worker".into(),
+            name: "headless-fixture-worker-1".into(),
+            text: format!("2026-10-12T23:30:00.{index:09}Z Older worker history {index}"),
+            error: false,
+        }))
+        .collect();
+    h.deliver(Event::ProjectLogBatch { generation, lines });
+    let ordered = h.capture("project-logs-restart-ordered");
+    assert_eq!(
+        h.observe(|v| v.project_logs.history.lines.back().unwrap().text.clone()),
+        "Probe restarted and ready"
+    );
+    assert_eq!(
+        h.observe(|v| v.project_logs.scroll.is_scrolled_to_end()),
+        Some(true)
+    );
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "project-log-line-0")
+            .unwrap()
+            .is_none()
+    );
+    h.require_glyph_color(&ordered, "project-log-line-80", probe_color);
+    h.require_glyph_color(&ordered, "project-log-line-80", crate::ansi::PALETTE[2]);
+    h.click("project-service-filter");
+    h.type_text("probe");
+    h.key("enter");
+    assert_eq!(
+        h.observe(|v| v.project_logs.service.clone()).as_deref(),
+        Some("probe")
+    );
+    let filtered = h.capture("project-logs-restart-filtered");
+    h.require_glyph_color(&filtered, "project-log-line-80", probe_color);
+    h.click("project-service-filter");
+    h.type_text("All services");
+    h.key("enter");
     h.click("row-fixture-probe-running");
     let commands = h.drain_commands();
     assert!(

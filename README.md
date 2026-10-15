@@ -232,6 +232,9 @@ appear in **Operations**; an error can leave a partially cleaned project.
 
 The project's **Logs** tab combines output from all its containers, with a coloured
 service/container prefix on each line that matches the container's list marker.
+Lines are ordered by Docker's timestamps, so recent output stays at the bottom
+even when another service's older history arrives later. The view retains the
+newest 1,500 lines, starting with up to 200 lines per container.
 Use the searchable service picker to choose **All services** or
 one service, pause/resume following, and copy the
 filtered retained output. Logs work directly from Docker labels without a file
