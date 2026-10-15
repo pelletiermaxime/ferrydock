@@ -15,6 +15,8 @@ jobs:
   tests:
     name: Release checks
     uses: ./.github/workflows/ci.yml
+    with:
+      build-packages: true
 
   package:
     name: Linux packages

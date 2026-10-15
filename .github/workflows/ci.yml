@@ -5,10 +5,24 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      build-packages:
+        description: Build and verify macOS and Windows packages
+        type: boolean
+        default: true
   workflow_call:
+    inputs:
+      build-packages:
+        description: Build and verify macOS and Windows packages
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,12 +30,18 @@ env:
 
 jobs:
   windows:
-    name: Windows checks and preview package
+    name: Windows checks
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/windows.yml
+    with:
+      build-packages: ${{ inputs.build-packages == true }}
 
   macos:
-    name: macOS checks and packages
+    name: macOS checks
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/macos.yml
+    with:
+      build-packages: ${{ inputs.build-packages == true }}
 
   tests:
     name: Linux tests

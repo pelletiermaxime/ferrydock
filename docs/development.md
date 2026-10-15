@@ -598,21 +598,29 @@ Docker and Compose integration fixtures, and the headless UI flow with Mesa's
 software GPU driver. Headless and Compose evidence are retained as workflow
 artifacts for seven days.
 
+Pull requests run the full Linux suite only; newer commits cancel superseded
+runs for the same PR. Pushes to `main` also run macOS and Windows compilation
+and tests, without release builds or packages. Manual runs include both platforms
+and default to building their packages; uncheck **build-packages** in **Run workflow**
+to run checks only. Select the relevant branch for platform checks before merging.
+Release tags explicitly enable packaging on both platforms.
+
 The Images and Volumes worker integration fixtures also run in Linux CI and retain their
 discovery/removal/cleanup evidence for seven days.
 
-The reusable [macOS workflow](../.github/workflows/macos.yml) runs alongside
-Linux CI on the `macos-15` Apple Silicon runner. It runs Clippy and unit tests,
-builds the release binary, and packages/verifies the ad hoc signed DMG. The
-`macos-arm64-packages` artifact is available on successful CI runs. These checks
+The reusable [macOS workflow](../.github/workflows/macos.yml) uses the
+`macos-15` Apple Silicon runner. It runs Clippy and unit tests. When packaging
+is enabled, it also builds the release binary and packages/verifies the ad hoc
+signed DMG, producing the `macos-arm64-packages` artifact. These checks
 do not launch the native Mac UI, connect to Docker Desktop, or exercise
 Gatekeeper approval. The existing headless/native verification helpers are
 Linux-only; their passing results do not prove macOS runtime behavior.
 
 The reusable [Windows workflow](../.github/workflows/windows.yml) runs on
 `windows-2025` with the x64 MSVC target. It runs Clippy, unit tests and isolated
-named-pipe API fixtures, builds the release executable, and inspects the portable
-ZIP. `windows-x86_64-packages` contains the ZIP and checksums;
+named-pipe API fixtures, and package regression tests. When packaging is enabled,
+it also builds the release executable and inspects the portable ZIP.
+`windows-x86_64-packages` contains the ZIP and checksums;
 `windows-package-check` records the executable/import/archive checks. These jobs
 do not launch the native UI or contact Docker Desktop. Windows previews remain
 pending the desktop verification described above.

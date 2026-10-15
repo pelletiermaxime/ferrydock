@@ -1,7 +1,12 @@
-name: macOS packages
+name: macOS checks and packages
 
 on:
   workflow_call:
+    inputs:
+      build-packages:
+        description: Build and verify the macOS app and DMG
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,11 +40,14 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace --lib --locked --target aarch64-apple-darwin
       - name: Build release binary
+        if: inputs.build-packages
         run: cargo build --release --locked --target aarch64-apple-darwin
       - name: Package and verify ad hoc signed app and DMG
+        if: inputs.build-packages
         id: package
         run: bash scripts/package-macos.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.build-packages
         with:
           name: macos-arm64-packages
           path: |
