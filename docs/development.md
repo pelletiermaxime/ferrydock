@@ -393,7 +393,10 @@ magick -background none packaging/linux/dev.ferrydock.FerryDock.svg target/windo
 python3 -c "from PIL import Image; Image.open('target/windows-icon.png').save('packaging/windows/FerryDock.ico', format='ICO', sizes=[(n,n) for n in [16,24,32,48,64,128,256]])"
 ```
 
-The host manifest supplies per-monitor DPI awareness and runs as the current user.
+The pinned Kit base layer's `gpui-pre-platform` dependency already embeds a
+manifest with per-monitor DPI awareness and current-user execution. FerryDock
+embeds only its icon to avoid duplicate manifest resources during native linking;
+the package inspector requires both the icon and the inherited manifest.
 Docker CLI subprocesses use `CREATE_NO_WINDOW`; logs and terminals use Consolas
 through the existing Kit styling. Associations, favorites and appearance share
 `%APPDATA%\ferrydock`; Unix paths and defaults remain unchanged. Settings use
