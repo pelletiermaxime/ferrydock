@@ -22,6 +22,7 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | `image_analysis.rs` | Analysis request state, layer selection, Kit file tree and Findings; export/scheduling remains in `src/image_analysis.rs`, offline accounting in `crates/image-analysis-core` |
 | `volumes.rs` | Volumes workspace, search/selection, virtualized inventory/references, metadata, age/size sorting, measured-size cache, single/bulk removal and prune review; Docker discovery/size gathering/removal remains in `src/volumes.rs` |
 | `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
+| `favorites/` | Favorite command dialog/editor, service and replica selection, bounded serial file worker, guarded manual terminal launch |
 | `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
 | `projects.rs` | Compose associations, editable forms, operation state, and project controls |
 | `project_cleanup.rs` | Kit teardown review, volume/image retention options, captured configuration/membership and stale-review guards |
@@ -587,6 +588,50 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/target/packages:/packages:ro
 ```
 
 Use a new evidence directory for each run; the verifier refuses an existing one.
+
+## Favorite command verification
+
+`src/favorites.rs` owns endpoint/target recipes and private atomic JSON replacement.
+The feature's serial file worker loads and mutates settings off the UI thread.
+Files cap at 2 MiB / 2,048 recipes, labels at 120 bytes and commands at 16 KiB.
+The manager virtualizes recipes; the terminal uses Kit Select with stable recipe
+IDs. Selection is scoped to the current container's endpoint and service.
+`favorites/quick_run/` keeps the Kit List launcher, replica picker and interactive
+console together. Recent-use and pin metadata use backward-compatible defaults
+in the same file worker. Project headers show at most three pins. Quick PTYs have
+a separate generation namespace and a six-session cap in both UI and worker;
+normal Terminal selection/disconnection cannot replace them. Pending commands
+expire after 15 seconds and recheck endpoint/target/operation state before sending.
+Closing the console preserves sessions; End session releases one explicitly.
+
+`src/terminal_session.rs` owns the Docker PTY and session-specific prompt OSC.
+Bash's prompt hook or sh's prompt expansion returns the preceding command's exit
+status. The bounded split-frame decoder consumes only that session's marker.
+`RunFavorite` writes to the existing shell only after idle/session/endpoint/target
+checks. Multiline recipes form one shell group, retaining cwd and exports. Input
+marks the session busy immediately; terminal protocol replies have a separate path.
+UI run IDs and input counters reject stale completions and prompt observations.
+Bash loads the normal user `.bashrc` through an inherited pipe before installing
+the prompt hook. Existing scalar or array `PROMPT_COMMAND` hooks are preserved,
+including the preceding exit status. No startup file is written in the container.
+
+Run `python3 scripts/verify-headless.py --flow quick-run` for launcher search,
+keyboard execution, pins, replica choice, busy-shell preservation, idle reuse,
+results and stopped/changed-target guards. The owned Docker test
+`bash scripts/verify-docker.sh quick_run_terminals_preserve_interactive_sessions`
+corroborates independent regular/two-quick PTYs with separately read files.
+
+Run `python3 scripts/verify-headless.py --flow favorites` for real GPUI input and
+screenshots, including running/success/failure, continued use of the same shell,
+partial-input protection, manager persistence/focus and scope guards. Preferences
+use an isolated evidence path. `bash scripts/verify-docker.sh
+favorite_command_uses_an_interactive_pty` exercises the real sh worker in its
+owned fixture: PTY dimensions, interactive input/file proof, consecutive commands,
+exit 0/1, multiline cwd/export persistence and manual/partial-input rejection.
+`FERRYDOCK_FAVORITE_SHELL=bash` selects Bash when supplying a labelled fixture
+image containing it; `auto` checks automatic shell selection. Headless input and
+Docker behavior are separate proofs; native desktop and macOS need separate
+checks. See the [favorites map](../.agents/skills/verify-ferrydock/features/favorites.md).
 
 ## Dependency licenses
 

@@ -241,7 +241,7 @@ impl FerryDock {
                                 colors.panel
                             }))
                             .text_size(px(12.0))
-                            .when_some(compose_project, |header, name| {
+                            .when_some(compose_project.clone(), |header, name| {
                                 header.cursor_pointer().on_click(cx.listener(
                                     move |this, _, window, cx| {
                                         this.select_project(name.clone(), window, cx)
@@ -330,6 +330,9 @@ impl FerryDock {
                                                     .child(source_label),
                                             ),
                                     )
+                                    .when_some(compose_project, |row, name| {
+                                        row.child(this.pinned_project_favorites(&name, cx))
+                                    })
                                     .child(
                                         div()
                                             .flex_shrink_0()

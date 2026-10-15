@@ -281,6 +281,16 @@ impl FerryDock {
                     .on_click(cx.listener(move |this, _, _, cx| this.compose_action(action, cx))),
             );
         }
+        toolbar = toolbar.child(
+            Self::button(
+                "project-favorites",
+                "Favorites",
+                false,
+                self.connection.is_none(),
+                cx,
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.project_favorites(window, cx))),
+        );
         toolbar = toolbar.content(
             Self::button("project-more", "More", false, false, cx)
                 .icon(IconName::Ellipsis)

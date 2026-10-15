@@ -109,7 +109,15 @@ impl Harness {
         let mut content = None;
         let window = cx
             .open_window(size(px(1180.0), px(820.0)), |window, cx| {
-                let view = cx.new(|cx| FerryDock::with_backend(backend, receiver, window, cx));
+                let view = cx.new(|cx| {
+                    FerryDock::with_backend(
+                        backend,
+                        receiver,
+                        super::favorites::Favorites::with_path(Ok(evidence.join("favorites.json"))),
+                        window,
+                        cx,
+                    )
+                });
                 view.update(cx, |view, cx| view.focus(window, cx));
                 content = Some(view.clone());
                 cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
@@ -1240,17 +1248,19 @@ fn headless_gpu_user_flow() {
     h.drain_commands();
     h.click("refresh");
     h.drain_commands();
-    // Toolbar clicks preserve text focus; keyboard traversal focuses the button.
-    h.key("tab");
-    h.cx.update_window(h.window.into(), |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(
-            window.find("refresh").focused(),
-            Some(true),
-            "Native button must own focus for activation"
-        );
-    })
-    .unwrap();
+    // Toolbar clicks preserve text focus; traverse the new global controls too.
+    for id in ["quick-launcher", "quick-runs", "refresh"] {
+        h.key("tab");
+        h.cx.update_window(h.window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                window.find(id).focused(),
+                Some(true),
+                "Toolbar button {id} must own focus for activation"
+            );
+        })
+        .unwrap();
+    }
     for key in ["enter", "space"] {
         h.key(key);
         let commands = h.drain_commands();
@@ -4950,3 +4960,7 @@ fn headless_gpu_image_analysis_flow() {
     )
     .unwrap();
 }
+
+include!("favorites_headless.rs");
+
+include!("quick_run_headless.rs");

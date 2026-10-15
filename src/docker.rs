@@ -7,7 +7,6 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bollard::{
     API_DEFAULT_VERSION, Docker,
-    exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults},
     query_parameters::{
         ListContainersOptionsBuilder, LogsOptionsBuilder, RestartContainerOptionsBuilder,
         StopContainerOptionsBuilder,
@@ -15,13 +14,15 @@ use bollard::{
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use tokio::{
-    io::AsyncWriteExt,
     sync::{mpsc, watch},
     time,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::{compose, model::Container};
+#[path = "terminal_session.rs"]
+mod terminal_session;
+use terminal_session::{TerminalCommand, terminal_session};
 
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -126,6 +127,25 @@ pub enum Command {
         columns: u16,
         rows: u16,
     },
+    QuickTerminal {
+        id: String,
+        generation: u64,
+    },
+    CloseQuickTerminal {
+        generation: u64,
+    },
+    RunFavorite {
+        id: String,
+        generation: u64,
+        run: u64,
+        endpoint: String,
+        target: crate::favorites::Target,
+        command: String,
+    },
+    TerminalReply {
+        generation: u64,
+        data: Vec<u8>,
+    },
     Input {
         generation: u64,
         data: Vec<u8>,
@@ -152,20 +172,6 @@ impl Shell {
             Self::Bash => "Bash",
             Self::Sh => "sh",
         }
-    }
-    fn command(self) -> Vec<String> {
-        match self {
-            Self::Auto => vec![
-                "sh",
-                "-c",
-                "if command -v bash >/dev/null 2>&1; then exec bash; else exec sh; fi",
-            ],
-            Self::Bash => vec!["bash"],
-            Self::Sh => vec!["sh"],
-        }
-        .into_iter()
-        .map(str::to_owned)
-        .collect()
     }
 }
 
@@ -282,6 +288,20 @@ pub enum Event {
     },
     TerminalReady {
         generation: u64,
+    },
+    TerminalPrompt {
+        generation: u64,
+        input_count: u64,
+        at_prompt: bool,
+    },
+    FavoriteStarted {
+        generation: u64,
+        run: u64,
+    },
+    FavoriteFinished {
+        generation: u64,
+        run: u64,
+        result: Result<i64, String>,
     },
     TerminalData {
         generation: u64,
@@ -586,8 +606,16 @@ async fn connected(
         events.clone(),
         cancel.child_token(),
     ));
+    let mut quick_terminals = std::collections::HashMap::<
+        u64,
+        (
+            String,
+            mpsc::UnboundedSender<TerminalCommand>,
+            CancellationToken,
+        ),
+    >::new();
     let mut terminal_cancel = cancel.child_token();
-    let mut terminal = None::<(u64, mpsc::UnboundedSender<TerminalCommand>)>;
+    let mut terminal = None::<(u64, String, mpsc::UnboundedSender<TerminalCommand>)>;
     let mut busy = HashSet::new();
     let mut actions = FuturesUnordered::new();
     let mut compose_jobs = FuturesUnordered::new();
@@ -888,14 +916,46 @@ async fn connected(
                     },
                     Command::Terminal { id, generation, shell, columns, rows } => {
                         terminal_cancel.cancel(); terminal_cancel = cancel.child_token();
-                        let (tx, rx) = mpsc::unbounded_channel(); terminal = Some((generation, tx));
+                        let (tx, rx) = mpsc::unbounded_channel(); terminal = Some((generation, id.clone(), tx));
                         tokio::spawn(terminal_session(docker.clone(), id, generation, shell, columns, rows, rx, events.clone(), terminal_cancel.clone()));
                     }
+                    Command::QuickTerminal { id, generation } => {
+                        if quick_terminals.len() >= 6 || quick_terminals.contains_key(&generation) {
+                            let _ = events.send(Event::TerminalEnded { generation, error: Some("Close a quick-run shell before opening another (limit 6)".into()) }).await;
+                        } else {
+                            let token = cancel.child_token();
+                            let (tx, rx) = mpsc::unbounded_channel();
+                            quick_terminals.insert(generation, (id.clone(), tx, token.clone()));
+                            tokio::spawn(terminal_session(docker.clone(), id, generation, Shell::Auto, 100, 28, rx, events.clone(), token));
+                        }
+                    }
+                    Command::CloseQuickTerminal { generation } => {
+                        if let Some((_, _, token)) = quick_terminals.remove(&generation) { token.cancel(); }
+                    }
+                    Command::RunFavorite { id, generation, run, endpoint, target, command } => {
+                        let available = endpoint == connection.endpoint && !pruning && volume_busy.is_empty() && !busy.contains(&id) && !container_projects.get(&id).and_then(Option::as_ref).is_some_and(|p| compose_busy.contains(p));
+                        let sender = terminal.as_ref().filter(|(active, container, _)| generation == *active && container == &id).map(|(_, _, sender)| sender)
+                            .or_else(|| quick_terminals.get(&generation).filter(|(container, _, _)| container == &id).map(|(_, sender, _)| sender));
+                        if available && let Some(sender) = sender {
+                            let _ = sender.send(TerminalCommand::Favorite { run, target, command });
+                        } else {
+                            let _ = events.send(Event::FavoriteFinished { generation, run, result: Err("Command not sent: terminal, endpoint or Docker operation changed".into()) }).await;
+                        }
+                    }
                     Command::Input { generation, data } => {
-                        if let Some((active, sender)) = &terminal && generation == *active { let _ = sender.send(TerminalCommand::Input(data)); }
+                        let sender = terminal.as_ref().filter(|(active, _, _)| generation == *active).map(|(_, _, sender)| sender)
+                            .or_else(|| quick_terminals.get(&generation).map(|(_, sender, _)| sender));
+                        if let Some(sender) = sender { let _ = sender.send(TerminalCommand::Input(data)); }
+                    }
+                    Command::TerminalReply { generation, data } => {
+                        let sender = terminal.as_ref().filter(|(active, _, _)| generation == *active).map(|(_, _, sender)| sender)
+                            .or_else(|| quick_terminals.get(&generation).map(|(_, sender, _)| sender));
+                        if let Some(sender) = sender { let _ = sender.send(TerminalCommand::Reply(data)); }
                     }
                     Command::Resize { generation, columns, rows } => {
-                        if let Some((active, sender)) = &terminal && generation == *active { let _ = sender.send(TerminalCommand::Resize(columns, rows)); }
+                        let sender = terminal.as_ref().filter(|(active, _, _)| generation == *active).map(|(_, _, sender)| sender)
+                            .or_else(|| quick_terminals.get(&generation).map(|(_, sender, _)| sender));
+                        if let Some(sender) = sender { let _ = sender.send(TerminalCommand::Resize(columns, rows)); }
                     }
                 }
             }
@@ -1033,94 +1093,6 @@ impl LogHistory {
         }
         output
     }
-}
-
-enum TerminalCommand {
-    Input(Vec<u8>),
-    Resize(u16, u16),
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn terminal_session(
-    docker: Docker,
-    id: String,
-    generation: u64,
-    shell: Shell,
-    columns: u16,
-    rows: u16,
-    mut commands: mpsc::UnboundedReceiver<TerminalCommand>,
-    events: mpsc::Sender<Event>,
-    cancel: CancellationToken,
-) {
-    let result = async {
-        let exec = docker
-            .create_exec(
-                &id,
-                CreateExecOptions {
-                    attach_stdin: Some(true),
-                    attach_stdout: Some(true),
-                    attach_stderr: Some(true),
-                    tty: Some(true),
-                    cmd: Some(shell.command()),
-                    env: Some(vec![
-                        "TERM=xterm-256color".into(),
-                        "COLORTERM=truecolor".into(),
-                    ]),
-                    ..Default::default()
-                },
-            )
-            .await
-            .context(
-                "Cannot open shell. Try sh if Bash is unavailable; this image may have no shell",
-            )?;
-        let attached = docker
-            .start_exec(
-                &exec.id,
-                Some(StartExecOptions {
-                    detach: false,
-                    tty: true,
-                    ..Default::default()
-                }),
-            )
-            .await?;
-        let StartExecResults::Attached {
-            mut output,
-            mut input,
-        } = attached
-        else {
-            bail!("Docker did not attach the terminal");
-        };
-        docker
-            .resize_exec(
-                &exec.id,
-                ResizeExecOptions {
-                    height: rows,
-                    width: columns,
-                },
-            )
-            .await?;
-        let _ = events.send(Event::TerminalReady { generation }).await;
-        loop {
-            tokio::select! {
-                _ = cancel.cancelled() => { let _ = input.shutdown().await; break; },
-                frame = output.next() => match frame {
-                    Some(Ok(frame)) => { events.send(Event::TerminalData { generation, data: frame.into_bytes().to_vec() }).await?; }
-                    Some(Err(error)) => return Err(error.into()),
-                    None => break,
-                },
-                command = commands.recv() => match command {
-                    Some(TerminalCommand::Input(data)) => { input.write_all(&data).await?; input.flush().await?; },
-                    Some(TerminalCommand::Resize(columns, rows)) => { docker.resize_exec(&exec.id, ResizeExecOptions { height: rows, width: columns }).await?; },
-                    None => { let _ = input.shutdown().await; break; },
-                }
-            }
-        }
-        Ok::<_, anyhow::Error>(())
-    };
-    let error = tokio::select! { _ = cancel.cancelled() => None, result = result => result.err().map(|error| error.to_string()) };
-    let _ = events
-        .send(Event::TerminalEnded { generation, error })
-        .await;
 }
 
 #[cfg(test)]

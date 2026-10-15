@@ -26,6 +26,10 @@ the terminal, and container details close at hand.
   disconnected, and stale readings are labelled instead of reported as zero.
 - **Open a terminal inside a container.** Use Bash or sh with colors, scrollback,
   text selection, copy and paste, and support for full-screen terminal programs.
+- **Keep favorite commands.** Save labelled commands for a Compose service or
+  standalone container on the connected Docker endpoint. Review the command,
+  choose a running instance when a service has replicas, and run it manually
+  in the integrated interactive terminal.
 - **Start, stop, and restart containers.** See progress and any errors in the
   detail panel. Associate Compose files to control a whole project, rebuild its
   images and restart its services, and watch its operation output.
@@ -140,6 +144,54 @@ display and Docker environment.
 
 Type `exit` to end a shell normally. Stopping or restarting a container closes
 its terminal session; open a new shell after it starts again.
+
+### Favorite commands
+
+Click **Favorites** in a container or Compose project toolbar. For a project,
+choose the service, then **Add command**. Enter a label and a command for your
+chosen shell; multiline commands are supported. **Save favorite** stores it on
+this computer without executing it. Use **Edit** or **Delete** beside a saved
+command to update or remove it.
+
+For quick access, press **Ctrl+K** or click **Run favorite…** in the app header.
+Search by command, project, or service, then press **Enter**. FerryDock finds the
+running target, opens an interactive quick-run console, and sends the command
+once its shell is ready. Multiple running replicas get an instance picker;
+stopped services stay stopped.
+
+Use **Pin** beside a saved favorite to put a launch button on its Compose project
+header (up to three buttons). Recent commands appear first in the launcher.
+Quick runs use separate shells from the container's regular Terminal. Idle quick
+shells are reused for the same target, keeping their directory and environment;
+a busy shell stays intact and another session opens. **Hide** keeps commands
+running; **Quick runs** in the app header returns to their output and result.
+**End session** disconnects the selected shell. At most six quick shells stay open.
+
+Open the container's **Terminal** and click **Open shell**. The favorites list
+sits immediately above the terminal: select a command and click **Run**. The
+command appears in the shell like typed input, and the shell stays open afterward.
+**Running**, **Completed · exit 0**, or **Failed · exit …** makes the result
+explicit. Output and the returned prompt remain visible; you can run another
+favorite or continue typing normally. Changes of directory and exported variables
+carry over to the next command in that shell.
+
+The selected container is the execution target, including when a service has
+several replicas. Select another container to use a different instance. **Manage…**
+opens the add/edit/delete dialog; saving never runs a command.
+
+**Run** is available only at an empty shell prompt. It stays disabled while a
+command is running, while terminal input is unfinished, or while the container
+is stopped or disconnected. Favorites never replace a session or start a service
+automatically. Bash and sh report their prompt and exit status. Bash keeps your
+normal startup settings and existing prompt hooks, including shell history.
+
+Favorites belong to the Docker endpoint and Compose project/service names,
+so they survive container recreation. Standalone favorites use the container
+name. Changing endpoints keeps each endpoint's recipes separate. Recipes are
+stored in `$XDG_CONFIG_HOME/ferrydock/favorites.json` (normally
+`~/.config/ferrydock/favorites.json`); they are local plaintext, so avoid saving
+secrets in commands. File errors appear in the dialog and unreadable files are
+preserved.
 
 ### Manage a Compose project
 

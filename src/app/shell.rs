@@ -39,6 +39,7 @@ impl Render for FerryDock {
             .unwrap_or_default();
         let shortcuts = div().flex().flex_col().gap_2().children(
             [
+                ("ctrl-k", "Run favorite"),
                 ("ctrl-f", "Search"),
                 ("ctrl-r", "Refresh"),
                 ("ctrl-1", if self.images_open { "Overview" } else { "Logs" }),
@@ -124,6 +125,24 @@ impl Render for FerryDock {
                     .gap_2()
                     .when(!connected, |view| view.child(Spinner::new().small()))
                     .child(connection_tag.small().outline().child(connection)),
+            )
+            .child(
+                Self::button(
+                    "quick-launcher",
+                    "Run favorite…",
+                    false,
+                    self.connection.is_none(),
+                    cx,
+                )
+                .tooltip("Run a saved command (Ctrl+K)")
+                .on_click(cx.listener(|this, _, window, cx| this.open_quick_launcher(window, cx))),
+            )
+            .child(
+                Self::button("quick-runs", self.quick_runs_label(cx), false, false, cx)
+                    .tooltip("Open quick-run terminals and their results")
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_quick_console(window, cx)),
+                    ),
             )
             .child(
                 Self::button("refresh", "Refresh", false, false, cx)
@@ -231,6 +250,7 @@ impl Render for FerryDock {
             .font_family("Inter")
             .text_size(px(14.0))
             .track_focus(&self.focus)
+            .capture_key_down(cx.listener(Self::quick_run_key))
             .on_key_down(cx.listener(Self::root_key))
             .child(header)
             .child(

@@ -49,6 +49,7 @@ impl FerryDock {
         let generation = self.terminal.generation;
         let commands = self.backend.commands.clone();
         let view = cx.new(|cx| TerminalView::new(generation, commands, cx));
+        cx.observe(&view, |_, _, cx| cx.notify()).detach();
         view.update(cx, |view, cx| view.focus(window, cx));
         self.terminal.view = Some(view);
         self.backend.send(Command::Terminal {
@@ -59,7 +60,7 @@ impl FerryDock {
             rows: 24,
         });
         self.tab = Tab::Terminal;
-        self.expand_dock(460.0, window, cx);
+        self.expand_dock(580.0, window, cx);
         cx.notify();
     }
 
@@ -162,7 +163,12 @@ impl FerryDock {
                     cx.notify();
                 })),
             );
-        let mut pane = div().flex().flex_col().size_full().child(toolbar);
+        let mut pane = div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(toolbar)
+            .child(self.terminal_favorites_toolbar(cx));
         if let Some(terminal) = &self.terminal.view {
             let status = terminal.read(cx).status.clone();
             pane = pane

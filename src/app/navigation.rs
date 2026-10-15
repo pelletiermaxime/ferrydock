@@ -79,6 +79,9 @@ impl FerryDock {
         cx: &mut Context<Self>,
     ) {
         let key = &event.keystroke;
+        if self.favorites_dialog_open() || self.quick_surface_open() {
+            return;
+        }
         if self.projects.cleanup.is_some() {
             return;
         }
