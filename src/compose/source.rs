@@ -120,6 +120,10 @@ mod tests {
 
     #[test]
     fn source_paths_preserve_labels_and_override_order() {
+        let base = std::env::temp_dir();
+        let checkout = base.join("checkout");
+        let primary = checkout.join("compose.yaml");
+        let override_file = base.join("overrides/dev.yaml");
         let project = Project {
             name: "demo".into(),
             config: Some(Config {
@@ -128,28 +132,25 @@ mod tests {
                 ..Default::default()
             }),
             hint: Config {
-                directory: "/checkout".into(),
-                files: vec!["compose.yaml".into(), "/overrides/dev.yaml".into()],
+                directory: checkout,
+                files: vec!["compose.yaml".into(), override_file.clone()],
                 ..Default::default()
             },
             worktree: None,
         };
         assert_eq!(
             project.source_files(),
-            vec![
-                PathBuf::from("/checkout/compose.yaml"),
-                PathBuf::from("/overrides/dev.yaml")
-            ]
+            vec![primary.clone(), override_file.clone()]
         );
         assert_eq!(
             project.source_label(),
-            "/checkout/compose.yaml (+1 override)"
+            format!("{} (+1 override)", primary.display())
         );
-        assert!(
-            project
-                .source_tooltip()
-                .contains("/checkout/compose.yaml\n/overrides/dev.yaml")
-        );
+        assert!(project.source_tooltip().contains(&format!(
+            "{}\n{}",
+            primary.display(),
+            override_file.display()
+        )));
     }
 
     #[test]

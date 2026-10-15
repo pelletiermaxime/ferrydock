@@ -1,0 +1,29 @@
+FerryDock @VERSION@ — Windows x64 preview
+
+Requirements
+- Windows 10/11 x64 with a working Direct3D 11 graphics driver.
+- Docker Desktop running Linux containers, with access from your Windows account.
+- Docker's Windows CLI on PATH; Docker Compose v2 for project controls.
+
+Extract the entire ZIP into a folder you can write to, then open ferrydock.exe.
+FerryDock uses your selected Windows Docker context and its local named pipe.
+It does not require an administrator account or an exposed TCP Docker endpoint.
+
+This preview is unsigned. Windows may show a SmartScreen warning. Verify the
+download against SHA256SUMS before deciding whether to allow the application.
+In PowerShell: Get-FileHash .\ferrydock-@VERSION@-windows-x86_64.zip -Algorithm SHA256
+
+Settings, Compose associations and favorite commands are stored under
+%APPDATA%\ferrydock. Favorite commands are local plaintext; avoid saving secrets.
+
+Compose controls require files accessible to Windows. Projects started inside
+WSL may have Linux-only file labels; use Configuration to associate local files.
+The embedded terminal opens Bash/sh inside Linux containers. Windows containers
+and PowerShell/cmd container shells are outside this preview's supported scope.
+
+CI checks the build, local named-pipe API fixtures and package contents. Native
+Windows desktop input, clipboard, rendering and real Docker Desktop behavior
+require separate verification. See docs/development.md in the source repository.
+
+To uninstall, close FerryDock and delete the extracted folder. Remove
+%APPDATA%\ferrydock separately if you also want to delete saved settings.

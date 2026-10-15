@@ -1,12 +1,6 @@
-//! Exercise the production Bollard request against an owned Unix API fixture.
-//! No connection to the user's Docker daemon and no resource mutation.
-#![cfg(unix)]
-
-use std::{
-    io::{Read, Write},
-    os::unix::net::UnixListener,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+//! Exercise production volume-size requests against an owned local API fixture.
+//! Uses Unix sockets on Unix and named pipes on Windows; never a real daemon.
+mod support;
 
 use bollard::ClientVersion;
 use ferrydock::volumes::{VolumeSize, gather_sizes};
@@ -16,62 +10,20 @@ async fn check_sizes(
     status: &str,
     minor_version: usize,
 ) -> anyhow::Result<Vec<VolumeSize>> {
-    let path = std::env::temp_dir().join(format!(
-        "ferrydock-sizes-{}-{}.sock",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let listener = UnixListener::bind(&path).unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let response = response.to_owned();
-    let status = status.to_owned();
-    let server = std::thread::spawn(move || {
-        let start = Instant::now();
-        let mut stream = loop {
-            match listener.accept() {
-                Ok((stream, _)) => break stream,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    assert!(
-                        start.elapsed() < Duration::from_secs(5),
-                        "Size request did not reach fixture"
-                    );
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Err(error) => panic!("Fixture accept: {error}"),
-            }
-        };
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut request = Vec::new();
-        let mut buffer = [0; 1024];
-        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-            let count = stream.read(&mut buffer).unwrap();
-            assert!(count > 0);
-            request.extend_from_slice(&buffer[..count]);
-        }
-        let request = String::from_utf8(request).unwrap();
-        let line = request.lines().next().unwrap();
-        assert_eq!(
-            line,
-            format!("GET /v1.{minor_version}/system/df?type=volume&verbose=true HTTP/1.1")
-        );
-        write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
-    });
+    let mut fixture = support::LocalApi::new(
+        format!("GET /v1.{minor_version}/system/df?type=volume&verbose=true HTTP/1.1"),
+        status,
+        response,
+    );
     let result = gather_sizes(
-        path.to_str().unwrap(),
+        &fixture.endpoint,
         &ClientVersion {
             major_version: 1,
             minor_version,
         },
     )
     .await;
-    let server_result = server.join();
-    std::fs::remove_file(path).unwrap();
-    server_result.unwrap();
+    fixture.finish().await;
     result
 }
 

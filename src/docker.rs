@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use bollard::{
-    API_DEFAULT_VERSION, Docker,
+    Docker,
     query_parameters::{
         ListContainersOptionsBuilder, LogsOptionsBuilder, RestartContainerOptionsBuilder,
         StopContainerOptionsBuilder,
@@ -443,15 +443,21 @@ pub async fn resolve_connection() -> Result<Connection> {
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
         {
-            let rootless = env::var("XDG_RUNTIME_DIR")
-                .ok()
-                .map(|dir| format!("{dir}/docker.sock"));
-            let socket = rootless
-                .filter(|path| std::path::Path::new(path).exists())
-                .unwrap_or_else(|| "/var/run/docker.sock".into());
+            #[cfg(unix)]
+            let endpoint = {
+                let rootless = env::var("XDG_RUNTIME_DIR")
+                    .ok()
+                    .map(|dir| format!("{dir}/docker.sock"));
+                let socket = rootless
+                    .filter(|path| std::path::Path::new(path).exists())
+                    .unwrap_or_else(|| "/var/run/docker.sock".into());
+                format!("unix://{socket}")
+            };
+            #[cfg(windows)]
+            let endpoint = "npipe:////./pipe/docker_engine".into();
             Ok(Connection {
                 name: "local".into(),
-                endpoint: format!("unix://{socket}"),
+                endpoint,
             })
         }
         Err(error) => Err(error),
@@ -459,19 +465,13 @@ pub async fn resolve_connection() -> Result<Connection> {
 }
 
 pub async fn connect(connection: &Connection) -> Result<Docker> {
-    let Some(socket) = connection.endpoint.strip_prefix("unix://") else {
-        bail!(
-            "{} uses {}. This version supports local Unix socket contexts; select a local Docker context.",
-            connection.name,
-            connection.endpoint
-        );
-    };
-    Ok(time::timeout(
-        Duration::from_secs(10),
-        Docker::connect_with_unix(socket, 15, API_DEFAULT_VERSION)?.negotiate_version(),
+    let docker = crate::docker_transport::client(&connection.endpoint)
+        .map_err(|error| anyhow::anyhow!("Docker context {}: {error:#}", connection.name))?;
+    Ok(
+        time::timeout(Duration::from_secs(10), docker.negotiate_version())
+            .await
+            .context("Docker connection timed out")??,
     )
-    .await
-    .context("Docker connection timed out")??)
 }
 
 pub async fn snapshot(docker: &Docker) -> Result<Vec<Container>> {

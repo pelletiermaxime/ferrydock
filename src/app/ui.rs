@@ -11,7 +11,9 @@ use gpui_kit::component::notification::NotificationDelivery;
 
 #[cfg(target_os = "macos")]
 pub(crate) const MONOSPACE_FONT: &str = "Menlo";
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub(crate) const MONOSPACE_FONT: &str = "Consolas";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) const MONOSPACE_FONT: &str = "DejaVu Sans Mono";
 
 #[derive(Clone, Copy)]
