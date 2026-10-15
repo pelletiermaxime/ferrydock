@@ -669,6 +669,24 @@ image containing it; `auto` checks automatic shell selection. Headless input and
 Docker behavior are separate proofs; native desktop and macOS need separate
 checks. See the [favorites map](../.agents/skills/verify-ferrydock/features/favorites.md).
 
+## Project website
+
+The one-page product site lives in `website/`. It is plain HTML, CSS and
+JavaScript with local screenshots; there is no frontend dependency installation.
+Preview it with `python3 -m http.server 4173 --directory website`.
+
+`python3 scripts/build-website.py` copies it to `.verification/website/dist/`.
+The Website workflow refreshes download links from the latest GitHub release,
+validates the expected packages, and deploys that directory to GitHub Pages on
+website changes to `main`, a published release, or manual dispatch. Pull requests
+prepare the artifact without deploying. Release events use the site on `main`.
+Enable Pages with **Settings → Pages → Source → GitHub Actions** for the first
+deployment. Keep package naming patterns in the build helper aligned with the
+release scripts. `website/release.json` is the local-preview snapshot; deployed
+metadata is generated afresh. Add new feature screenshots under
+`website/assets/screenshots/` as WebP, using the default FerryDock theme and
+example projects without private data.
+
 ## Dependency licenses
 
 FerryDock is [MIT licensed](../LICENSE). Dependencies retain their own licenses;

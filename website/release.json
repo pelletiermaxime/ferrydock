@@ -1,0 +1,11 @@
+{
+  "version": "v0.11.1",
+  "url": "https://github.com/pelletiermaxime/ferrydock/releases/tag/v0.11.1",
+  "downloads": {
+    "appimage": "https://github.com/pelletiermaxime/ferrydock/releases/download/v0.11.1/ferrydock-0.11.1-linux-x86_64.AppImage",
+    "deb": "https://github.com/pelletiermaxime/ferrydock/releases/download/v0.11.1/ferrydock_0.11.1_amd64.deb",
+    "tarball": "https://github.com/pelletiermaxime/ferrydock/releases/download/v0.11.1/ferrydock-0.11.1-linux-x86_64.tar.gz",
+    "dmg": "https://github.com/pelletiermaxime/ferrydock/releases/download/v0.11.1/ferrydock-0.11.1-macos-arm64.dmg",
+    "checksums": "https://github.com/pelletiermaxime/ferrydock/releases/download/v0.11.1/SHA256SUMS"
+  }
+}
