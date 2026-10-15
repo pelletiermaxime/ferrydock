@@ -131,6 +131,7 @@ jobs:
         run: |
           test -d dist/linux-packages
           test -d dist/macos-arm64-packages
+          test -d dist/windows-x86_64-packages
           mkdir release
           for directory in dist/*-packages; do
             (cd "$directory" && sha256sum --check SHA256SUMS)
@@ -144,6 +145,7 @@ jobs:
           cp "release/ferrydock-${version}-linux-x86_64.tar.gz" release/ferrydock-linux-x86_64.tar.gz
           cp "release/ferrydock_${version}_amd64.deb" release/ferrydock_amd64.deb
           cp "release/ferrydock-${version}-macos-arm64.dmg" release/ferrydock-macos-arm64.dmg
+          cp "release/ferrydock-${version}-windows-x86_64.zip" release/ferrydock-windows-x86_64.zip
           (cd release && sha256sum ferrydock* > SHA256SUMS && sha256sum --check SHA256SUMS)
       - name: Publish release
         env:

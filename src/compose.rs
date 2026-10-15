@@ -169,6 +169,12 @@ pub struct Settings {
 }
 impl Settings {
     pub fn path() -> Result<PathBuf> {
+        #[cfg(windows)]
+        let base = std::env::var_os("APPDATA")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .context("APPDATA is unavailable")?;
+        #[cfg(not(windows))]
         let base = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
@@ -210,10 +216,11 @@ impl Settings {
         settings.persist(path)
     }
     fn persist(self, path: &Path) -> Result<Self> {
-        std::fs::create_dir_all(path.parent().context("Configuration path has no parent")?)?;
-        let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-        std::fs::write(&temporary, serde_json::to_vec_pretty(&self)?)?;
-        std::fs::rename(&temporary, path)?;
+        let parent = path.parent().context("Configuration path has no parent")?;
+        std::fs::create_dir_all(parent)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        std::io::Write::write_all(&mut temporary, &serde_json::to_vec_pretty(&self)?)?;
+        temporary.persist(path).map_err(|error| error.error)?;
         Ok(self)
     }
     pub fn projects(&self, endpoint: &str, containers: &[Container]) -> Vec<Project> {

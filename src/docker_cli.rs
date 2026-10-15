@@ -8,11 +8,15 @@ pub(crate) fn command() -> Command {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Command::new("docker")
+        #[allow(unused_mut)]
+        let mut command = Command::new("docker");
+        #[cfg(windows)]
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW for background CLI work.
+        command
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn macos_command(path: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> Command {
     use std::{env, path::PathBuf};
 

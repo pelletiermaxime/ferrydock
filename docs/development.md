@@ -238,11 +238,14 @@ Docker inventory warnings and unnamed volume mounts fail explicitly. References
 include stopped containers and deduplicate repeated mounts of one volume in a
 container. Ordinary discovery does not request disk usage. Only
 `GatherVolumeSizes` requests `GET /v<negotiated>/system/df?type=volume&verbose=true`,
-using the current Unix endpoint and API 1.42+ so image/container/build-cache usage
+using the current local endpoint and API 1.42+ so image/container/build-cache usage
 is excluded. This separate cancellable worker job has a 120-second timeout,
 32 MiB response bound and 20,000-volume bound. Bollard's generated disk-usage model
-only decodes the newer schema; the feature reuses its already locked Hyper/Unix
-transport packages to decode both legacy `Volumes` and modern `VolumeUsage.Items`.
+only decodes the newer schema; the feature reuses its already locked Hyper
+Unix-socket/named-pipe transports to decode both legacy `Volumes` and modern
+`VolumeUsage.Items`. `src/docker_transport.rs` owns those local transports;
+Bollard negotiates the API version on the selected endpoint. Remote transports
+remain unsupported.
 Missing/negative sizes are unavailable; zero is measured empty. Sizes are labelled
 in MiB and sorted by bytes, with unavailable values last in either direction.
 
@@ -362,6 +365,65 @@ to their child environments, preserving inherited PATH priority. Log and
 terminal views use the system Menlo font on macOS. Existing Control shortcuts
 and settings paths are retained.
 
+## Build on Windows
+
+The preview targets Windows 10/11 x64 and Docker Desktop's Linux containers.
+Install Rust through rustup, Python 3.11+, and Visual Studio 2022 Build Tools
+with **Desktop development with C++** and a Windows SDK. The SDK supplies
+`rc.exe` for application resources and `fxc.exe` for GPUI's release shaders.
+Build from a Windows terminal with the pinned toolchain:
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+cargo build --release --locked --target x86_64-pc-windows-msvc
+.\target\x86_64-pc-windows-msvc\release\ferrydock.exe
+python scripts/package-windows.py
+```
+
+The portable ZIP, `SHA256SUMS` and package inspection report go to
+`target/packages/`. Packaging checks the x64 PE architecture, GUI subsystem,
+icon/manifest resources, normal/delayed DLL imports and ZIP contents. The target
+configuration links the C runtime statically; packaging rejects VC runtime DLLs
+and missing non-system dependencies. The executable is unsigned. The icon is
+converted from the existing SVG. To regenerate it on Linux with ImageMagick and
+Python's Pillow installed:
+
+```sh
+magick -background none packaging/linux/dev.ferrydock.FerryDock.svg target/windows-icon.png
+python3 -c "from PIL import Image; Image.open('target/windows-icon.png').save('packaging/windows/FerryDock.ico', format='ICO', sizes=[(n,n) for n in [16,24,32,48,64,128,256]])"
+```
+
+The pinned Kit base layer's `gpui-pre-platform` dependency already embeds a
+manifest with per-monitor DPI awareness and current-user execution. FerryDock
+embeds only its icon to avoid duplicate manifest resources during native linking;
+the package inspector requires both the icon and the inherited manifest.
+Docker CLI subprocesses use `CREATE_NO_WINDOW`; logs and terminals use Consolas
+through the existing Kit styling. Associations, favorites and appearance share
+`%APPDATA%\ferrydock`; Unix paths and defaults remain unchanged. Settings use
+temporary files in the destination directory for atomic replacement. Windows
+Docker contexts must expose a local `npipe://` endpoint. Compose commands pass
+the selected endpoint explicitly and require Windows-accessible file paths;
+Linux paths from WSL labels may need manual association. Bash/sh run inside
+Linux containers; Windows container shells are outside this preview's scope.
+
+Run `cargo test --workspace --locked --target x86_64-pc-windows-msvc` for unit
+tests and owned named-pipe fixtures. `local_connection` tests production Bollard
+API negotiation; `volume_sizes` tests the filtered HTTP request and both response
+schemas. No Docker daemon is contacted by those fixtures. The Linux-only
+headless/native helpers do not establish Windows interaction or Docker Desktop
+compatibility. Before promoting the preview, verify on a Windows desktop:
+
+1. Extract the ZIP on a machine without the VC redistributable; launch it and
+   inspect the icon, default theme, Consolas text and rendering across DPI scales.
+2. With Docker Desktop in Linux containers mode, use an owned disposable Compose
+   project without host mounts, published ports or persistent volumes. Verify
+   discovery, logs, terminal input/PTY size and an independently read container file.
+3. Associate Windows-local Compose files, exercise Start/Stop/Restart and confirm
+   real daemon state changes. Check CLI operations produce no console windows.
+4. Save/reopen settings and favorites, exercise clipboard and focus, disconnect
+   and reconnect Docker, then remove only the owned fixture. Retain screenshots,
+   action results and cleanup evidence under `.verification/windows/`.
+
 ## Verification
 
 Run checks from the repository root:
@@ -392,7 +454,7 @@ UI behavior; real operations require the separate integration checks:
 | `bash scripts/verify-docker.sh` | Real discovery/logs, Start/Stop/Restart, interactive shell I/O, PTY resize, ANSI parsing, full-screen vi, shell exit, missing Bash |
 | `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, changed build inputs and rebuilt image/container contents, build failure without stopping services, streamed failures, restart/rebuild/recreation log recovery, bounded batches |
 | `cargo test --locked --test volumes_prune` | Owned Unix HTTP fixtures: exact anonymous/all-unused filters, deleted names and reclaimed bytes, empty/zero/unavailable results, Docker errors and old-API refusal |
-| `cargo test --locked --test volume_sizes` | Owned Unix HTTP fixtures: volume-only query and legacy/modern response decoding, zero/unavailable values, errors and API version guard |
+| `cargo test --locked --test local_connection --test volume_sizes` | Owned local HTTP fixtures (Unix sockets or Windows named pipes): API negotiation, volume-only query and legacy/modern response decoding, zero/unavailable values, errors and API version guard |
 | `bash scripts/verify-volumes.sh` | Explicit volume-only disk usage of a known 3 MiB file; production worker volume inventory/configuration, running/stopped references and deletion guards, single/bulk unused-volume deletion, per-target failures and reconciliation |
 | `bash scripts/verify-images.sh` | Production worker image discovery, immutable IDs and running/stopped references, blocked removal, multi-tag Docker conflict, selected-image removal and inventory reconciliation |
 | `python3 scripts/verify-log-performance.py` | Owned native window (Wayland preferred) and ten disposable containers; CPU/RSS and search under live log load |
@@ -547,8 +609,16 @@ do not launch the native Mac UI, connect to Docker Desktop, or exercise
 Gatekeeper approval. The existing headless/native verification helpers are
 Linux-only; their passing results do not prove macOS runtime behavior.
 
+The reusable [Windows workflow](../.github/workflows/windows.yml) runs on
+`windows-2025` with the x64 MSVC target. It runs Clippy, unit tests and isolated
+named-pipe API fixtures, builds the release executable, and inspects the portable
+ZIP. `windows-x86_64-packages` contains the ZIP and checksums;
+`windows-package-check` records the executable/import/archive checks. These jobs
+do not launch the native UI or contact Docker Desktop. Windows previews remain
+pending the desktop verification described above.
+
 [Release](../.github/workflows/release.yml) runs when a `v*` tag is pushed. It
-reuses the test workflow, including macOS packaging, then builds Linux x86-64
+reuses the test workflow, including macOS and Windows packaging, then builds Linux x86-64
 packages on Ubuntu 24.04:
 
 - A `.tar.gz` archive containing the binary, license, install guide, and desktop
@@ -562,9 +632,11 @@ packages on Ubuntu 24.04:
   must match the host drivers; an older bundled client library can prevent newer
   Mesa drivers from loading.
 - The macOS workflow supplies the Apple Silicon `.dmg`.
+- The Windows workflow supplies the x64 preview `.zip`.
 - The publish job verifies each platform's checksums and generates one
-  `SHA256SUMS` covering all four downloads. It requires both Linux and macOS
-  checks/packages to succeed before creating the release.
+  `SHA256SUMS` covering all five versioned downloads and their stable aliases.
+  It requires Linux, macOS and Windows checks/packages to succeed before
+  creating the release.
 
 The workflow installs the Debian package and checks both binaries in a clean
 Ubuntu container before publishing the GitHub Release. This startup check

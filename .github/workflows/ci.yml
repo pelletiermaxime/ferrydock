@@ -15,6 +15,10 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
+  windows:
+    name: Windows checks and preview package
+    uses: ./.github/workflows/windows.yml
+
   macos:
     name: macOS checks and packages
     uses: ./.github/workflows/macos.yml

@@ -17,6 +17,9 @@ anyhow = "1"
 bollard = "=0.21.1"
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = "0.3"
+http-body-util = "=0.1.5"
+hyper = "=1.12.0"
+hyper-util = "=0.1.21"
 # GPUI Kit and direct engine consumers must share its selected Fast backend.
 gpui-kit = { version = "=0.7.3", features = ["gpui-fast", "tree-sitter"] }
 gpui = { package = "gpui-fast", version = "=0.1.7", default-features = false, features = ["wayland", "x11", "windows-manifest-provided-by-host"] }
@@ -31,10 +34,14 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # Reuse Bollard's HTTP transport packages to decode both Docker disk-usage
 # response formats; its generated model only understands the newer format.
 [target.'cfg(unix)'.dependencies]
-http-body-util = "=0.1.5"
-hyper = "=1.12.0"
-hyper-util = "=0.1.21"
 hyperlocal = { version = "=0.9.1", default-features = false, features = ["client"] }
+
+[target.'cfg(windows)'.dependencies]
+hex = "=0.4.3"
+hyper-named-pipe = "=0.1.1"
+
+[build-dependencies]
+embed-resource = "=3.0.12"
 
 [features]
 headless-tests = ["gpui/test-support", "gpui-kit/test-support", "gpui_platform/test-support", "dep:gpui_wgpu", "dep:image"]

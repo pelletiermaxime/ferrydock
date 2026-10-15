@@ -97,9 +97,13 @@ fn save(path: &Path, theme: AppTheme) -> Result<(), String> {
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let bytes =
         serde_json::to_vec_pretty(&SavedAppearance { theme }).map_err(|error| error.to_string())?;
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
-    std::fs::rename(temporary, path).map_err(|error| error.to_string())
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+    std::io::Write::write_all(&mut temporary, &bytes).map_err(|error| error.to_string())?;
+    temporary
+        .persist(path)
+        .map(|_| ())
+        .map_err(|error| error.error.to_string())
 }
 
 pub(super) fn init(cx: &mut App) {

@@ -126,15 +126,11 @@ impl VolumeSize {
     }
 }
 
-#[cfg(unix)]
 pub async fn gather_sizes(
     endpoint: &str,
     version: &bollard::ClientVersion,
 ) -> Result<Vec<VolumeSize>> {
-    use http_body_util::{BodyExt, Empty, Limited};
-    use hyper::body::Bytes;
-    use hyper_util::client::legacy::Client;
-    use hyperlocal::{UnixClientExt, UnixConnector, Uri};
+    use http_body_util::{BodyExt, Limited};
     if (version.major_version, version.minor_version) < (1, 42) {
         bail!("Gathering volume sizes requires Docker API 1.42 or newer (Docker 23+)");
     }
@@ -144,9 +140,7 @@ pub async fn gather_sizes(
             "/v{}.{}/system/df?type=volume&verbose=true",
             version.major_version, version.minor_version
         );
-        let client: Client<UnixConnector, Empty<Bytes>> = Client::unix();
-        let response = client
-            .get(Uri::new(endpoint.trim_start_matches("unix://"), &path).into())
+        let response = crate::docker_transport::get(endpoint, &path)
             .await
             .context("Could not request volume sizes from Docker")?;
         let status = response.status();
@@ -208,11 +202,6 @@ pub async fn gather_sizes(
     })
     .await
     .context("Gathering volume sizes timed out; previous measurements are kept")?
-}
-
-#[cfg(not(unix))]
-pub async fn gather_sizes(_: &str, _: &bollard::ClientVersion) -> Result<Vec<VolumeSize>> {
-    bail!("Gathering volume sizes requires a local Unix Docker socket")
 }
 
 impl Volume {

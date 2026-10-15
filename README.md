@@ -1,6 +1,6 @@
 # FerryDock
 
-A native desktop app for managing your Docker containers on Linux and macOS.
+A native desktop app for managing your Docker containers on Linux, macOS and Windows.
 
 Find a container, follow its logs, open a shell, and start or stop it from one
 window. FerryDock groups containers by Docker Compose project and keeps logs,
@@ -64,14 +64,29 @@ the terminal, and container details close at hand.
 
 FerryDock is in early development. Packages target **Linux x86-64 with
 Wayland or X11/XWayland** and **Apple Silicon Macs running macOS 15 or newer**,
-with a **local Docker daemon**. macOS packages are previews pending native
-desktop verification. You need a working graphics driver and access to Docker
+with a **local Docker daemon**. A **Windows 10/11 x64 preview** targets Docker
+Desktop running Linux containers. macOS and Windows packages are previews pending
+native desktop verification. You need a working graphics driver and access to Docker
 from your user account. FerryDock uses your existing Docker installation.
 
 ### Install
 
 Download a package from [GitHub Releases](https://github.com/pelletiermaxime/ferrydock/releases/latest).
 macOS packages are included starting with `0.5.1`.
+
+For **Windows x64**, use the `windows-x86_64-packages` artifact from a successful
+Windows-enabled CI run, or `ferrydock-<version>-windows-x86_64.zip` once included
+in a release. Extract the ZIP and open **ferrydock.exe**. Start Docker Desktop
+in Linux containers mode first, and make sure `docker` is available in your
+Windows PATH. Project controls also need Docker Compose v2.
+
+The Windows preview is unsigned, so Windows may show a SmartScreen warning.
+Verify the ZIP against `SHA256SUMS` with PowerShell's
+`Get-FileHash .\ferrydock-<version>-windows-x86_64.zip -Algorithm SHA256`.
+Settings are stored in `%APPDATA%\ferrydock`. Compose files must be accessible
+to Windows; projects started inside WSL may need a local file association
+through **Configuration**. Windows containers and PowerShell/cmd container
+shells are outside this preview's scope.
 
 For **Apple Silicon macOS**, download `ferrydock-<version>-macos-arm64.dmg`,
 open it, and drag **FerryDock.app** into **Applications**. Start Docker Desktop
@@ -119,7 +134,8 @@ includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 
 To build from source instead, install Rust and the dependencies for
 [Linux](docs/development.md#build-on-linux) or
-[macOS](docs/development.md#build-on-macos), then run:
+[macOS](docs/development.md#build-on-macos), then run the commands below.
+Windows build instructions are in the [development guide](docs/development.md#build-on-windows).
 
 ```sh
 cargo build --release --locked
@@ -449,11 +465,12 @@ reads fail explicitly. The view does not test DNS resolution or connectivity.
 ## Docker connections
 
 FerryDock uses `DOCKER_CONTEXT` if set, then `DOCKER_HOST`, then your active Docker
-CLI context. Local Unix socket connections are supported, including rootless
-Docker and Docker Desktop contexts. The context and endpoint are displayed in the app.
+CLI context. Linux/macOS use local Unix sockets, including rootless Docker and
+Docker Desktop contexts. Windows uses local Docker Desktop named pipes.
+The context and endpoint are displayed in the app.
 On macOS, Finder launches also search `~/.docker/bin`, Homebrew's bin directories,
 and Docker Desktop's app bundle for the CLI and its credential helpers. The
-keyboard shortcuts use Control on both platforms.
+keyboard shortcuts use Control on all platforms.
 
 To launch with a particular local context:
 
@@ -461,7 +478,8 @@ To launch with a particular local context:
 DOCKER_CONTEXT=my-local-context ferrydock
 ```
 
-If the Docker CLI is unavailable, FerryDock tries a local Docker socket. If the
+If the Docker CLI is unavailable, FerryDock tries the default local Docker socket
+or Windows named pipe. If the
 daemon disconnects, FerryDock retries the connection automatically.
 
 ## Troubleshooting
@@ -469,7 +487,7 @@ daemon disconnects, FerryDock retries the connection automatically.
 | Problem | What to check |
 | --- | --- |
 | FerryDock cannot connect to Docker | Make sure Docker is running and your account can access it. If you have the Docker CLI, run `docker ps` from the same terminal. |
-| Your context is unsupported | Select a local Unix socket context. SSH, TCP/TLS, and Windows named pipe connections are not supported yet. |
+| Your context is unsupported | Select a local Unix socket context on Linux/macOS or a local named-pipe context on Windows. SSH and TCP/TLS connections are not supported. |
 | A stopped container is missing | Uncheck **Running only** and clear the search field. |
 | A shell will not open | The container must be running and include Bash or sh. Minimal images may have neither. |
 | FerryDock reports a missing display | Launch from your Linux desktop session with Wayland or X11/XWayland available. |
@@ -490,8 +508,8 @@ for terminal applications. **Disconnect** detaches FerryDock from a shell;
 use `exit` when you want to end the shell process.
 
 FerryDock uses native Wayland when `WAYLAND_DISPLAY` is set, or X11/XWayland
-when only `DISPLAY` is set. Apple Silicon macOS packages are previews pending
-native desktop verification; Windows support is planned.
+when only `DISPLAY` is set. Apple Silicon macOS and Windows x64 packages are
+previews pending native desktop verification.
 
 ## Contributing
 
