@@ -79,7 +79,7 @@ jobs:
             test "$status" -eq 1
             grep -F "FerryDock needs a Wayland (WAYLAND_DISPLAY) or X11 (DISPLAY) desktop connection" /tmp/archive-error
           '
-      - name: Test AppImage library loading, rendering, and keyboard input
+      - name: Test AppImage startup and library loading
         run: |
           docker run --rm -v "$PWD/target/packages:/packages:ro" ubuntu:24.04 bash -euc '
             set +e

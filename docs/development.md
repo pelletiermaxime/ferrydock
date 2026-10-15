@@ -571,11 +571,11 @@ Ubuntu container before publishing the GitHub Release. This startup check
 verifies library loading and the missing-display error; it does not exercise
 the native desktop UI. A separate clean Ubuntu container launches the AppImage
 with `--appimage-extract-and-run` on its own Xvfb display using Mesa software
-Vulkan. It checks that application libraries are loaded from the bundle,
-captures rendered UI, and verifies keyboard search input through OCR. The
-AppImage check has no Docker socket and does not prove Docker operations,
-native Wayland, FUSE mounting, or hardware GPU compatibility. Its screenshots,
-logs, and result are retained in the `appimage-proof` workflow artifact.
+Vulkan. It checks that the AppImage opens its own visible window and loads
+application libraries from the bundle. The AppImage check has no Docker socket
+and does not test UI interactions, Docker operations, native Wayland, FUSE
+mounting, or hardware GPU compatibility. Its library-loading evidence, logs,
+and result are retained in the `appimage-proof` workflow artifact.
 See the [verification feature map](../.agents/skills/verify-ferrydock/features/README.md)
 for native UI entry points and coverage boundaries. Keep individual run reports
 with their ignored `.verification/` evidence; a local consolidated report may
