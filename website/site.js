@@ -44,36 +44,18 @@ choices.forEach((choice, index) => {
   });
 });
 
-// This small static file is refreshed by the Pages workflow on each release.
-// Ordinary release links remain usable if JavaScript or the request is unavailable.
-async function loadDownloads() {
-  try {
-    const response = await fetch('release.json');
-    if (!response.ok) return;
-    const release = await response.json();
-    document.querySelectorAll('[data-download]').forEach(link => {
-      if (release.downloads[link.dataset.download]) link.href = release.downloads[link.dataset.download];
-    });
-    document.querySelectorAll('[data-release-link]').forEach(link => {
-      link.textContent = `${release.version} · Release notes ↗`;
-      link.href = release.url;
-    });
-    const platform = navigator.userAgentData?.platform || navigator.platform || '';
-    const mobile = /Android|iPhone|iPad|iPod/.test(navigator.userAgent) ||
-      (/Mac/.test(platform) && navigator.maxTouchPoints > 1);
-    const linux = !mobile && /Linux/i.test(platform) && !/arm|aarch/i.test(platform);
-    const macos = !mobile && /Mac/i.test(platform);
-    if (linux && release.downloads.appimage) {
-      document.querySelector('[data-platform-download]').href = release.downloads.appimage;
-      document.querySelector('[data-platform-label]').textContent = 'Download for Linux';
-      document.querySelector('[data-platform-card="linux"]').classList.add('recommended');
-    } else if (macos) {
-      // Browser platform strings cannot reliably distinguish Intel and Apple Silicon.
-      document.querySelector('[data-platform-label]').textContent = 'Get FerryDock for macOS';
-      document.querySelector('[data-platform-card="macos"]').classList.add('recommended');
-    }
-  } catch {
-    // The HTML always offers the release page as a download fallback.
-  }
+// Download URLs live in the HTML and follow GitHub’s latest-release redirect.
+const platform = navigator.userAgentData?.platform || navigator.platform || '';
+const mobile = /Android|iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (/Mac/.test(platform) && navigator.maxTouchPoints > 1);
+const linux = !mobile && /Linux/i.test(platform) && !/arm|aarch/i.test(platform);
+const macos = !mobile && /Mac/i.test(platform);
+if (linux) {
+  document.querySelector('[data-platform-download]').href = document.querySelector('[data-download="appimage"]').href;
+  document.querySelector('[data-platform-label]').textContent = 'Download for Linux';
+  document.querySelector('[data-platform-card="linux"]').classList.add('recommended');
+} else if (macos) {
+  // Browser platform strings cannot reliably distinguish Intel and Apple Silicon.
+  document.querySelector('[data-platform-label]').textContent = 'Get FerryDock for macOS';
+  document.querySelector('[data-platform-card="macos"]').classList.add('recommended');
 }
-loadDownloads();

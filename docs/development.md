@@ -675,17 +675,15 @@ The one-page product site lives in `website/`. It is plain HTML, CSS and
 JavaScript with local screenshots; there is no frontend dependency installation.
 Preview it with `python3 -m http.server 4173 --directory website`.
 
-`python3 scripts/build-website.py` copies it to `.verification/website/dist/`.
-The Website workflow refreshes download links from the latest GitHub release,
-validates the expected packages, and deploys that directory to GitHub Pages on
-website changes to `main`, a published release, or manual dispatch. Pull requests
-prepare the artifact without deploying. Release events use the site on `main`.
+The Website workflow uploads `website/` directly to GitHub Pages on website
+changes to `main` or manual dispatch. Pull requests upload the artifact without
+deploying. Download buttons use GitHub's `/releases/latest/download/<filename>`
+redirects. The release workflow publishes versionless aliases alongside the
+versioned packages and includes both in `SHA256SUMS`, so new releases need no
+website update or deployment.
 Enable Pages with **Settings → Pages → Source → GitHub Actions** for the first
-deployment. Keep package naming patterns in the build helper aligned with the
-release scripts. `website/release.json` is the local-preview snapshot; deployed
-metadata is generated afresh. Add new feature screenshots under
-`website/assets/screenshots/` as WebP, using the default FerryDock theme and
-example projects without private data.
+deployment. Add new feature screenshots under `website/assets/screenshots/`
+as AVIF from original PNG captures, using example projects without private data.
 
 ## Dependency licenses
 

@@ -138,6 +138,12 @@ jobs:
               cp "$directory/$filename" release/
             done < "$directory/SHA256SUMS"
           done
+          # Stable aliases let the website use GitHub's latest/download redirects.
+          version="${GITHUB_REF_NAME#v}"
+          cp "release/ferrydock-${version}-linux-x86_64.AppImage" release/ferrydock-linux-x86_64.AppImage
+          cp "release/ferrydock-${version}-linux-x86_64.tar.gz" release/ferrydock-linux-x86_64.tar.gz
+          cp "release/ferrydock_${version}_amd64.deb" release/ferrydock_amd64.deb
+          cp "release/ferrydock-${version}-macos-arm64.dmg" release/ferrydock-macos-arm64.dmg
           (cd release && sha256sum ferrydock* > SHA256SUMS && sha256sum --check SHA256SUMS)
       - name: Publish release
         env:
