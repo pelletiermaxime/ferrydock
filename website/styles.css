@@ -60,7 +60,7 @@ h1 span { color: var(--mint); }
 .download-heading h2 { margin: 0; font-size: clamp(30px, 4vw, 44px); font-weight: 550; letter-spacing: -1.8px; }
 .release-link { font-family: var(--mono); font-size: 12px; padding-bottom: 5px; color: var(--mint); }
 .download-intro { color: var(--muted); font-size: 15px; line-height: 1.7; margin: 18px 0 32px; }
-.download-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.download-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .download-card { border: 1px solid var(--line); background: var(--panel); padding: 26px 24px; border-radius: 8px; }
 .download-card.recommended { border-color: #668b75; }
 .platform-name { display: flex; align-items: center; gap: 12px; min-height: 30px; }

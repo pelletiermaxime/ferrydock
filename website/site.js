@@ -50,6 +50,7 @@ const mobile = /Android|iPhone|iPad|iPod/.test(navigator.userAgent) ||
   (/Mac/.test(platform) && navigator.maxTouchPoints > 1);
 const linux = !mobile && /Linux/i.test(platform) && !/arm|aarch/i.test(platform);
 const macos = !mobile && /Mac/i.test(platform);
+const windows = !mobile && /Win/i.test(platform);
 if (linux) {
   document.querySelector('[data-platform-download]').href = document.querySelector('[data-download="appimage"]').href;
   document.querySelector('[data-platform-label]').textContent = 'Download for Linux';
@@ -58,4 +59,8 @@ if (linux) {
   // Browser platform strings cannot reliably distinguish Intel and Apple Silicon.
   document.querySelector('[data-platform-label]').textContent = 'Get FerryDock for macOS';
   document.querySelector('[data-platform-card="macos"]').classList.add('recommended');
+} else if (windows) {
+  // Show the x64 requirement and preview notes before choosing the ZIP.
+  document.querySelector('[data-platform-label]').textContent = 'Get FerryDock for Windows';
+  document.querySelector('[data-platform-card="windows"]').classList.add('recommended');
 }
