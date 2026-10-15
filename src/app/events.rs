@@ -15,6 +15,9 @@ impl FerryDock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.quick_terminal_event(&event, cx) {
+            return;
+        }
         let sync_services = matches!(
             &event,
             Event::Snapshot(_) | Event::ProjectLog { .. } | Event::ProjectLogBatch { .. }
@@ -361,6 +364,13 @@ impl FerryDock {
                 if let Some(terminal) = &self.terminal.view {
                     terminal.update(cx, |view, cx| { view.ready = true; view.status = "Connected · Ctrl+Shift+C/V to copy/paste · Shift+PageUp/Down for scrollback".into(); cx.notify(); });
                 }
+            }
+            event @ (Event::TerminalPrompt { generation, .. }
+            | Event::FavoriteStarted { generation, .. }
+            | Event::FavoriteFinished { generation, .. })
+                if generation == self.terminal.generation =>
+            {
+                self.handle_favorite_terminal_event(event, cx);
             }
             Event::TerminalData { generation, data } if generation == self.terminal.generation => {
                 if let Some(terminal) = &self.terminal.view {

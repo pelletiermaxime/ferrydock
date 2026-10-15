@@ -40,6 +40,12 @@ pub struct Favorite {
     pub target: Target,
     pub label: String,
     pub command: String,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub last_used: u64,
+    #[serde(default)]
+    pub use_count: u64,
 }
 impl Favorite {
     pub fn validate(&self) -> Result<()> {
@@ -66,6 +72,8 @@ pub struct Store {
 pub enum Mutation {
     Save(Favorite),
     Delete(u64),
+    Pin(u64, bool),
+    Used(u64),
 }
 impl Store {
     pub fn path() -> Result<PathBuf> {
@@ -131,6 +139,23 @@ impl Store {
                 }
             }
             Mutation::Delete(id) => store.favorites.retain(|f| f.id != id),
+            Mutation::Pin(id, pinned) => {
+                store
+                    .favorites
+                    .iter_mut()
+                    .find(|f| f.id == id)
+                    .context("Favorite no longer exists")?
+                    .pinned = pinned;
+            }
+            Mutation::Used(id) => {
+                if let Some(f) = store.favorites.iter_mut().find(|f| f.id == id) {
+                    f.last_used = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_millis()
+                        .min(u64::MAX as u128) as u64;
+                    f.use_count = f.use_count.saturating_add(1);
+                }
+            }
         }
         let parent = path.parent().context("Favorites path has no parent")?;
         std::fs::create_dir_all(parent)?;
@@ -152,6 +177,9 @@ mod tests {
     fn recipe(endpoint: &str) -> Favorite {
         Favorite {
             id: 0,
+            pinned: false,
+            last_used: 0,
+            use_count: 0,
             endpoint: endpoint.into(),
             target: Target::Service {
                 project: "demo".into(),
@@ -175,6 +203,36 @@ mod tests {
         let store = Store::mutate(&path, Mutation::Delete(store.favorites[0].id)).unwrap();
         assert_eq!(store.favorites.len(), 1);
         assert_eq!(store.favorites[0].endpoint, "unix:///b");
+    }
+    #[test]
+    fn older_recipes_load_and_pin_usage_survive_updates() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("favorites.json");
+        let mut old = serde_json::to_value(recipe("unix:///a")).unwrap();
+        old["id"] = 1.into();
+        let object = old.as_object_mut().unwrap();
+        for field in ["pinned", "last_used", "use_count"] {
+            object.remove(field);
+        }
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"favorites":[old]})).unwrap(),
+        )
+        .unwrap();
+        let loaded = Store::load(&path).unwrap();
+        assert!(!loaded.favorites[0].pinned);
+        assert_eq!(loaded.favorites[0].use_count, 0);
+        Store::mutate(&path, Mutation::Pin(1, true)).unwrap();
+        Store::mutate(&path, Mutation::Used(1)).unwrap();
+        let store = Store::mutate(&path, Mutation::Used(1)).unwrap();
+        assert!(store.favorites[0].pinned);
+        assert_eq!(store.favorites[0].use_count, 2);
+        assert!(store.favorites[0].last_used > 0);
+        let mut edited = store.favorites[0].clone();
+        edited.label = "Updated".into();
+        let store = Store::mutate(&path, Mutation::Save(edited)).unwrap();
+        assert!(store.favorites[0].pinned);
+        assert_eq!(store.favorites[0].use_count, 2);
     }
     #[test]
     fn malformed_file_is_never_overwritten() {

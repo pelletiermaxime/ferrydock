@@ -85,12 +85,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.10.0`; replace it with the version you downloaded.
+The examples below use `0.11.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.10.0_amd64.deb
+sudo apt install ./ferrydock_0.11.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -98,11 +98,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.10.0-linux-x86_64.AppImage`:
+`ferrydock-0.11.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.10.0-linux-x86_64.AppImage
-./ferrydock-0.10.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.11.0-linux-x86_64.AppImage
+./ferrydock-0.11.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -111,7 +111,7 @@ Wayland libraries and Vulkan/EGL graphics driver stack, and Docker. If FUSE
 mounting is unavailable, run it with `--appimage-extract-and-run`.
 
 Alternatively, extract
-`ferrydock-0.10.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.11.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in
@@ -151,23 +151,42 @@ its terminal session; open a new shell after it starts again.
 ### Favorite commands
 
 Click **Favorites** in a container or Compose project toolbar. For a project,
-choose the service, then **Add command**. Enter a label and a command using
-`sh` syntax; multiline commands are supported. **Save favorite** stores it on
+choose the service, then **Add command**. Enter a label and a command for your
+chosen shell; multiline commands are supported. **Save favorite** stores it on
 this computer without executing it. Use **Edit** or **Delete** beside a saved
 command to update or remove it.
 
-Choose **Run…** to review the complete command. If several instances are running,
-choose the exact container, then click **Run in terminal**. The command runs
-once through `sh -c` in a new PTY, supports interactive input and full-screen
-programs, and stays visible above its output. After it exits, its output remains
-in Terminal. Use **Disconnect** before another run; a favorite never replaces
-an existing shell or command session. Closing the Favorites dialog restores
-its previous focus.
+For quick access, press **Ctrl+K** or click **Run favorite…** in the app header.
+Search by command, project, or service, then press **Enter**. FerryDock finds the
+running target, opens an interactive quick-run console, and sends the command
+once its shell is ready. Multiple running replicas get an instance picker;
+stopped services stay stopped.
 
-A stopped or missing service cannot run commands. Start or recreate it first,
-then reopen the command to refresh the instance choices. FerryDock does not
-start services automatically. It rechecks the chosen container before execution
-and never silently switches to a different instance.
+Use **Pin** beside a saved favorite to put a launch button on its Compose project
+header (up to three buttons). Recent commands appear first in the launcher.
+Quick runs use separate shells from the container's regular Terminal. Idle quick
+shells are reused for the same target, keeping their directory and environment;
+a busy shell stays intact and another session opens. **Hide** keeps commands
+running; **Quick runs** in the app header returns to their output and result.
+**End session** disconnects the selected shell. At most six quick shells stay open.
+
+Open the container's **Terminal** and click **Open shell**. The favorites list
+sits immediately above the terminal: select a command and click **Run**. The
+command appears in the shell like typed input, and the shell stays open afterward.
+**Running**, **Completed · exit 0**, or **Failed · exit …** makes the result
+explicit. Output and the returned prompt remain visible; you can run another
+favorite or continue typing normally. Changes of directory and exported variables
+carry over to the next command in that shell.
+
+The selected container is the execution target, including when a service has
+several replicas. Select another container to use a different instance. **Manage…**
+opens the add/edit/delete dialog; saving never runs a command.
+
+**Run** is available only at an empty shell prompt. It stays disabled while a
+command is running, while terminal input is unfinished, or while the container
+is stopped or disconnected. Favorites never replace a session or start a service
+automatically. Bash and sh report their prompt and exit status. Bash keeps your
+normal startup settings and existing prompt hooks, including shell history.
 
 Favorites belong to the Docker endpoint and Compose project/service names,
 so they survive container recreation. Standalone favorites use the container

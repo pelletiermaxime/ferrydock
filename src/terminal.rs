@@ -234,6 +234,20 @@ fn ansi_color(
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum FavoriteStatus {
+    Starting,
+    Running,
+    Completed(i64),
+    NotSent(String),
+}
+#[derive(Clone, Debug)]
+pub struct FavoriteRun {
+    pub id: u64,
+    pub label: String,
+    pub status: FavoriteStatus,
+}
+
 pub struct TerminalView {
     pub core: TerminalCore,
     pub generation: u64,
@@ -243,6 +257,9 @@ pub struct TerminalView {
     cell_width: f32,
     dragging: bool,
     pub ready: bool,
+    pub at_prompt: bool,
+    pub input_count: u64,
+    pub favorite: Option<FavoriteRun>,
     pub status: String,
 }
 
@@ -261,6 +278,9 @@ impl TerminalView {
             cell_width: 8.0,
             dragging: false,
             ready: false,
+            at_prompt: false,
+            input_count: 0,
+            favorite: None,
             status: "Opening shell…".into(),
         }
     }
@@ -272,13 +292,20 @@ impl TerminalView {
     pub fn feed(&mut self, data: &[u8], cx: &mut Context<Self>) {
         self.core.feed(data);
         for reply in self.core.replies() {
-            self.send(reply.into_bytes());
+            if self.ready {
+                let _ = self.commands.send(Command::TerminalReply {
+                    generation: self.generation,
+                    data: reply.into_bytes(),
+                });
+            }
         }
         cx.notify();
     }
 
-    fn send(&self, data: Vec<u8>) {
+    fn send(&mut self, data: Vec<u8>) {
         if self.ready {
+            self.at_prompt = false;
+            self.input_count += 1;
             let _ = self.commands.send(Command::Input {
                 generation: self.generation,
                 data,

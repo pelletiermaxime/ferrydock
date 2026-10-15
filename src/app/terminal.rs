@@ -18,7 +18,6 @@ pub(super) struct Terminal {
     pub(super) generation: u64,
     pub(super) view: Option<Entity<TerminalView>>,
     pub(super) shell: Shell,
-    pub(super) command: Option<String>,
 }
 impl Default for Terminal {
     fn default() -> Self {
@@ -26,7 +25,6 @@ impl Default for Terminal {
             generation: 0,
             view: None,
             shell: Shell::Auto,
-            command: None,
         }
     }
 }
@@ -47,11 +45,11 @@ impl FerryDock {
             return;
         }
         let id = container.id.clone();
-        self.terminal.command = None;
         self.terminal.generation += 1;
         let generation = self.terminal.generation;
         let commands = self.backend.commands.clone();
         let view = cx.new(|cx| TerminalView::new(generation, commands, cx));
+        cx.observe(&view, |_, _, cx| cx.notify()).detach();
         view.update(cx, |view, cx| view.focus(window, cx));
         self.terminal.view = Some(view);
         self.backend.send(Command::Terminal {
@@ -62,7 +60,7 @@ impl FerryDock {
             rows: 24,
         });
         self.tab = Tab::Terminal;
-        self.expand_dock(460.0, window, cx);
+        self.expand_dock(580.0, window, cx);
         cx.notify();
     }
 
@@ -109,43 +107,33 @@ impl FerryDock {
             })),
         );
         let shells = [Shell::Auto, Shell::Bash, Shell::Sh];
-        if self.terminal.command.is_some() && self.terminal.view.is_some() {
-            toolbar = toolbar.content(
-                div()
-                    .text_sm()
-                    .text_color(rgb(colors.muted))
-                    .child("Favorite · sh"),
-            );
-        } else {
-            toolbar = toolbar.content(
-                RadioGroup::horizontal("shell-choice")
-                    .flex_none()
-                    .w_auto()
-                    .selected_index(shells.iter().position(|shell| {
-                        std::mem::discriminant(shell)
-                            == std::mem::discriminant(&self.terminal.shell)
-                    }))
-                    .disabled(ready)
-                    .children(shells.map(|shell| {
-                        Radio::new(shell.label())
-                            .label(shell.label())
-                            .when(matches!(shell, Shell::Auto), |radio| {
-                                radio.tooltip("Try Bash, then fall back to sh")
-                            })
-                    }))
-                    .on_change(cx.listener(move |this, index: &usize, _, cx| {
-                        if !this
-                            .terminal
-                            .view
-                            .as_ref()
-                            .is_some_and(|view| view.read(cx).ready)
-                        {
-                            this.terminal.shell = shells[*index];
-                            cx.notify();
-                        }
-                    })),
-            );
-        }
+        toolbar = toolbar.content(
+            RadioGroup::horizontal("shell-choice")
+                .flex_none()
+                .w_auto()
+                .selected_index(shells.iter().position(|shell| {
+                    std::mem::discriminant(shell) == std::mem::discriminant(&self.terminal.shell)
+                }))
+                .disabled(ready)
+                .children(shells.map(|shell| {
+                    Radio::new(shell.label())
+                        .label(shell.label())
+                        .when(matches!(shell, Shell::Auto), |radio| {
+                            radio.tooltip("Try Bash, then fall back to sh")
+                        })
+                }))
+                .on_change(cx.listener(move |this, index: &usize, _, cx| {
+                    if !this
+                        .terminal
+                        .view
+                        .as_ref()
+                        .is_some_and(|view| view.read(cx).ready)
+                    {
+                        this.terminal.shell = shells[*index];
+                        cx.notify();
+                    }
+                })),
+        );
         toolbar = toolbar
             .content(div().flex_1())
             .child(
@@ -175,22 +163,12 @@ impl FerryDock {
                     cx.notify();
                 })),
             );
-        let mut pane = div().flex().flex_col().size_full().child(toolbar);
-        if self.terminal.view.is_some()
-            && let Some(command) = &self.terminal.command
-        {
-            pane = pane.child(
-                div()
-                    .id("terminal-favorite-command")
-                    .px_3()
-                    .py_2()
-                    .text_sm()
-                    .font_family("monospace")
-                    .max_h(px(90.0))
-                    .overflow_y_scroll()
-                    .child(format!("$ {command}")),
-            );
-        }
+        let mut pane = div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(toolbar)
+            .child(self.terminal_favorites_toolbar(cx));
         if let Some(terminal) = &self.terminal.view {
             let status = terminal.read(cx).status.clone();
             pane = pane

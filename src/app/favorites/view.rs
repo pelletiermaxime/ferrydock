@@ -51,24 +51,7 @@ impl FerryDock {
                 );
             }
         }
-        if let Some(review) = &self.favorites.review {
-            body = body.child(div().font_weight(FontWeight::MEDIUM).child(review.favorite.label.clone()))
-                .child("Command to run inside the selected container:")
-                .child(div().id("favorite-command-preview").test_support().h(px(100.0)).flex_none().overflow_y_scroll().font_family("monospace").text_sm().child(review.favorite.command.clone()))
-                .child(Select::new(&review.picker).placeholder("Choose container instance…").w_full().disabled(review.instances.is_empty()).id("favorite-instance"))
-                .child("Runs once in a new interactive terminal using sh. Output remains visible after exit.");
-            let runnable = match self.favorite_run_target(cx) {
-                Ok(_) => true,
-                Err(message) => {
-                    body = body.child(div().text_sm().text_color(rgb(colors.muted)).child(message));
-                    false
-                }
-            };
-            footer = footer.child(
-                Self::button("favorite-run", "Run in terminal", false, !runnable, cx)
-                    .on_click(cx.listener(|this, _, window, cx| this.run_favorite(window, cx))),
-            );
-        } else if let Some(editor) = &self.favorites.editor {
+        if let Some(editor) = &self.favorites.editor {
             body = body
                 .child("Label")
                 .child(
@@ -77,7 +60,7 @@ impl FerryDock {
                         .test_support()
                         .child(Input::new(&editor.label).disabled(waiting)),
                 )
-                .child("Command (sh syntax; multiline commands supported)")
+                .child("Command (current shell syntax; multiline supported)")
                 .child(
                     div()
                         .id("favorite-command")
@@ -165,15 +148,22 @@ impl FerryDock {
                                         )
                                         .child(
                                             Self::button(
-                                                SharedString::from(format!("favorite-review-{id}")),
-                                                "Run…",
-                                                false,
+                                                SharedString::from(format!("favorite-pin-{id}")),
+                                                if recipe.pinned { "Unpin" } else { "Pin" },
+                                                recipe.pinned,
                                                 !available,
                                                 cx,
                                             )
+                                            .tooltip("Show this command on its project header")
                                             .on_click(
-                                                cx.listener(move |this, _, window, cx| {
-                                                    this.review_favorite(id, window, cx)
+                                                cx.listener({
+                                                    let pinned = recipe.pinned;
+                                                    move |this, _, _, cx| {
+                                                        this.mutate_favorites(
+                                                            Some(Mutation::Pin(id, !pinned)),
+                                                            cx,
+                                                        )
+                                                    }
                                                 }),
                                             ),
                                         )
@@ -237,12 +227,11 @@ impl FerryDock {
                 .on_click(cx.listener(|this, _, window, cx| this.edit_favorite(None, window, cx))),
             );
         }
-        if self.favorites.editor.is_some() || self.favorites.review.is_some() {
+        if self.favorites.editor.is_some() {
             footer = footer.child(
                 Self::button("favorite-back", "Back", false, waiting, cx).on_click(cx.listener(
                     |this, _, window, cx| {
                         this.favorites.editor = None;
-                        this.favorites.review = None;
                         if let Some(focus) = &this.favorites.focus {
                             focus.focus(window, cx);
                         }

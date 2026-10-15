@@ -1248,17 +1248,19 @@ fn headless_gpu_user_flow() {
     h.drain_commands();
     h.click("refresh");
     h.drain_commands();
-    // Toolbar clicks preserve text focus; keyboard traversal focuses the button.
-    h.key("tab");
-    h.cx.update_window(h.window.into(), |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(
-            window.find("refresh").focused(),
-            Some(true),
-            "Native button must own focus for activation"
-        );
-    })
-    .unwrap();
+    // Toolbar clicks preserve text focus; traverse the new global controls too.
+    for id in ["quick-launcher", "quick-runs", "refresh"] {
+        h.key("tab");
+        h.cx.update_window(h.window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                window.find(id).focused(),
+                Some(true),
+                "Toolbar button {id} must own focus for activation"
+            );
+        })
+        .unwrap();
+    }
     for key in ["enter", "space"] {
         h.key(key);
         let commands = h.drain_commands();
@@ -2975,6 +2977,8 @@ fn verify_image_details(h: &mut Harness, inventory: &[crate::images::Image]) {
     for column in 0..3 {
         h.click("image-history-columns");
         h.cx.update_window(h.window.into(), |_, window, cx| {
+            // Register the newly opened popup after dialog/focus transitions.
+            window.render_frame(cx);
             window.within("popup-menu").click(column, cx)
         })
         .unwrap();
@@ -3091,6 +3095,8 @@ fn verify_image_details(h: &mut Harness, inventory: &[crate::images::Image]) {
     for column in 0..3 {
         h.click("image-history-columns");
         h.cx.update_window(h.window.into(), |_, window, cx| {
+            // Register the newly opened popup after dialog/focus transitions.
+            window.render_frame(cx);
             window.within("popup-menu").click(column, cx)
         })
         .unwrap();
@@ -4961,3 +4967,4 @@ fn headless_gpu_image_analysis_flow() {
 
 include!("networks_headless.rs");
 include!("favorites_headless.rs");
+include!("quick_run_headless.rs");

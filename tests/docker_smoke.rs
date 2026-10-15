@@ -377,7 +377,7 @@ async fn favorite_command_uses_an_interactive_pty_and_preserves_busy_session() -
     if labels.get("dev.ferrydock.fixture").map(String::as_str) != Some("true")
         || !project.starts_with("ferrydock-verify-")
     {
-        bail!("Refusing a non-owned favorite-command fixture");
+        bail!("Refusing a non-owned fixture");
     }
     let target = Target::Service {
         project,
@@ -392,12 +392,36 @@ async fn favorite_command_uses_an_interactive_pty_and_preserves_busy_session() -
         }
     }
     let generation = 701;
-    backend.send(Command::FavoriteTerminal {
-        id: id.clone(), generation, endpoint: connection.endpoint.clone(), target: target.clone(),
-        command: "stty size; printf 'FAVORITE_READY\\n'; read answer; printf '%s\\n' \"$answer\" > /tmp/ferrydock-favorite-proof; printf 'FAVORITE_DONE\\n'".into(),
-        columns: 96, rows: 28,
+    backend.send(Command::Terminal {
+        id: id.clone(),
+        generation,
+        shell: match env::var("FERRYDOCK_FAVORITE_SHELL").as_deref() {
+            Ok("bash") => Shell::Bash,
+            Ok("auto") => Shell::Auto,
+            _ => Shell::Sh,
+        },
+        columns: 96,
+        rows: 28,
     });
     let mut terminal = TerminalCore::new(96, 28);
+    wait_for_prompt(&mut events, &mut terminal, generation)
+        .await
+        .with_context(|| {
+            format!(
+                "Prompt wait at line {}: {}",
+                line!(),
+                terminal.visible_text()
+            )
+        })?;
+    let run = |run, command: &str| Command::RunFavorite {
+        id: id.clone(),
+        generation,
+        run,
+        endpoint: connection.endpoint.clone(),
+        target: target.clone(),
+        command: command.into(),
+    };
+    backend.send(run(1, "stty size; printf 'FAVORITE_READY\\n'; read answer; printf '%s\\n' \"$answer\" > /tmp/ferrydock-favorite-proof; printf 'FAVORITE_DONE\\n'"));
     wait_for_text(&mut events, &mut terminal, generation, "FAVORITE_READY").await?;
     assert!(
         terminal
@@ -405,38 +429,133 @@ async fn favorite_command_uses_an_interactive_pty_and_preserves_busy_session() -
             .lines()
             .any(|line| line.trim() == "28 96")
     );
-    backend.send(Command::FavoriteTerminal {
-        id: id.clone(),
-        generation: 702,
-        endpoint: connection.endpoint.clone(),
-        target: target.clone(),
-        command: "touch /tmp/ferrydock-favorite-must-not-run".into(),
-        columns: 80,
-        rows: 24,
-    });
-    loop {
-        if let Event::TerminalEnded {
-            generation: 702,
-            error,
-        } = receive(&mut events).await?
-        {
-            assert!(
-                error.is_some(),
-                "A favorite cannot replace the occupied PTY"
-            );
-            break;
-        }
-    }
+    backend.send(run(2, "touch /tmp/ferrydock-favorite-must-not-run"));
+    assert!(
+        wait_for_favorite(&mut events, &mut terminal, generation, 2)
+            .await?
+            .is_err()
+    );
     backend.send(Command::Input {
         generation,
         data: b"favorite-interactive-proof\r".to_vec(),
     });
-    wait_for_text(&mut events, &mut terminal, generation, "FAVORITE_DONE").await?;
-    let exec = docker.create_exec(&id, bollard::exec::CreateExecOptions {
-        attach_stdout: Some(true), attach_stderr: Some(true),
-        cmd: Some(vec!["sh", "-c", "cat /tmp/ferrydock-favorite-proof; test ! -e /tmp/ferrydock-favorite-must-not-run && echo BUSY_PRESERVED"]),
-        ..Default::default()
-    }).await?;
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut terminal, generation, 1).await?,
+        Ok(0)
+    );
+    wait_for_prompt(&mut events, &mut terminal, generation)
+        .await
+        .with_context(|| {
+            format!(
+                "Prompt wait at line {}: {}",
+                line!(),
+                terminal.visible_text()
+            )
+        })?;
+    assert!(terminal.visible_text().contains("FAVORITE_DONE"));
+    // Consecutive commands use the same shell, preserving cwd and exports.
+    backend.send(run(
+        3,
+        "cd /tmp\nexport FERRY_FAVORITE_VALUE=kept\nprintf 'MULTILINE_DONE\\n'",
+    ));
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut terminal, generation, 3).await?,
+        Ok(0)
+    );
+    wait_for_prompt(&mut events, &mut terminal, generation)
+        .await
+        .with_context(|| {
+            format!(
+                "Prompt wait at line {}: {}",
+                line!(),
+                terminal.visible_text()
+            )
+        })?;
+    backend.send(run(4, "false"));
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut terminal, generation, 4).await?,
+        Ok(1)
+    );
+    wait_for_prompt(&mut events, &mut terminal, generation)
+        .await
+        .with_context(|| {
+            format!(
+                "Prompt wait at line {}: {}",
+                line!(),
+                terminal.visible_text()
+            )
+        })?;
+    backend.send(run(
+        5,
+        "printf '%s:%s\\n' \"$PWD\" \"$FERRY_FAVORITE_VALUE\"",
+    ));
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut terminal, generation, 5).await?,
+        Ok(0)
+    );
+    wait_for_prompt(&mut events, &mut terminal, generation)
+        .await
+        .with_context(|| {
+            format!(
+                "Prompt wait at line {}: {}",
+                line!(),
+                terminal.visible_text()
+            )
+        })?;
+    assert!(
+        terminal
+            .visible_text()
+            .lines()
+            .any(|line| line.trim() == "/tmp:kept")
+    );
+    // A manually typed program and a partially edited line are also protected.
+    backend.send(Command::Input {
+        generation,
+        data: b"sleep 1\r".to_vec(),
+    });
+    backend.send(run(6, "touch /tmp/ferrydock-favorite-must-not-run"));
+    assert!(
+        wait_for_favorite(&mut events, &mut terminal, generation, 6)
+            .await?
+            .is_err()
+    );
+    backend.send(Command::Input {
+        generation,
+        data: vec![3],
+    });
+    wait_for_prompt(&mut events, &mut terminal, generation)
+        .await
+        .with_context(|| {
+            format!(
+                "Prompt wait at line {}: {}",
+                line!(),
+                terminal.visible_text()
+            )
+        })?;
+    backend.send(Command::Input {
+        generation,
+        data: b"unfinished".to_vec(),
+    });
+    backend.send(run(7, "touch /tmp/ferrydock-favorite-must-not-run"));
+    assert!(
+        wait_for_favorite(&mut events, &mut terminal, generation, 7)
+            .await?
+            .is_err()
+    );
+    backend.send(Command::Input {
+        generation,
+        data: vec![21, 3],
+    });
+    wait_for_prompt(&mut events, &mut terminal, generation)
+        .await
+        .with_context(|| {
+            format!(
+                "Prompt wait at line {}: {}",
+                line!(),
+                terminal.visible_text()
+            )
+        })?;
+    let exec = docker.create_exec(&id, bollard::exec::CreateExecOptions { attach_stdout: Some(true), attach_stderr: Some(true), cmd: Some(vec!["sh", "-c", "cat /tmp/ferrydock-favorite-proof; test ! -e /tmp/ferrydock-favorite-must-not-run && echo BUSY_PRESERVED"]), ..Default::default() }).await?;
     let bollard::exec::StartExecResults::Attached { mut output, .. } =
         docker.start_exec(&exec.id, None).await?
     else {
@@ -449,41 +568,232 @@ async fn favorite_command_uses_an_interactive_pty_and_preserves_busy_session() -
     let proof = String::from_utf8(proof)?;
     assert!(proof.contains("favorite-interactive-proof"));
     assert!(proof.contains("BUSY_PRESERVED"));
+    if env::var_os("FERRYDOCK_EXPECT_PROMPT_HOOK").is_some() {
+        backend.send(run(9, "test -s /tmp/ferrydock-existing-prompt-hook"));
+        assert_eq!(
+            wait_for_favorite(&mut events, &mut terminal, generation, 9).await?,
+            Ok(0),
+            "The existing PROMPT_COMMAND must still execute"
+        );
+        wait_for_prompt(&mut events, &mut terminal, generation).await?;
+    }
+    backend.send(run(8, "exit 7"));
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut terminal, generation, 8).await?,
+        Ok(7)
+    );
     backend.send(Command::CloseTerminal);
-    let fast_generation = 703;
-    backend.send(Command::FavoriteTerminal {
-        id,
-        generation: fast_generation,
-        endpoint: connection.endpoint,
-        target,
-        command: "printf 'FAVORITE_FAST_DONE\\n'".into(),
+    println!(
+        "PASS favorite PTY 28x96; interactive input/file proof; same shell and prompt after success/failure; exit 0/1; multiline cwd/export persistence; busy/manual/partial-input rejection"
+    );
+    Ok(())
+}
+
+async fn wait_for_prompt(
+    events: &mut mpsc::Receiver<Event>,
+    terminal: &mut TerminalCore,
+    generation: u64,
+) -> Result<()> {
+    time::timeout(Duration::from_secs(15), async {
+        loop {
+            match receive(events).await? {
+                Event::TerminalPrompt {
+                    generation: current,
+                    at_prompt: true,
+                    ..
+                } if current == generation => return Ok(()),
+                Event::TerminalData {
+                    generation: current,
+                    data,
+                } if current == generation => terminal.feed(&data),
+                Event::TerminalEnded {
+                    generation: current,
+                    error,
+                } if current == generation => bail!("Shell ended before prompt: {error:?}"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .context("Timed out waiting for an empty shell prompt")?
+}
+async fn wait_for_favorite(
+    events: &mut mpsc::Receiver<Event>,
+    terminal: &mut TerminalCore,
+    generation: u64,
+    run: u64,
+) -> Result<Result<i64, String>> {
+    time::timeout(Duration::from_secs(15), async {
+        loop {
+            match receive(events).await? {
+                Event::FavoriteFinished {
+                    generation: current,
+                    run: current_run,
+                    result,
+                } if current == generation && current_run == run => return Ok(result),
+                Event::TerminalData {
+                    generation: current,
+                    data,
+                } if current == generation => terminal.feed(&data),
+                Event::TerminalEnded {
+                    generation: current,
+                    error,
+                } if current == generation => {
+                    bail!("Shell ended before favorite completed: {error:?}")
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .context("Timed out waiting for favorite completion")?
+}
+
+#[tokio::test]
+#[ignore = "requires an owned disposable Docker fixture"]
+async fn quick_run_terminals_preserve_interactive_sessions() -> Result<()> {
+    use ferrydock::favorites::Target;
+    let id = env::var("FERRYDOCK_TEST_CONTAINER")?;
+    let connection = docker::resolve_connection().await?;
+    let docker = docker::connect(&connection).await?;
+    let inspect = docker.inspect_container(&id, None).await?;
+    let labels = inspect
+        .config
+        .and_then(|c| c.labels)
+        .context("Fixture labels")?;
+    let project = labels
+        .get("com.docker.compose.project")
+        .context("Fixture project")?
+        .clone();
+    if labels.get("dev.ferrydock.fixture").map(String::as_str) != Some("true")
+        || !project.starts_with("ferrydock-verify-")
+    {
+        bail!("Refusing non-owned fixture");
+    }
+    let target = Target::Service {
+        project,
+        service: "probe".into(),
+    };
+    let (backend, mut events) = Backend::start();
+    loop {
+        match receive(&mut events).await? {
+            Event::Connected(_) => break,
+            Event::Disconnected(e) => bail!("{e}"),
+            _ => {}
+        }
+    }
+    let regular = 801;
+    let quick1 = (1_u64 << 63) | 1;
+    let quick2 = (1_u64 << 63) | 2;
+    let mut primary = TerminalCore::new(96, 28);
+    backend.send(Command::Terminal {
+        id: id.clone(),
+        generation: regular,
+        shell: Shell::Sh,
         columns: 96,
         rows: 28,
     });
-    backend.send(Command::Resize {
-        generation: fast_generation,
-        columns: 92,
-        rows: 26,
+    wait_for_prompt(&mut events, &mut primary, regular).await?;
+    backend.send(Command::Input{generation:regular,data:b"printf 'PRIMARY_WAITING\\n'; read answer; printf '%s' \"$answer\" > /tmp/ferrydock-quick-primary; printf 'PRIMARY_FINISHED\\n'\r".to_vec()});
+    wait_for_text(&mut events, &mut primary, regular, "PRIMARY_WAITING").await?;
+    let run = |generation, run, command: &str| Command::RunFavorite {
+        id: id.clone(),
+        generation,
+        run,
+        endpoint: connection.endpoint.clone(),
+        target: target.clone(),
+        command: command.into(),
+    };
+    backend.send(Command::QuickTerminal {
+        id: id.clone(),
+        generation: quick1,
     });
-    let mut fast = TerminalCore::new(96, 28);
-    wait_for_text(
-        &mut events,
-        &mut fast,
-        fast_generation,
-        "FAVORITE_FAST_DONE",
-    )
-    .await?;
+    let mut first = TerminalCore::new(100, 28);
+    wait_for_prompt(&mut events, &mut first, quick1).await?;
+    backend.send(run(quick1,1,"printf 'QUICK_WAITING\\n'; read answer; printf '%s' \"$answer\" > /tmp/ferrydock-quick-first"));
+    wait_for_text(&mut events, &mut first, quick1, "QUICK_WAITING").await?;
+    backend.send(Command::QuickTerminal {
+        id: id.clone(),
+        generation: quick2,
+    });
+    let mut second = TerminalCore::new(100, 28);
+    wait_for_prompt(&mut events, &mut second, quick2).await?;
+    backend.send(run(
+        quick2,
+        2,
+        "printf second > /tmp/ferrydock-quick-second; printf 'QUICK_SECOND_DONE\\n'",
+    ));
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut second, quick2, 2).await?,
+        Ok(0)
+    );
+    wait_for_prompt(&mut events, &mut second, quick2).await?;
+    // Commands/input still route by generation after a second quick shell opens.
+    backend.send(Command::Input {
+        generation: quick1,
+        data: b"first-answer\r".to_vec(),
+    });
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut first, quick1, 1).await?,
+        Ok(0)
+    );
+    wait_for_prompt(&mut events, &mut first, quick1).await?;
+    backend.send(Command::CloseQuickTerminal { generation: quick1 });
+    backend.send(Command::Input {
+        generation: regular,
+        data: b"primary-answer\r".to_vec(),
+    });
+    wait_for_text(&mut events, &mut primary, regular, "PRIMARY_FINISHED").await?;
+    // The remaining quick terminal survives closing its sibling.
+    backend.send(run(quick2, 3, "false"));
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut second, quick2, 3).await?,
+        Ok(1)
+    );
+    wait_for_prompt(&mut events, &mut second, quick2).await?;
+    let exec=docker.create_exec(&id,bollard::exec::CreateExecOptions{attach_stdout:Some(true),cmd:Some(vec!["sh","-c","test \"$(cat /tmp/ferrydock-quick-primary)\" = primary-answer && test \"$(cat /tmp/ferrydock-quick-first)\" = first-answer && test \"$(cat /tmp/ferrydock-quick-second)\" = second && printf INDEPENDENT_SESSIONS_OK"]),..Default::default()}).await?;
+    let bollard::exec::StartExecResults::Attached { mut output, .. } =
+        docker.start_exec(&exec.id, None).await?
+    else {
+        bail!("Missing proof stream");
+    };
+    let mut proof = Vec::new();
+    while let Some(frame) = output.next().await {
+        proof.extend(frame?.into_bytes());
+    }
+    assert_eq!(String::from_utf8(proof)?, "INDEPENDENT_SESSIONS_OK");
+    // Worker retention is bounded even if commands are sent without the UI.
+    for n in 3..=7 {
+        let generation = (1_u64 << 63) | n;
+        backend.send(Command::QuickTerminal {
+            id: id.clone(),
+            generation,
+        });
+        let mut terminal = TerminalCore::new(100, 28);
+        wait_for_prompt(&mut events, &mut terminal, generation).await?;
+    }
+    let excess = (1_u64 << 63) | 8;
+    backend.send(Command::QuickTerminal {
+        id: id.clone(),
+        generation: excess,
+    });
     loop {
         if let Event::TerminalEnded { generation, error } = receive(&mut events).await?
-            && generation == fast_generation
+            && generation == excess
         {
-            assert!(error.is_none(), "Short command failed: {error:?}");
+            assert!(error.unwrap().contains("limit 6"));
             break;
         }
     }
+    for n in 3..=7 {
+        backend.send(Command::CloseQuickTerminal {
+            generation: (1_u64 << 63) | n,
+        });
+    }
+    backend.send(Command::CloseQuickTerminal { generation: quick2 });
     backend.send(Command::CloseTerminal);
     println!(
-        "PASS favorite command PTY 28x96, interactive input, independent file read, occupied session preserved, immediate command output/exit"
+        "PASS independent regular + two quick PTYs; interactive inputs and files isolated; sibling close preserved; exit 0/1"
     );
     Ok(())
 }

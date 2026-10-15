@@ -73,6 +73,8 @@ jobs:
         run: bash scripts/verify-networks.sh
       - name: Headless Favorites UI tests
         run: python3 scripts/verify-headless.py --flow favorites --timeout 900
+      - name: Headless quick-run Favorites UI tests
+        run: python3 scripts/verify-headless.py --flow quick-run --timeout 900
       - name: Headless Networks UI tests
         run: python3 scripts/verify-headless.py --flow networks --timeout 900
       - name: Headless UI tests
