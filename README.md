@@ -57,6 +57,11 @@ the terminal, and container details close at hand.
   **FerryDock**, **Dark**, or **Light**. The original charcoal and mint FerryDock
   theme remains the default. Changes apply immediately and are remembered on
   this computer; **Use FerryDock theme** restores the default.
+- **Update the Linux AppImage.** FerryDock checks GitHub Releases after startup
+  and every six hours, downloads newer stable releases in the background, and
+  verifies them against the published SHA-256 checksum. Choose **Restart to
+  update** when you are ready. **Settings → Updates** includes a manual check
+  and an option to turn automatic checks and downloads off.
 - **Use resource menus.** Right-click a container or project, or use **More** in
   its detail toolbar, for navigation, configuration, and available actions.
 - **Navigate container logs.** Use visible scrollbars for history and long
@@ -102,12 +107,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.12.0`; replace it with the version you downloaded.
+The examples below use `0.13.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.12.0_amd64.deb
+sudo apt install ./ferrydock_0.13.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -115,11 +120,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.12.0-linux-x86_64.AppImage`:
+`ferrydock-0.13.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.12.0-linux-x86_64.AppImage
-./ferrydock-0.12.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.13.0-linux-x86_64.AppImage
+./ferrydock-0.13.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -127,8 +132,17 @@ It still requires glibc 2.39 or newer, an installed font, your desktop's
 Wayland libraries and Vulkan/EGL graphics driver stack, and Docker. If FUSE
 mounting is unavailable, run it with `--appimage-extract-and-run`.
 
+AppImage updates require write access to the directory containing the original
+AppImage and enough free space for the download. Applying an update preserves
+that file's location and name. Open terminal and quick-run sessions close when
+FerryDock restarts; running containers stay running. Finish Docker or Compose
+operations before restarting. Downloads are checked against `SHA256SUMS` from
+the same GitHub release; this version does not use publisher signatures.
+The Debian package and portable archive offer the release-page link in Settings
+and are updated manually.
+
 Alternatively, extract
-`ferrydock-0.12.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.13.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in

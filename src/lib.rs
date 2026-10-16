@@ -15,4 +15,6 @@ pub mod project_logs;
 mod resource_age;
 mod source_colors;
 pub mod terminal;
+#[cfg(target_os = "linux")]
+pub mod updater;
 pub mod volumes;

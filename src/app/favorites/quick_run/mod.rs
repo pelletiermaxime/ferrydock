@@ -31,6 +31,14 @@ struct Session {
     pending: Option<(Favorite, Instant)>,
 }
 impl FerryDock {
+    #[cfg(target_os = "linux")]
+    pub(in crate::app) fn live_quick_runs(&self, cx: &App) -> bool {
+        self.favorites
+            .quick
+            .sessions
+            .iter()
+            .any(|session| session.view.read(cx).ready || session.pending.is_some())
+    }
     pub(in crate::app) fn quick_surface_open(&self) -> bool {
         self.favorites.quick.console_open || self.favorites.quick.launcher.is_some()
     }
@@ -40,6 +48,11 @@ impl FerryDock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(target_os = "linux")]
+        if self.updates.applying {
+            cx.stop_propagation();
+            return;
+        }
         if event.keystroke.modifiers.control && event.keystroke.key == "k" {
             if !window.has_active_dialog(cx)
                 || self.favorites.quick.console_open

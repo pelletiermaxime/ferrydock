@@ -1,6 +1,6 @@
 [package]
 name = "ferrydock"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 license = "MIT"
 description = "A small native Docker workbench built with Rust and GPUI"
@@ -35,6 +35,11 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # response formats; its generated model only understands the newer format.
 [target.'cfg(unix)'.dependencies]
 hyperlocal = { version = "=0.9.1", default-features = false, features = ["client"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+reqwest = { version = "=0.12.28", default-features = false, features = ["blocking", "rustls-tls"] }
+ring = "=0.17.14"
+semver = "=1.0.28"
 
 [target.'cfg(windows)'.dependencies]
 hex = "=0.4.3"

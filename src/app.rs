@@ -27,6 +27,8 @@ mod resource_menu;
 mod shell;
 mod terminal;
 pub(crate) mod ui;
+#[cfg(target_os = "linux")]
+mod updates;
 mod volumes;
 
 use container_logs::ContainerLogs;
@@ -77,6 +79,8 @@ pub struct FerryDock {
     focus: FocusHandle,
     dock: Entity<ResizableState>,
     settings_open: bool,
+    #[cfg(target_os = "linux")]
+    updates: updates::Updates,
 }
 
 impl FerryDock {
@@ -86,7 +90,17 @@ impl FerryDock {
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (backend, events) = Backend::start();
-        Self::with_backend(backend, events, favorites::Favorites::new(), window, cx)
+        #[cfg(target_os = "linux")]
+        {
+            Self {
+                updates: updates::Updates::start(),
+                ..Self::with_backend(backend, events, favorites::Favorites::new(), window, cx)
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Self::with_backend(backend, events, favorites::Favorites::new(), window, cx)
+        }
     }
 
     fn with_backend(
@@ -123,6 +137,10 @@ impl FerryDock {
                     .update_in(cx, |this, window, cx| {
                         let mut changed = this.metrics.expire();
                         changed |= this.poll_favorites(window, cx);
+                        #[cfg(target_os = "linux")]
+                        {
+                            changed |= this.poll_updates(window, cx);
+                        }
                         let started = Instant::now();
                         for _ in 0..64 {
                             match this.events.try_recv() {
@@ -174,6 +192,8 @@ impl FerryDock {
             focus,
             dock,
             settings_open: false,
+            #[cfg(target_os = "linux")]
+            updates: updates::Updates::default(),
         }
     }
 }

@@ -170,7 +170,7 @@ impl Render for FerryDock {
             .child(
                 Self::button("settings", "Settings", self.settings_open, false, cx)
                     .icon(IconName::Settings)
-                    .tooltip("Appearance settings (Ctrl+,)")
+                    .tooltip("Settings (Ctrl+,)")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_settings(!this.settings_open, window, cx);
                     })),
@@ -269,6 +269,13 @@ impl Render for FerryDock {
             .capture_key_down(cx.listener(Self::quick_run_key))
             .on_key_down(cx.listener(Self::root_key))
             .child(header)
+            .map(|view| {
+                #[cfg(target_os = "linux")]
+                let view = view.when(self.updates.ready(), |view| {
+                    view.child(self.update_banner(cx))
+                });
+                view
+            })
             .child(
                 div()
                     .flex_1()

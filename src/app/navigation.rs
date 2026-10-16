@@ -78,6 +78,11 @@ impl FerryDock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(target_os = "linux")]
+        if self.updates.applying {
+            cx.stop_propagation();
+            return;
+        }
         let key = &event.keystroke;
         if self.favorites_dialog_open() || self.quick_surface_open() {
             return;

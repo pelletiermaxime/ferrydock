@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
 appdir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# Relaunching an update must not inherit libraries from the old runtime mount.
+export FERRYDOCK_ORIGINAL_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
 export LD_LIBRARY_PATH="$appdir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$appdir/usr/bin/ferrydock" "$@"

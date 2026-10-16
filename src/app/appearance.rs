@@ -196,8 +196,12 @@ impl FerryDock {
                             Button::new("theme-reset").small().label("Use FerryDock theme").on_click(|_, _, cx| choose(AppTheme::FerryDock, cx))
                         })))
                 )
-            ]))
-            .child(div().text_color(cx.theme().muted_foreground).text_sm().child("Changes apply immediately. Container selections, log streams, and shell sessions stay open while you adjust appearance."))
+            ]).map(|settings| {
+                #[cfg(target_os = "linux")]
+                let settings = settings.page(self.update_settings(cx));
+                settings
+            }))
+            .child(div().text_color(cx.theme().muted_foreground).text_sm().child("Theme changes apply immediately. Your current workspace stays open while you adjust settings."))
     }
 }
 

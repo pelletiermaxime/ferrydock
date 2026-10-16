@@ -33,6 +33,7 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | `shell.rs` | Window layout and placement of feature panels |
 | `ui.rs` | Semantic palette, shared controls, empty states, notifications, and dock sizing |
 | `appearance.rs` | Persistent theme preference, Kit Settings page, and focus restoration |
+| `updates.rs` | Linux AppImage update settings, progress, ready banner and manual restart review; network/file work remains in `src/updater.rs` |
 | `resource_menu.rs` | Container/project popup menus, sharing the guarded feature actions |
 
 Each feature owns a state type with its startup defaults. The application keeps
@@ -205,6 +206,70 @@ back to `~/.config/ferrydock/appearance.json`, separately from Compose settings.
 Missing or invalid preferences fall back to FerryDock; read/save errors appear
 in Settings. A failed save leaves the chosen theme active for that session.
 Verification uses an isolated preference file.
+
+### Linux AppImage updates
+
+`src/updater.rs` owns one serial background worker with bounded request/event
+channels. Only Linux x86-64 processes launched from an AppImage runtime can
+self-update; the runtime's `APPDIR` must contain the current executable and
+`APPIMAGE` must resolve to a type-2 AppImage. Other installation formats show
+the release-page link without automatic network checks or replacement.
+
+The worker checks GitHub's latest published stable release after a ten-second
+startup delay and at six-hour intervals. `updates.json` beside the appearance
+settings stores the automatic-check preference and last attempt time, including
+failed attempts, to avoid repeated checks on frequent restarts. Manual checks
+bypass that interval. The client uses HTTPS, connection/request timeouts, exact
+versioned repository asset URLs, a 1 MiB release-response cap, 64 KiB checksum
+cap, and 512 MiB AppImage cap. Downloads are streamed in 64 KiB blocks with
+progress delivered at most four times per second. Only newer stable SemVer
+versions are eligible.
+
+The existing release pipeline's versioned AppImage and `SHA256SUMS` are the update
+feed; no signing secret or additional service is required. SHA-256 checks
+integrity against that release, not independent publisher authenticity.
+
+Downloads use a private directory beside the original AppImage, keyed by its
+canonical path. An OS file lock prevents simultaneous staging by two instances;
+the next download cleans abandoned candidates after acquiring that lock.
+Candidates remain available for the running session and may be downloaded again
+after quitting. File size, AppImage header and checksum are verified after
+download and immediately before apply. The installed inode/size/mtime must still
+match the original snapshot. A hard link retains the old inode during atomic
+replacement; a launch failure restores it. The new runtime gets clean AppImage
+and library-path variables and uses extract-and-run to avoid requiring FUSE.
+The old app quits only after the child survives a short immediate-startup check.
+This does not provide health-based rollback for failures after that check.
+
+Kit Settings, Checkbox, Button and Dialog supply the UI. An explicit restart
+review warns about live shells. Restart is disabled during Docker mutations,
+Compose operations and pending favorite saves. Applying keeps the modal open and
+blocks terminal/navigation shortcuts until success or failure. Container services
+are not stopped by the updater.
+
+Run `cargo test --lib updater::tests -- --test-threads=1` for owned loopback HTTP,
+checksum/size/header rejection, preference, replacement and rollback checks.
+Run `python3 scripts/verify-headless.py --flow updates` for GPUI input and GPU
+screenshots of the Settings, progress, ready, review and failure states. The
+fixture UI flow checks requests rather than exiting its test process. A public
+GitHub old-to-new update and a packaged desktop restart require separate proof.
+
+Two explicit checks supplement those defaults:
+
+```sh
+# Read the public release and verify its AppImage in owned temporary files.
+cargo test --lib updater::tests::public_github_release_download_and_checksum -- --ignored --nocapture --test-threads=1
+# Requires the pinned tools cached by scripts/package-linux.sh.
+cargo test --lib updater::tests::packaged_appimage_replacement_relaunch_and_startup_failure_rollback -- --ignored --nocapture --test-threads=1
+```
+
+The runtime check builds tiny disposable AppImages with the production AppRun,
+exercises extract-and-run, replacement/relaunch through a path with spaces, and
+rollback on immediate startup failure. It records its completed child process
+and logs under `.verification/appimage-updater/`, and runs in Linux release CI
+after packaging has cached the tools. It does not launch a FerryDock desktop.
+The public check separately proves the production HTTPS download/checksum path
+without installing or launching that release.
 
 ## Docker and Compose boundaries
 

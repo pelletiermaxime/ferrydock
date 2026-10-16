@@ -101,6 +101,13 @@ Keyboard input is targeted at the verified window. Mouse flows locate visible la
 
 ## Evidence
 
+For AppImage updater controls, run `python3 scripts/verify-headless.py --flow updates`.
+Inspect the Settings, progress, ready, restart review, applying, error and
+non-AppImage screenshots. This drives fixture worker requests through GPUI input;
+it does not install a public release or exit a desktop process. Pair it with
+`cargo test --lib updater::tests -- --test-threads=1` for loopback HTTP, checksum,
+atomic replacement and rollback proof. See [features/updates.md](features/updates.md).
+
 The headless helper prints its unique evidence directory under `.verification/headless/`. It retains `result.json` (engine package/version, lock hash, command, exit status, timing and cleanup), `headless.json` (checks, dimensions, per-frame render/encoding timings), `log-performance.json`, `actions.json`, `test.log`, and all PNGs listed by the flow. The virtual display currently uses 2x scaling, producing 2360x1640 pixels for a 1180x820 logical view; dimensions are checked against the reported scale. Inspect the initial list, empty-search, Kit Input editing, log scrollbars, resized dock, Inspect JSON/search, notifications, terminal, project Logs and Compose operation frames when reviewing visual changes. Timing includes builds at the outer level; the flow's timing excludes compilation.
 
 Real Compose checks retain `result.json`, `test.log`, `launch.log`, `cleanup.log`, and isolated association settings under `.verification/compose/<run>/`. Require the test to pass and the script's scoped cleanup confirmation. Results prove worker/CLI/daemon behavior separately from headless rendering; do not claim native Compose clicks were exercised.

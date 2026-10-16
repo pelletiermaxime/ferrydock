@@ -91,6 +91,10 @@ impl Favorites {
 }
 
 impl FerryDock {
+    #[cfg(target_os = "linux")]
+    pub(super) fn favorite_save_pending(&self) -> bool {
+        self.favorites.waiting || !self.favorites.used_pending.is_empty()
+    }
     fn favorite_operation_conflict(&self, container: &crate::model::Container) -> bool {
         // Match the worker's RunFavorite guard: a sibling container operation
         // does not affect this shell, but a Compose operation on its project can.

@@ -1,6 +1,9 @@
 //! Real GPU rendering and GPUI input dispatch with a fixture Docker boundary.
 //! No compositor, Docker worker, OCR, or application state setters drive the UI.
 
+#[path = "updates_headless.rs"]
+mod update_flow;
+
 use super::{FerryDock, Tab};
 const TEXT: u32 = 0xe0ece7;
 use crate::{

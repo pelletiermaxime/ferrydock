@@ -59,6 +59,8 @@ jobs:
         run: cargo build --release --locked
       - name: Create packages and checksums
         run: bash scripts/package-linux.sh "$GITHUB_REF_NAME"
+      - name: Verify AppImage update relaunch and rollback
+        run: cargo test --lib --locked updater::tests::packaged_appimage_replacement_relaunch_and_startup_failure_rollback -- --ignored --test-threads=1
       - name: Test package installation in Ubuntu
         run: |
           docker run --rm -v "$PWD/target/packages:/packages:ro" ubuntu:24.04 bash -euc '
