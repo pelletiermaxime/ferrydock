@@ -67,11 +67,7 @@ impl FerryDock {
         if !c.running() {
             return Err("Start this container before running the favorite".into());
         }
-        if self.containers.busy.contains_key(id)
-            || c.project.as_ref().is_some_and(|p| self.project_busy(p))
-            || self.volumes.mutating()
-            || self.images.pruning.is_some()
-        {
+        if self.favorite_operation_conflict(c) {
             return Err("Wait for the Docker operation to finish".into());
         }
         Ok(())

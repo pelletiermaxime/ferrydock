@@ -91,6 +91,20 @@ impl Favorites {
 }
 
 impl FerryDock {
+    fn favorite_operation_conflict(&self, container: &crate::model::Container) -> bool {
+        // Match the worker's RunFavorite guard: a sibling container operation
+        // does not affect this shell, but a Compose operation on its project can.
+        self.containers.busy.contains_key(&container.id)
+            || self.volumes.mutating()
+            || self.images.pruning.is_some()
+            || container.project.as_ref().is_some_and(|project| {
+                self.projects
+                    .operations
+                    .get(project)
+                    .is_some_and(|operation| operation.running)
+            })
+    }
+
     pub(super) fn favorites_dialog_open(&self) -> bool {
         self.favorites.scope.is_some()
     }

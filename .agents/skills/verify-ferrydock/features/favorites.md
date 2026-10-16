@@ -17,6 +17,11 @@ worker rechecks session, endpoint, target and running state. Bash loads the norm
 user startup file before installing prompt detection and preserves existing
 scalar or array `PROMPT_COMMAND` hooks.
 
+Container-operation conflicts apply to the favorite's target container. A restart
+on another service or replica in the same Compose project leaves favorites
+available. A Compose operation on the target's project, volume mutations and
+image pruning still block launch.
+
 Press **Ctrl+K** or **Run favorite…** for the Kit searchable launcher. Enter
 runs the saved target directly when exactly one instance is running; otherwise
 choose an instance or start the service yourself. The manager's **Pin** adds a
@@ -32,6 +37,13 @@ endpoint guards. The separate owned Docker test
 `bash scripts/verify-docker.sh quick_run_terminals_preserve_interactive_sessions`
 proves a blocked normal terminal and two quick PTYs retain independent input and
 files, closing one preserves the others, and exit 0/1 reaches the right session.
+
+The quick-run flow also checks launcher/pin protection during target and Compose
+project restarts, then launches and sends a pending favorite while another service
+in the same project restarts. The favorites flow checks the terminal Run button
+blocks a target restart and permits another replica's restart. Inspect the
+`quick-*-restart-*` and `favorites-*-restart-*` frames; these use worker events
+for operation state and real GPUI input for launch.
 
 Run `python3 scripts/verify-headless.py --flow favorites`. Inspect manager/editor,
 terminal selector, running/completed/failed, partial-input protection, endpoint,

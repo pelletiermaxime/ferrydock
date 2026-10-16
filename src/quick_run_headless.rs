@@ -24,6 +24,37 @@ fn headless_gpu_quick_run_flow() {
     h.click("favorite-command"); h.type_text("printf 'probe\\n'"); h.click("favorite-save"); h.settle_ui(150);
     h.key("escape"); h.settle_ui(150);
     h.capture("quick-project-pin");
+    let config = ComposeConfig {
+        project: "quick-demo".into(),
+        directory: "/fixture/quick-demo".into(),
+        files: vec!["compose.yaml".into()],
+        ..Default::default()
+    };
+    h.deliver(Event::ComposeProjects(vec![ComposeProject {
+        name: "quick-demo".into(), config: Some(config.clone()), hint: config, worktree: None,
+    }]));
+    h.drain_commands();
+    h.click("compose-restart");
+    let operation = h.drain_commands().into_iter().find_map(|c| match c {
+        Command::Compose { operation, action: compose::Action::Restart, .. } => Some(operation),
+        _ => None,
+    }).expect("Project restart request");
+    h.key("ctrl-k"); h.settle_ui(150); h.type_text("composer"); h.settle_ui(150);
+    h.key("enter"); h.settle_ui(150);
+    assert!(!h.drain_commands().iter().any(|c| matches!(c, Command::QuickTerminal { .. } | Command::RunFavorite { .. })));
+    h.capture("quick-project-restart-blocked");
+    h.key("escape"); h.settle_ui(150);
+    h.deliver(Event::ComposeFinished { project: "quick-demo".into(), operation, result: Ok(()) });
+    h.deliver(Event::ActionStarted { id: "quick-worker".into(), action: Action::Restart });
+    h.drain_commands();
+    h.click(&format!("quick-pin-{composer}")); h.settle_ui(150);
+    assert!(!h.drain_commands().iter().any(|c| matches!(c, Command::QuickTerminal { .. } | Command::RunFavorite { .. })));
+    h.capture("quick-target-restart-blocked");
+    h.key("escape"); h.settle_ui(150);
+    h.deliver(Event::ActionFinished { id: "quick-worker".into(), result: Ok(()) });
+    // A restart on another service in the same project must not block this target,
+    // including the readiness check before the command is sent to its new shell.
+    h.deliver(Event::ActionStarted { id: "quick-one".into(), action: Action::Restart });
     h.drain_commands();
     h.key("ctrl-k"); h.settle_ui(150); h.type_text("composer"); h.settle_ui(150);
     h.capture("quick-launcher-search");
@@ -37,6 +68,9 @@ fn headless_gpu_quick_run_flow() {
     h.deliver(Event::TerminalData{generation:first,data:b"www-data@laravel:/app$ ".to_vec()});
     h.settle_ui(150);
     let run=h.drain_commands().into_iter().find_map(|c|match c {Command::RunFavorite{id,generation,run,command,..}=>{assert_eq!(id,"quick-worker");assert_eq!(generation,first);assert_eq!(command,"composer install");Some(run)},_=>None}).expect("Only ready shell receives command");
+    assert!(h.observe(|v| v.containers.busy.contains_key("quick-one")));
+    h.capture("quick-unrelated-restart-allowed");
+    h.deliver(Event::ActionFinished { id: "quick-one".into(), result: Ok(()) });
     h.deliver(Event::FavoriteStarted{generation:first,run});
     h.deliver(Event::TerminalData{generation:first,data:b"composer install\r\nInstalling dependencies...\r\n".to_vec()});
     h.capture("quick-running");
@@ -99,5 +133,5 @@ fn headless_gpu_quick_run_flow() {
     h.key("enter");
     assert!(!h.drain_commands().iter().any(|c|matches!(c,Command::QuickTerminal{..}|Command::RunFavorite{..})));
     h.key("escape"); h.settle_ui(150);
-    std::fs::write(h.evidence.join("headless.json"),serde_json::to_vec_pretty(&json!({"status":"passed","screenshots":h.screenshots,"frame_timings":h.frame_timings,"checks":["Ctrl+K from workspace and terminal", "search then Enter runs correct target", "no command before shell prompt", "busy regular and quick shell preservation", "idle quick shell reuse", "completed/failed results", "pin persistence and project-header launch", "recent usage persistence", "explicit replica choice", "stopped/disappeared target and endpoint guards"]})).unwrap()).unwrap();
+    std::fs::write(h.evidence.join("headless.json"),serde_json::to_vec_pretty(&json!({"status":"passed","screenshots":h.screenshots,"frame_timings":h.frame_timings,"checks":["Ctrl+K from workspace and terminal", "search then Enter runs correct target", "unrelated same-project restart permits launch and pending command", "target and Compose project restarts block launcher and pin", "no command before shell prompt", "busy regular and quick shell preservation", "idle quick shell reuse", "completed/failed results", "pin persistence and project-header launch", "recent usage persistence", "explicit replica choice", "stopped/disappeared target and endpoint guards"]})).unwrap()).unwrap();
 }

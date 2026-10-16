@@ -110,6 +110,20 @@ fn headless_gpu_favorites_flow() {
     h.type_text("Show environment");
     h.key("enter");
     h.capture("favorites-terminal-ready");
+    h.deliver(Event::ActionStarted {
+        id: "favorite-one".into(),
+        action: Action::Restart,
+    });
+    h.drain_commands();
+    h.click("terminal-favorite-run");
+    assert!(!h.drain_commands().iter().any(|c| matches!(c, Command::RunFavorite { .. })));
+    h.capture("favorites-target-restart-blocked");
+    h.deliver(Event::ActionFinished { id: "favorite-one".into(), result: Ok(()) });
+    // A different replica of this service can restart while this shell stays ready.
+    h.deliver(Event::ActionStarted {
+        id: "favorite-two".into(),
+        action: Action::Restart,
+    });
     h.drain_commands();
     h.click("terminal-favorite-run");
     let run = h
@@ -143,6 +157,9 @@ fn headless_gpu_favorites_flow() {
             _ => None,
         })
         .unwrap();
+    assert!(h.observe(|v| v.containers.busy.contains_key("favorite-two")));
+    h.capture("favorites-unrelated-restart-allowed");
+    h.deliver(Event::ActionFinished { id: "favorite-two".into(), result: Ok(()) });
     h.cx.read_entity(&h.view, |v, cx| {
         assert!(matches!(
             v.terminal
