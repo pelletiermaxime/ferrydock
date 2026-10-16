@@ -71,6 +71,9 @@ impl Style {
 pub struct StyledLine {
     pub text: String,
     pub spans: Vec<(Range<usize>, Style)>,
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    pub details: Option<String>,
+    pub annotation: bool,
 }
 
 impl StyledLine {
@@ -107,7 +110,12 @@ impl StyledLine {
                 ..Default::default()
             },
         ));
-        StyledText::new(format!("{prefix}{}", self.text)).with_highlights(source.into_iter().chain(
+        let text = if self.annotation {
+            self.text.strip_prefix("[Docker] ").unwrap_or(&self.text)
+        } else {
+            &self.text
+        };
+        StyledText::new(format!("{prefix}{text}")).with_highlights(source.into_iter().chain(
             self.spans.iter().map(|(range, style)| {
                 (
                     range.start + offset..range.end + offset,
@@ -157,6 +165,7 @@ struct Row {
     truncated: bool,
     prefix_len: usize,
     prefix_checked: bool,
+    timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Row {
@@ -167,10 +176,14 @@ impl Row {
         self.truncated = false;
         self.prefix_len = 0;
         self.prefix_checked = false;
+        self.timestamp = None;
     }
 
     fn snapshot(&self) -> StyledLine {
-        let mut line = StyledLine::default();
+        let mut line = StyledLine {
+            timestamp: self.timestamp,
+            ..Default::default()
+        };
         // Keep the Docker prefix internally for cursor/erase operations, while
         // displaying and copying only the application's own output.
         for cell in &self.cells[self.prefix_len..] {
@@ -263,7 +276,8 @@ impl Handler for State {
                 .iter()
                 .map(|cell| cell.character)
                 .collect::<String>();
-            if chrono::DateTime::parse_from_rfc3339(&token).is_ok() {
+            if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(&token) {
+                row.timestamp = Some(timestamp.to_utc());
                 row.prefix_len = row.cursor;
                 for cell in &mut row.cells[..row.prefix_len] {
                     cell.style = Style::default();
@@ -416,6 +430,14 @@ pub struct Buffer {
     pub lines: VecDeque<StyledLine>,
     pub partial: StyledLine,
     decoder: Decoder,
+    annotations: Vec<StyledLine>,
+    order: Vec<DisplayRow>,
+}
+
+enum DisplayRow {
+    Output(usize),
+    Partial,
+    Annotation(usize),
 }
 
 impl Buffer {
@@ -435,13 +457,78 @@ impl Buffer {
             self.partial = self.decoder.state.row.snapshot();
             self.decoder.state.dirty = false;
         }
+        self.reorder();
+    }
+
+    pub fn set_annotations(&mut self, annotations: Vec<StyledLine>) {
+        self.annotations = annotations
+            .into_iter()
+            .rev()
+            .take(crate::lifecycle::MAX_MARKERS)
+            .collect();
+        self.annotations.reverse();
+        self.reorder();
+    }
+
+    fn reorder(&mut self) {
+        self.order.clear();
+        if self.annotations.is_empty() {
+            return;
+        }
+        let mut timestamp = None;
+        let mut rows = self
+            .lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                timestamp = line.timestamp.or(timestamp);
+                (timestamp, DisplayRow::Output(index))
+            })
+            .collect::<Vec<_>>();
+        if !self.partial.is_empty() {
+            rows.push((self.partial.timestamp.or(timestamp), DisplayRow::Partial));
+        }
+        rows.extend(
+            self.annotations
+                .iter()
+                .enumerate()
+                .map(|(index, line)| (line.timestamp, DisplayRow::Annotation(index))),
+        );
+        rows.sort_by_key(|(time, _)| *time);
+        self.order = rows
+            .into_iter()
+            .rev()
+            .take(crate::model::LogBuffer::MAX_LINES)
+            .map(|(_, row)| row)
+            .collect();
+        self.order.reverse();
+    }
+
+    pub fn display_len(&self) -> usize {
+        if self.annotations.is_empty() {
+            self.lines.len() + usize::from(!self.partial.is_empty())
+        } else {
+            self.order.len()
+        }
+    }
+
+    pub fn display_line(&self, index: usize) -> Option<&StyledLine> {
+        if self.annotations.is_empty() {
+            return self.lines.get(index).or_else(|| {
+                (index == self.lines.len() && !self.partial.is_empty()).then_some(&self.partial)
+            });
+        }
+        match self.order.get(index)? {
+            DisplayRow::Output(index) => self.lines.get(*index),
+            DisplayRow::Partial => Some(&self.partial),
+            DisplayRow::Annotation(index) => self.annotations.get(*index),
+        }
     }
 
     pub fn text(&self) -> String {
-        self.lines
-            .iter()
+        (0..self.display_len())
+            .filter_map(|index| self.display_line(index))
             .map(|line| line.text.as_str())
-            .chain((!self.partial.is_empty()).then_some(self.partial.text.as_str()))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -450,6 +537,45 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_annotations_merge_without_touching_partial_output_or_ansi() {
+        let mut buffer = Buffer::for_docker_logs();
+        let stamp = chrono::DateTime::parse_from_rfc3339("2026-10-16T12:00:01Z")
+            .unwrap()
+            .to_utc();
+        let marker = StyledLine {
+            text: "[Docker] Container restarted".into(),
+            timestamp: Some(stamp),
+            ..Default::default()
+        };
+        buffer.set_annotations(vec![marker.clone()]);
+        buffer.push(b"2026-10-16T12:00:00Z \x1b[32mbefore\n2026-10-16T12:00:02Z par");
+        assert_eq!(buffer.text(), "before\n[Docker] Container restarted\npar");
+        assert!(buffer.display_line(1).unwrap().spans.is_empty());
+        buffer.push(b"tial\n");
+        assert_eq!(
+            buffer.text(),
+            "before\n[Docker] Container restarted\npartial"
+        );
+        assert_eq!(
+            buffer.display_line(2).unwrap().spans[0].1.foreground,
+            Some(PALETTE[2])
+        );
+        let mut reloaded = Buffer::for_docker_logs();
+        reloaded.set_annotations(vec![marker]);
+        reloaded.push(b"2026-10-16T12:00:02Z after\n2026-10-16T12:00:03Z ready\n");
+        assert!(
+            reloaded
+                .text()
+                .starts_with("[Docker] Container restarted\nafter")
+        );
+        for i in 0..1600 {
+            reloaded.push(format!("2026-10-16T12:00:04Z line {i}\n").as_bytes());
+        }
+        assert_eq!(reloaded.display_len(), crate::model::LogBuffer::MAX_LINES);
+        assert!(!reloaded.text().contains("[Docker]"));
+    }
 
     #[test]
     fn ansi_colors_remain_readable_and_hidden_text_uses_the_current_surface() {

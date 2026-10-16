@@ -12,6 +12,8 @@ Watch all Compose service/container streams from one project workspace.
 - `project-logs.retry`: resume existing IDs with timestamp replay suppression.
 - `project-logs.ansi`: cached per-container payload colours/styles independent of source-label colours and clean copied text.
 - `project-logs.order`: Docker timestamp order across services, including older tails arriving after recent restart output.
+- `project-logs.lifecycle`: Docker lifecycle annotations use container/project/service event metadata, participate in ordering/filter/copy and survive refresh/navigation within the bounded session cache.
+- Confirmed restarts replace their related annotations with one Docker badge/tinted row. The replacement preserves application records, chronological position and per-container ANSI state. Hover shows the complete underlying event sequence.
 
 ## How to get to it (user POV)
 
@@ -39,6 +41,8 @@ The headless flow also fills 1,500 retained records and feeds a 10,000-line batc
 For native load, run `cargo build --locked` and `python3 scripts/verify-log-performance.py` (or select a freshly built release with `--binary target/release/ferrydock`). It prefers native Wayland in a Wayland session; `--backend x11 --display :0` explicitly selects XWayland. The demonstrated Wayland adapter requires KDE/KWin and the tools/input access listed in the skill. It owns ten disposable containers, its window, and any temporary input daemon/socket, validates scope, measures CPU and memory, checks search while logs stream, preserves PNGs/OCR/results, and performs scoped cleanup. It takes focus and must not overlap another native-input session. Require all success/cleanup flags in its result, including `input_cleanup`; distinguish backend-specific typing/capture/OCR overhead from application latency.
 
 ## Gotchas
+
+- The focused `--flow lifecycle` GPU flow and `docker_external_lifecycle_markers` Docker check are described in [Logs](logs.md). Project markers decode independently of application ANSI state. Event listener state is shown separately in the Kit status bar, including a persistent possible-gap notice after recovery. Container replacements keep their distinct IDs; event metadata still routes removed-container markers to the correct project.
 
 - Project membership is scoped by labels on the displayed Docker endpoint. Do not associate files merely to read logs.
 - Initial tails are 200 lines per container; total retained history is the newest 1,500 lines ordered by Docker timestamp. Equal-time records preserve receive order; untimestamped diagnostics follow the newest retained record.

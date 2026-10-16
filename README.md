@@ -15,12 +15,21 @@ the terminal, and container details close at hand.
   containers. A small colour marker beside each name matches its label in project logs.
 - **Follow live logs.** Read output with ANSI colours and styles, pause automatic scrolling, copy
   logs, and reconnect the stream. Combine a Compose project's service logs in
-  one view and filter them by service.
+  one view and filter them by service. Timestamped Docker markers show container
+  starts, stops, restarts, exits, and other lifecycle changes, including actions
+  from the terminal or another app. Markers are kept for the current FerryDock
+  session; the log status warns when an event-stream interruption may leave gaps.
+  Completed restarts appear as one highlighted row with a Docker badge. Hover a
+  marker to see its underlying events, signals, and exit codes.
+  Stopping a container shows one stop request and one stopped confirmation;
+  shutdown signals and process-exit details are grouped into those markers.
 - **Monitor CPU and memory.** See live CPU percentage and memory usage/limit in
   the container list, with smooth area charts in the detail dock. Hover for
   measured values and sample age. Labelled axes show CPU percentage and memory
   in MiB, scaled to recent usage; available history spans the chart width, up
-  to two minutes. The summary stays visible across Logs, Terminal, and Inspect.
+  to two minutes. Use **Hide graphs** to leave a compact live summary and give
+  more space to logs, or **Show graphs** to expand them again. Your choice stays
+  in effect across containers and Logs, Terminal, and Inspect until you close FerryDock.
   CPU 100% means one core; configured CPU quotas are shown separately. Containers
   without a memory limit show Docker capacity explicitly. Missing, stopped,
   disconnected, and stale readings are labelled instead of reported as zero.
@@ -107,12 +116,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.13.0`; replace it with the version you downloaded.
+The examples below use `0.14.0`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.13.0_amd64.deb
+sudo apt install ./ferrydock_0.14.0_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -120,11 +129,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.13.0-linux-x86_64.AppImage`:
+`ferrydock-0.14.0-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.13.0-linux-x86_64.AppImage
-./ferrydock-0.13.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.14.0-linux-x86_64.AppImage
+./ferrydock-0.14.0-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -142,7 +151,7 @@ The Debian package and portable archive offer the release-page link in Settings
 and are updated manually.
 
 Alternatively, extract
-`ferrydock-0.13.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.14.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in

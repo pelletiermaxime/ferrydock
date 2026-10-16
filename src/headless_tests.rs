@@ -1,6 +1,8 @@
 //! Real GPU rendering and GPUI input dispatch with a fixture Docker boundary.
 //! No compositor, Docker worker, OCR, or application state setters drive the UI.
 
+#[path = "lifecycle_headless.rs"]
+mod lifecycle_flow;
 #[path = "updates_headless.rs"]
 mod update_flow;
 
@@ -862,6 +864,68 @@ fn headless_gpu_user_flow() {
     );
     h.capture("metrics-low-usage-hover");
     h.hover("search", 0.5);
+    let expanded_logs =
+        h.cx.debug_bounds(h.window.into(), "container-log-viewport")
+            .unwrap()
+            .unwrap();
+    let retained_samples =
+        h.observe(|v| v.metrics.containers["fixture-probe-running"].samples.len());
+    let selected_before_collapse = h.observe(|v| v.containers.selected.clone());
+    let logs_before_collapse = h.observe(|v| v.container_logs.buffer.text());
+    h.click("toggle-metrics-graphs");
+    h.capture("metrics-collapsed-logs");
+    for selector in [
+        "cpu-history",
+        "memory-history",
+        "cpu-metrics",
+        "memory-metrics",
+    ] {
+        assert!(
+            h.cx.debug_bounds(h.window.into(), selector)
+                .unwrap()
+                .is_none()
+        );
+    }
+    let collapsed_logs =
+        h.cx.debug_bounds(h.window.into(), "container-log-viewport")
+            .unwrap()
+            .unwrap();
+    assert!(
+        collapsed_logs.size.height > expanded_logs.size.height + px(120.0),
+        "Collapsing resources must give the recovered height to the logs"
+    );
+    assert_eq!(
+        h.observe(|v| v.container_logs.buffer.text()),
+        logs_before_collapse
+    );
+    h.click_tab("container-tabs", 2);
+    h.capture("metrics-collapsed-inspect");
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "cpu-history")
+            .unwrap()
+            .is_none()
+    );
+    h.click_tab("container-tabs", 0);
+    h.click("toggle-metrics-graphs");
+    h.capture("metrics-expanded-again");
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "cpu-history")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        h.cx.debug_bounds(h.window.into(), "memory-history")
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        h.observe(|v| v.containers.selected.clone()),
+        selected_before_collapse
+    );
+    assert_eq!(
+        h.observe(|v| v.metrics.containers["fixture-probe-running"].samples.len()),
+        retained_samples
+    );
     assert!(
         !h.observe(|v| v.container_logs.buffer.text())
             .contains('\x1b')

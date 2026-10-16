@@ -78,6 +78,151 @@ async fn wait_for_text(
 }
 
 #[tokio::test]
+#[ignore = "Operates only on scripts/verify-docker.sh's owned disposable fixture"]
+async fn docker_external_lifecycle_markers() -> Result<()> {
+    let id = env::var("FERRYDOCK_TEST_CONTAINER").context("Run scripts/verify-docker.sh")?;
+    let connection = docker::resolve_connection().await?;
+    let docker = docker::connect(&connection).await?;
+    let fixture = docker.inspect_container(&id, None).await?;
+    let labels = fixture
+        .config
+        .and_then(|config| config.labels)
+        .unwrap_or_default();
+    if labels.get("dev.ferrydock.fixture").map(String::as_str) != Some("true")
+        || !fixture
+            .name
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("/ferrydock-verify-")
+    {
+        bail!("Refusing lifecycle actions on an unowned container");
+    }
+    let project = labels
+        .get("com.docker.compose.project")
+        .context("Fixture project label missing")?;
+    let (_backend, mut events) = Backend::start();
+    let mut session = None;
+    time::timeout(Duration::from_secs(20), async {
+        loop {
+            match receive(&mut events).await? {
+                Event::LifecycleSession(value) => session = Some(value),
+                Event::Snapshot(containers)
+                    if session.is_some() && containers.iter().any(|c| c.id == id) =>
+                {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                Event::Disconnected(error) => bail!("Worker disconnected: {error}"),
+                _ => {}
+            }
+        }
+    })
+    .await??;
+    let mut observations = Vec::new();
+    let mut restart_summary = None;
+    let mut stop_summary = None;
+    for (arguments, expected) in [
+        (vec!["stop", "--time", "1"], "stop"),
+        (vec!["start"], "start"),
+        (vec!["restart", "--time", "1"], "restart"),
+    ] {
+        let mut operation_markers = std::collections::VecDeque::new();
+        // A separate Docker client, never a FerryDock Command::Action.
+        let output = time::timeout(
+            Duration::from_secs(20),
+            tokio::process::Command::new("docker")
+                .args(["--host", &connection.endpoint])
+                .args(arguments)
+                .arg(&id)
+                .output(),
+        )
+        .await??;
+        if !output.status.success() {
+            bail!(
+                "Fixture CLI failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        time::timeout(Duration::from_secs(20), async {
+            loop {
+                if let Event::Lifecycle {
+                    session: current,
+                    marker,
+                } = receive(&mut events).await?
+                    && Some(current) == session
+                    && marker.container == id
+                {
+                    assert_eq!(marker.project.as_deref(), Some(project.as_str()));
+                    assert_eq!(marker.service, "probe");
+                    observations.push(marker.text());
+                    if expected == "stop"
+                        && !matches!(marker.action.as_str(), "kill" | "stop" | "die")
+                    {
+                        continue;
+                    }
+                    let mut complete = marker.action == expected;
+                    operation_markers.push_back(marker);
+                    if expected == "stop" {
+                        complete = operation_markers
+                            .iter()
+                            .any(|marker| marker.action == "stop")
+                            && operation_markers
+                                .iter()
+                                .any(|marker| marker.action == "die");
+                    }
+                    if complete {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+                }
+            }
+        })
+        .await
+        .context("External lifecycle event was not observed")??;
+        if expected == "stop" {
+            let summary = ferrydock::lifecycle::summarize(&operation_markers);
+            assert_eq!(
+                summary
+                    .iter()
+                    .map(|m| m.message.as_str())
+                    .collect::<Vec<_>>(),
+                ["Container stop requested", "Container stopped"]
+            );
+            assert!(summary[1].details.contains("exit code:"));
+            stop_summary = Some(
+                serde_json::json!({"visible_markers":summary.len(),"raw_events":operation_markers.len(),"messages":summary.iter().map(|m| m.message.as_str()).collect::<Vec<_>>(),"details":summary[1].details}),
+            );
+        }
+        if expected == "restart" {
+            let summary = ferrydock::lifecycle::summarize(&operation_markers);
+            assert_eq!(
+                summary.len(),
+                1,
+                "A real Docker restart should display one annotation"
+            );
+            assert_eq!(summary[0].action, "restart");
+            assert!(summary[0].details.contains("Docker event: kill"));
+            assert!(summary[0].details.contains("exit code:"));
+            restart_summary = Some(
+                serde_json::json!({"visible_markers":summary.len(),"raw_events":operation_markers.len(),"text":summary[0].text(),"details":summary[0].details}),
+            );
+        }
+        wait_for_container_state(&docker, &id, expected != "stop").await?;
+    }
+    if let Ok(directory) = env::var("FERRYDOCK_LIFECYCLE_EVIDENCE") {
+        std::fs::write(
+            std::path::Path::new(&directory).join("docker-events.json"),
+            serde_json::to_vec_pretty(
+                &serde_json::json!({"status":"passed","container":id,"project":project,"events":observations,"stop_summary":stop_summary,"restart_summary":restart_summary,"external_docker_client":true}),
+            )?,
+        )?;
+    }
+    println!(
+        "PASS production event listener observes external CLI stop/start/restart with Compose identity: {}",
+        serde_json::to_string(&observations)?
+    );
+    Ok(())
+}
+
+#[tokio::test]
 #[ignore = "Creates and operates only on a fixture supplied by scripts/verify-docker.sh"]
 async fn docker_daily_loop_and_interactive_terminal() -> Result<()> {
     let id = env::var("FERRYDOCK_TEST_CONTAINER").context("Run scripts/verify-docker.sh")?;

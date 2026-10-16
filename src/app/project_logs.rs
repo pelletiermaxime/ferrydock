@@ -104,6 +104,14 @@ impl FerryDock {
     pub(super) fn begin_project_logs(&mut self, project: String) {
         self.project_logs.generation += 1;
         self.project_logs.history = Default::default();
+        for marker in crate::lifecycle::summarize(&self.lifecycle_logs.markers)
+            .iter()
+            .filter(|marker| marker.project.as_deref() == Some(&project))
+        {
+            self.project_logs
+                .history
+                .push_annotation(marker.project_line(), marker.details.clone());
+        }
         self.project_logs.status = "Connecting to project logs…".into();
         self.backend.send(Command::CloseLogs);
         self.backend.send(Command::ProjectLogs {
@@ -231,6 +239,15 @@ impl FerryDock {
                                 .id(SharedString::from(format!("project-log-line-{index}")))
                                 .test_support()
                                 .debug_selector(move || format!("project-log-line-{index}"))
+                                .when(line.styled.annotation, |row| {
+                                    super::lifecycle_logs::marker_row(row, colors)
+                                })
+                                .when_some(line.styled.details.clone(), |row, detail| {
+                                    row.tooltip(move |window, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(detail.clone())
+                                            .build(window, cx)
+                                    })
+                                })
                                 .child(line.render_source_on(
                                     this.containers.source_colors.color(&line.name, colors.logs),
                                     if line.error {
@@ -283,6 +300,10 @@ impl FerryDock {
                             .mode(ScrollbarMode::Always),
                     ),
             )
-            .child(StatusBar::new().left(self.project_logs.status.clone()))
+            .child(
+                StatusBar::new()
+                    .left(self.project_logs.status.clone())
+                    .right(self.lifecycle_logs.status()),
+            )
     }
 }

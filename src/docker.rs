@@ -251,6 +251,15 @@ pub enum Event {
         result: Result<crate::volumes::PruneResult, String>,
     },
     MetricsSession(u64),
+    LifecycleSession(u64),
+    Lifecycle {
+        session: u64,
+        marker: crate::lifecycle::Marker,
+    },
+    LifecycleStatus {
+        session: u64,
+        live: bool,
+    },
     Metrics {
         session: u64,
         id: String,
@@ -559,20 +568,18 @@ async fn connected(
     cancel: &CancellationToken,
 ) -> Result<()> {
     let (changed, mut changes) = watch::channel(0u64);
-    let watched_docker = docker.clone();
-    let watcher_cancel = cancel.clone();
-    tokio::spawn(async move {
-        let mut stream = watched_docker.events(None);
-        loop {
-            tokio::select! {
-                _ = watcher_cancel.cancelled() => break,
-                event = stream.next() => {
-                    if let Some(Ok(_)) = event { changed.send_modify(|value| *value += 1); }
-                    else { break; }
-                }
-            }
-        }
-    });
+    static LIFECYCLE_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let lifecycle_session = LIFECYCLE_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    events
+        .send(Event::LifecycleSession(lifecycle_session))
+        .await?;
+    tokio::spawn(crate::lifecycle::follow(
+        docker.clone(),
+        lifecycle_session,
+        changed,
+        events.clone(),
+        cancel.child_token(),
+    ));
     let mut interval = time::interval(Duration::from_secs(10));
     let mut dirty = true;
     let (image_requests, image_receiver) = watch::channel(None);

@@ -8,6 +8,7 @@ mod docker_transport;
 pub mod favorites;
 pub mod image_analysis;
 pub mod images;
+pub mod lifecycle;
 pub mod metrics;
 pub mod model;
 pub mod networks;

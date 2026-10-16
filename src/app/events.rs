@@ -1,7 +1,6 @@
 //! Apply worker events and preserve shared session and selection invariants.
 use super::FerryDock;
 use super::ui::FeedbackNotification;
-use crate::ansi::Buffer as StyledLogBuffer;
 use crate::docker::Action;
 use crate::docker::Command;
 use crate::docker::Event;
@@ -20,7 +19,10 @@ impl FerryDock {
         }
         let sync_services = matches!(
             &event,
-            Event::Snapshot(_) | Event::ProjectLog { .. } | Event::ProjectLogBatch { .. }
+            Event::Snapshot(_)
+                | Event::ProjectLog { .. }
+                | Event::ProjectLogBatch { .. }
+                | Event::Lifecycle { .. }
         );
         let check_cleanup = matches!(
             &event,
@@ -33,6 +35,9 @@ impl FerryDock {
                 | Event::ActionFinished { .. }
         );
         match event {
+            event @ (Event::LifecycleSession(_)
+            | Event::Lifecycle { .. }
+            | Event::LifecycleStatus { .. }) => self.lifecycle_event(event),
             event @ (Event::Networks { .. } | Event::NetworkDetails { .. }) => {
                 self.network_event(event)
             }
@@ -165,6 +170,8 @@ impl FerryDock {
                 }
             }
             Event::Connected(connection) => {
+                self.lifecycle_logs.connect(&connection.endpoint);
+                self.annotate_container_logs();
                 self.volumes_connected(&connection.endpoint);
                 self.networks_connected(&connection.endpoint);
                 self.connection = Some(connection);
@@ -179,6 +186,7 @@ impl FerryDock {
                 }
             }
             Event::Disconnected(error) => {
+                self.lifecycle_logs.disconnect();
                 self.networks_disconnected();
                 self.volumes_disconnected(window, cx);
                 self.images.generation += 1;
@@ -260,7 +268,7 @@ impl FerryDock {
                     self.backend.send(Command::CloseLogs);
                     self.backend.send(Command::CloseTerminal);
                     self.terminal.view = None;
-                    self.container_logs.buffer = StyledLogBuffer::for_docker_logs();
+                    self.reset_container_log_buffer();
                     self.containers
                         .inspection
                         .update(cx, |editor, cx| editor.set_value("", window, cx));
@@ -282,11 +290,11 @@ impl FerryDock {
                         .selected_container()
                         .map(|container| container.state.clone());
                     if before != after || self.container_logs.reopen {
-                        if let Some(id) = &self.containers.selected
+                        if let Some(id) = self.containers.selected.clone()
                             && (after.as_deref() == Some("running") || self.container_logs.reopen)
                         {
                             self.container_logs.generation += 1;
-                            self.container_logs.buffer = StyledLogBuffer::for_docker_logs();
+                            self.reset_container_log_buffer();
                             self.backend.send(Command::Logs {
                                 id: id.clone(),
                                 generation: self.container_logs.generation,

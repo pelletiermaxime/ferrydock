@@ -23,6 +23,7 @@ state, controls, and rendering belong to the modules under `src/app/`:
 | `networks.rs` | Read-only network inventory, configured endpoints, aliases/DNS, virtualized lists and container routing; cancellable discovery/details remain in `src/networks.rs` |
 | `volumes.rs` | Volumes workspace, search/selection, virtualized inventory/references, metadata, age/size sorting, measured-size cache, single/bulk removal and prune review; Docker discovery/size gathering/removal remains in `src/volumes.rs` |
 | `container_logs.rs` | Container log history, status, follow/scroll state, and rendering |
+| `lifecycle_logs.rs` | Bounded session marker history, endpoint/session guards, and lifecycle routing into container/project logs; the reconnecting Docker event listener remains in `src/lifecycle.rs` |
 | `favorites/` | Favorite command dialog/editor, service and replica selection, bounded serial file worker, guarded manual terminal launch |
 | `terminal.rs` | Embedded terminal session state and toolbar/view routing; the emulator remains in `src/terminal.rs` |
 | `projects.rs` | Compose associations, editable forms, operation state, and project controls |
@@ -38,6 +39,13 @@ state, controls, and rendering belong to the modules under `src/app/`:
 
 Each feature owns a state type with its startup defaults. The application keeps
 shared connection, focus, and navigation state, along with those feature states.
+
+Lifecycle projection lives in `src/lifecycle/summary.rs`: retain bounded raw
+events, condense confirmed restarts into one summary and normal stops into one
+request plus one confirmation, and keep diagnostics on hover. Later starts and
+genuine errors stay distinct. Typed annotation metadata drives the shared Kit Tag/tint/border
+row styling. Project history replaces annotations independently of application
+records and ANSI decoder state.
 Feature methods still operate on the same GPUI entity so existing cross-feature
 selection and session rules have one authoritative application state. Module
 internals use `pub(super)` visibility.
@@ -517,6 +525,8 @@ UI behavior; real operations require the separate integration checks:
 | Command | Boundary exercised |
 | --- | --- |
 | `bash scripts/verify-docker.sh` | Real discovery/logs, Start/Stop/Restart, interactive shell I/O, PTY resize, ANSI parsing, full-screen vi, shell exit, missing Bash |
+| `python3 scripts/verify-headless.py --flow lifecycle` | GPU/input proof of lifecycle markers, timestamp ordering, refresh/navigation retention, project service filter, replay/session/endpoint guards, event-stream warnings and Light rendering |
+| `bash scripts/verify-docker.sh docker_external_lifecycle_markers` | Production event listener observes external Docker CLI stop/start/restart on the owned fixture with container/project/service identity |
 | `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, changed build inputs and rebuilt image/container contents, build failure without stopping services, streamed failures, restart/rebuild/recreation log recovery, bounded batches |
 | `cargo test --locked --test volumes_prune` | Owned Unix HTTP fixtures: exact anonymous/all-unused filters, deleted names and reclaimed bytes, empty/zero/unavailable results, Docker errors and old-API refusal |
 | `cargo test --locked --test local_connection --test volume_sizes` | Owned local HTTP fixtures (Unix sockets or Windows named pipes): API negotiation, volume-only query and legacy/modern response decoding, zero/unavailable values, errors and API version guard |

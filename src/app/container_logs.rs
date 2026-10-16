@@ -33,15 +33,10 @@ impl Default for ContainerLogs {
 impl FerryDock {
     pub(super) fn logs_view(&self, cx: &mut Context<Self>) -> Div {
         let colors = palette(cx);
-        let count = self.container_logs.buffer.lines.len()
-            + usize::from(!self.container_logs.buffer.partial.is_empty());
-        let widest = self
-            .container_logs
-            .buffer
-            .lines
-            .iter()
+        let count = self.container_logs.buffer.display_len();
+        let widest = (0..count)
+            .filter_map(|index| self.container_logs.buffer.display_line(index))
             .map(|line| line.len())
-            .chain(std::iter::once(self.container_logs.buffer.partial.len()))
             .enumerate()
             .max_by_key(|(_, length)| *length)
             .map(|(index, _)| index);
@@ -51,23 +46,37 @@ impl FerryDock {
             cx.processor(move |this, range: std::ops::Range<usize>, _, _| {
                 range
                     .map(|index| {
-                        let text = if let Some(line) = this.container_logs.buffer.lines.get(index) {
-                            line.render_on("", colors.text, colors.logs)
-                        } else if this.container_logs.buffer.partial.is_empty() {
-                            StyledText::new("Waiting for log output…")
-                        } else {
-                            this.container_logs.buffer.partial.render_on(
-                                "",
-                                colors.text,
-                                colors.logs,
-                            )
-                        };
+                        let text =
+                            if let Some(line) = this.container_logs.buffer.display_line(index) {
+                                line.render_on("", colors.text, colors.logs)
+                            } else {
+                                StyledText::new("Waiting for log output…")
+                            };
                         div()
                             .h(px(18.0))
                             .whitespace_nowrap()
                             .id(SharedString::from(format!("container-log-line-{index}")))
                             .test_support()
                             .debug_selector(move || format!("container-log-line-{index}"))
+                            .when(
+                                this.container_logs
+                                    .buffer
+                                    .display_line(index)
+                                    .is_some_and(|line| line.annotation),
+                                |row| super::lifecycle_logs::marker_row(row, colors),
+                            )
+                            .when_some(
+                                this.container_logs
+                                    .buffer
+                                    .display_line(index)
+                                    .and_then(|line| line.details.clone()),
+                                |row, detail| {
+                                    row.tooltip(move |window, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(detail.clone())
+                                            .build(window, cx)
+                                    })
+                                },
+                            )
                             .child(text)
                     })
                     .collect::<Vec<_>>()
@@ -133,11 +142,11 @@ impl FerryDock {
                             cx,
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(id) = &this.containers.selected
+                            if let Some(id) = this.containers.selected.clone()
                                 && this.connection.is_some()
                             {
                                 this.container_logs.generation += 1;
-                                this.container_logs.buffer = StyledLogBuffer::for_docker_logs();
+                                this.reset_container_log_buffer();
                                 this.backend.send(Command::Logs {
                                     id: id.clone(),
                                     generation: this.container_logs.generation,
@@ -170,6 +179,10 @@ impl FerryDock {
                             .mode(ScrollbarMode::Always),
                     ),
             )
-            .child(StatusBar::new().left(self.container_logs.status.clone()))
+            .child(
+                StatusBar::new()
+                    .left(self.container_logs.status.clone())
+                    .right(self.lifecycle_logs.status()),
+            )
     }
 }

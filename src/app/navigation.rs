@@ -2,7 +2,6 @@
 use super::FerryDock;
 use super::Tab;
 use super::projects::ProjectTab;
-use crate::ansi::Buffer as StyledLogBuffer;
 use crate::docker::Command;
 use crate::model::groups;
 use gpui::{prelude::*, *};
@@ -13,9 +12,9 @@ impl FerryDock {
             if self.projects.selected.is_some() {
                 self.backend.send(Command::CloseProjectLogs);
                 self.project_logs.generation += 1;
-                if let Some(id) = &self.containers.selected {
+                if let Some(id) = self.containers.selected.clone() {
                     self.container_logs.generation += 1;
-                    self.container_logs.buffer = StyledLogBuffer::for_docker_logs();
+                    self.reset_container_log_buffer();
                     self.backend.send(Command::Logs {
                         id: id.clone(),
                         generation: self.container_logs.generation,

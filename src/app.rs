@@ -17,6 +17,7 @@ mod image_analysis;
 mod image_details;
 mod image_history;
 mod images;
+mod lifecycle_logs;
 mod metrics;
 mod navigation;
 mod networks;
@@ -71,6 +72,7 @@ pub struct FerryDock {
     networks_open: bool,
     metrics: metrics::Metrics,
     container_logs: ContainerLogs,
+    lifecycle_logs: lifecycle_logs::LifecycleLogs,
     terminal: Terminal,
     favorites: favorites::Favorites,
     projects: Projects,
@@ -184,6 +186,7 @@ impl FerryDock {
             networks_open: false,
             metrics: metrics::Metrics::default(),
             container_logs: ContainerLogs::default(),
+            lifecycle_logs: Default::default(),
             terminal: Terminal::default(),
             favorites,
             projects: Projects::new(compose_focus),

@@ -5,7 +5,10 @@ use crate::{
     model::Container,
 };
 use gpui::{prelude::*, *};
-use gpui_kit::{base::TestSupportExt, component::chart::AreaChart};
+use gpui_kit::{
+    base::TestSupportExt,
+    component::{IconName, chart::AreaChart, collapsible::Collapsible},
+};
 use std::{
     collections::{HashMap, VecDeque},
     time::Instant,
@@ -15,6 +18,7 @@ use std::{
 pub(super) struct Metrics {
     pub(super) session: Option<u64>,
     pub(super) containers: HashMap<String, History>,
+    graphs_collapsed: bool,
 }
 
 #[derive(Default)]
@@ -224,7 +228,11 @@ impl FerryDock {
             .child(div().text_ellipsis().child(format!("Memory {memory}")))
     }
 
-    pub(super) fn metrics_summary(&self, container: &Container, cx: &App) -> impl IntoElement {
+    pub(super) fn metrics_summary(
+        &self,
+        container: &Container,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let colors = palette(cx);
         let sample = self.live_metrics(container);
         let status = self.metrics_status(container);
@@ -312,6 +320,12 @@ impl FerryDock {
                             .child(caption),
                     )
             };
+        let collapsed = self.metrics.graphs_collapsed;
+        let summary = if collapsed {
+            format!("Resources · {status} · CPU {cpu} · Memory {memory}")
+        } else {
+            format!("Resources · {status} · Recent history · hover for values")
+        };
         div()
             .id("container-metrics")
             .test_support()
@@ -320,27 +334,59 @@ impl FerryDock {
             .px_4()
             .pb_2()
             .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .text_size(px(10.0))
-                    .text_color(rgb(colors.muted))
-                    .pb_1()
-                    .child(format!("Resources · {status}"))
-                    .child("Recent history · hover for values"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(card("cpu-metrics", "CPU", cpu, cpu_limit, true))
-                    .child(card(
-                        "memory-metrics",
-                        "Memory",
-                        memory,
-                        memory_limit,
-                        false,
-                    )),
+                Collapsible::new()
+                    .open(!collapsed)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .text_size(px(10.0))
+                            .text_color(rgb(colors.muted))
+                            .pb_1()
+                            .child(div().flex_1().min_w_0().text_ellipsis().child(summary))
+                            .child(
+                                Self::button(
+                                    "toggle-metrics-graphs",
+                                    if collapsed {
+                                        "Show graphs"
+                                    } else {
+                                        "Hide graphs"
+                                    },
+                                    false,
+                                    false,
+                                    cx,
+                                )
+                                .icon(if collapsed {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronUp
+                                })
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.metrics.graphs_collapsed =
+                                            !this.metrics.graphs_collapsed;
+                                        cx.notify();
+                                    },
+                                )),
+                            ),
+                    )
+                    .when(!collapsed, |section| {
+                        section.content(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(card("cpu-metrics", "CPU", cpu, cpu_limit, true))
+                                .child(card(
+                                    "memory-metrics",
+                                    "Memory",
+                                    memory,
+                                    memory_limit,
+                                    false,
+                                )),
+                        )
+                    }),
             )
     }
 

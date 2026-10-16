@@ -101,6 +101,8 @@ Keyboard input is targeted at the verified window. Mouse flows locate visible la
 
 ## Evidence
 
+For Docker lifecycle annotations, run `python3 scripts/verify-headless.py --flow lifecycle` and inspect the container, refreshed, project, reconnecting/recovered and Light frames. Pair this with `bash scripts/verify-docker.sh docker_external_lifecycle_markers` for real external CLI stop/start/restart events on the owned fixture and `cargo test --lib lifecycle::tests` for interrupted event-stream replay/cancellation. These do not restart the shared Docker daemon or prove native compositor/clipboard integration. See [Logs](features/logs.md).
+
 For AppImage updater controls, run `python3 scripts/verify-headless.py --flow updates`.
 Inspect the Settings, progress, ready, restart review, applying, error and
 non-AppImage screenshots. This drives fixture worker requests through GPUI input;

@@ -72,7 +72,24 @@ pub struct History {
     decoders: HashMap<String, Decoder>,
 }
 impl History {
-    pub fn push(&mut self, mut line: Line) {
+    pub fn push(&mut self, line: Line) {
+        self.push_record(line, false, None);
+    }
+    /// A lifecycle annotation must neither inherit nor reset application ANSI state.
+    pub fn push_annotation(&mut self, line: Line, details: String) {
+        self.push_record(line, true, Some(details));
+    }
+    pub fn replace_annotations(&mut self, annotations: impl IntoIterator<Item = (Line, String)>) {
+        self.lines.retain(|record| !record.styled.annotation);
+        self.services.clear();
+        for record in &self.lines {
+            *self.services.entry(record.service.clone()).or_default() += 1;
+        }
+        for (line, details) in annotations {
+            self.push_annotation(line, details);
+        }
+    }
+    fn push_record(&mut self, mut line: Line, annotation: bool, details: Option<String>) {
         let (stamp, body) = crate::ansi::split_timestamp(&line.text);
         // Decode ANSI in each source's receive order, then merge the rendered
         // records by Docker time. A slow historical tail must not displace a
@@ -80,7 +97,7 @@ impl History {
         let timestamp = DateTime::parse_from_rfc3339(stamp.trim_end())
             .ok()
             .or_else(|| self.lines.back().and_then(|record| record.timestamp));
-        let styled = if line.error {
+        let mut styled = if line.error || annotation {
             Decoder::default().record(body)
         } else {
             self.decoders
@@ -88,6 +105,8 @@ impl History {
                 .or_default()
                 .record(body)
         };
+        styled.details = details;
+        styled.annotation = annotation;
         let prefix = format!("[{} / {}] ", line.service, line.name);
         line.text = styled.text.clone();
         *self.services.entry(line.service.clone()).or_default() += 1;

@@ -3,7 +3,6 @@ use super::FerryDock;
 use super::Tab;
 use super::ui::FeedbackNotification;
 use super::ui::{empty_state, palette};
-use crate::ansi::Buffer as StyledLogBuffer;
 use crate::docker::Action;
 use crate::docker::Command;
 use crate::model::{Container, GroupKey};
@@ -86,7 +85,7 @@ impl FerryDock {
         }
         self.containers.selected = Some(id.clone());
         self.container_logs.generation += 1;
-        self.container_logs.buffer = StyledLogBuffer::for_docker_logs();
+        self.reset_container_log_buffer();
         self.container_logs.scroll = UniformListScrollHandle::default();
         self.containers.inspection.update(cx, |editor, cx| {
             editor.set_value("Loading container configuration…", window, cx)
