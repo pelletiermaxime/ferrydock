@@ -109,10 +109,14 @@ impl FerryDock {
     }
 
     pub(super) fn action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(container) = self.selected_container() else {
+        let Some(id) = self.containers.selected.clone() else {
             return;
         };
-        if self.connection.is_none()
+        self.container_action(&id, action, window, cx);
+    }
+
+    pub(super) fn container_action_unavailable(&self, container: &Container) -> bool {
+        self.connection.is_none()
             || self.volumes.mutating()
             || self.images.pruning.is_some()
             || self.containers.busy.contains_key(&container.id)
@@ -120,11 +124,32 @@ impl FerryDock {
                 .project
                 .as_ref()
                 .is_some_and(|project| self.project_busy(project))
+    }
+
+    pub(super) fn container_action(
+        &mut self,
+        id: &str,
+        action: Action,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(container) = self
+            .containers
+            .items
+            .iter()
+            .find(|container| container.id == id)
+        else {
+            return;
+        };
+        if self.container_action_unavailable(container)
+            || (matches!(action, Action::Start) == container.running())
         {
             return;
         }
-        let id = container.id.clone();
-        if matches!(action, Action::Stop | Action::Restart) {
+        let id = id.to_owned();
+        if self.containers.selected.as_ref() == Some(&id)
+            && matches!(action, Action::Stop | Action::Restart)
+        {
             self.backend.send(Command::CloseTerminal);
             if let Some(view) = &self.terminal.view {
                 view.update(cx, |view, cx| {
@@ -151,14 +176,7 @@ impl FerryDock {
                 "View logs, open a shell, or inspect a container from the list above.",
             ));
         };
-        let unavailable = self.connection.is_none()
-            || self.volumes.mutating()
-            || self.images.pruning.is_some()
-            || self.containers.busy.contains_key(&container.id)
-            || container
-                .project
-                .as_ref()
-                .is_some_and(|project| self.project_busy(project));
+        let unavailable = self.container_action_unavailable(container);
         let primary = if container.running() {
             Action::Stop
         } else {

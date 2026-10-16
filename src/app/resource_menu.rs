@@ -111,12 +111,7 @@ impl FerryDock {
             else {
                 return menu;
             };
-            let unavailable = this.connection.is_none()
-                || this.containers.busy.contains_key(&id)
-                || container
-                    .project
-                    .as_ref()
-                    .is_some_and(|project| this.project_busy(project));
+            let unavailable = this.container_action_unavailable(container);
             let running = container.running();
             for (label, tab) in [
                 ("View logs", Tab::Logs),
@@ -178,21 +173,7 @@ impl FerryDock {
                         .disabled(unavailable || (matches!(action, Action::Restart) && !running))
                         .on_click(move |_, window, cx| {
                             let _ = owner.update(cx, |this, cx| {
-                                let Some(container) = this
-                                    .containers
-                                    .items
-                                    .iter()
-                                    .find(|container| container.id == id)
-                                else {
-                                    return;
-                                };
-                                if (matches!(action, Action::Start) && container.running())
-                                    || (!matches!(action, Action::Start) && !container.running())
-                                {
-                                    return;
-                                }
-                                this.select(id.clone(), window, cx);
-                                this.action(action, window, cx);
+                                this.container_action(&id, action, window, cx);
                             });
                         }),
                 );

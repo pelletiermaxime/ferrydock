@@ -67,6 +67,10 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        Self::with_size(1180.0, 820.0)
+    }
+
+    fn with_size(width: f32, height: f32) -> Self {
         assert!(
             std::env::var_os("DISPLAY").is_none(),
             "Run through scripts/verify-headless.py"
@@ -108,7 +112,7 @@ impl Harness {
         let (events, receiver) = mpsc::channel(256);
         let mut content = None;
         let window = cx
-            .open_window(size(px(1180.0), px(820.0)), |window, cx| {
+            .open_window(size(px(width), px(height)), |window, cx| {
                 let view = cx.new(|cx| {
                     FerryDock::with_backend(
                         backend,
@@ -487,15 +491,17 @@ impl Harness {
             "encode_seconds": encoding_started.elapsed().as_secs_f64()}),
         );
         self.screenshots.push(filename);
-        let scale = self
+        let (scale, viewport) = self
             .cx
-            .update_window(self.window.into(), |_, window, _| window.scale_factor())
+            .update_window(self.window.into(), |_, window, _| {
+                (window.scale_factor(), window.viewport_size())
+            })
             .unwrap();
         assert_eq!(
             image.dimensions(),
             (
-                (1180.0 * scale).round() as u32,
-                (820.0 * scale).round() as u32
+                (f32::from(viewport.width) * scale).round() as u32,
+                (f32::from(viewport.height) * scale).round() as u32
             )
         );
         assert!(
@@ -1364,6 +1370,7 @@ fn headless_gpu_user_flow() {
     let terminal_image = h.capture("terminal-rendered");
     h.require_glyph_color(&terminal_image, "cpu-metrics", TEXT);
     h.require_glyph_color(&terminal_image, "memory-metrics", TEXT);
+    verify_container_row_actions(&mut h);
     h.drain_commands();
     h.cx.update_window(h.window.into(), |_, window, cx| {
         window.within("shell-choice").click(1, cx);
@@ -2040,6 +2047,12 @@ fn headless_gpu_user_flow() {
         h.drain_commands().is_empty(),
         "Container controls must be blocked during a project rebuild"
     );
+    h.click("row-primary-fixture-probe-running");
+    h.click("row-restart-fixture-probe-running");
+    assert!(
+        h.drain_commands().is_empty(),
+        "Row controls must share the project operation guard"
+    );
     h.key("ctrl-4");
     h.click_tab("project-tabs", 1);
     h.drain_commands();
@@ -2214,6 +2227,7 @@ fn headless_gpu_user_flow() {
 
     verify_images_workspace(&mut h);
     verify_volumes_workspace(&mut h);
+    verify_container_row_widths(&mut h);
 
     let mut report = json!({
         "status": "passed", "renderer": "GPUI Kit gpui-pre WgpuHeadlessRenderer",
@@ -2242,6 +2256,10 @@ fn headless_gpu_user_flow() {
     });
     report["checks"].as_array_mut().unwrap().extend(
         [
+            "Container row Start Stop Restart and resource menu requests target their own IDs",
+            "Row pending and project-operation guards reject conflicting actions",
+            "Other-container actions preserve selected logs and ready terminal session",
+            "Row actions render in FerryDock and Light themes and at 820/1440 widths",
             "Compose source path and linked worktree tag",
             "Pointer-hover ordered Compose files and worktree tooltip",
             "Project menu cleanup review Cancel and Escape prevent execution",
@@ -2528,6 +2546,166 @@ fn verify_project_cleanup(h: &mut Harness) {
     );
     h.deliver(Event::ComposeProjects(projects));
     h.deliver(Event::Snapshot(containers));
+}
+
+fn verify_container_row_widths(h: &mut Harness) {
+    for (width, frame) in [
+        (820.0, "container-row-actions-narrow"),
+        (1440.0, "container-row-actions-wide"),
+    ] {
+        let mut sized = Harness::with_size(width, 820.0);
+        sized.deliver(Event::Connected(Connection {
+            name: "Headless fixture".into(),
+            endpoint: "fixture://no-docker".into(),
+        }));
+        sized.deliver(Event::Snapshot(vec![container(
+            "fixture-probe-running",
+            "headless-fixture-probe-1",
+            "running",
+            Some("headless-fixture"),
+        )]));
+        sized.capture(frame);
+        sized
+            .cx
+            .update_window(sized.window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let row = window.find("row-fixture-probe-running").bounds();
+                let restart = window.find("row-restart-fixture-probe-running").bounds();
+                let primary = window.find("row-primary-fixture-probe-running").bounds();
+                let more = window.find("row-more-fixture-probe-running").bounds();
+                assert!(restart.left() >= row.left() + px(130.0));
+                assert!(restart.right() <= primary.left());
+                assert!(primary.right() <= more.left());
+                assert!(
+                    more.right() <= row.right(),
+                    "Row actions must fit the window"
+                );
+            })
+            .unwrap();
+        sized.drain_commands();
+        sized.click("row-primary-fixture-probe-running");
+        assert!(sized.drain_commands().iter().any(|command| matches!(command, Command::Action { id, action: Action::Stop } if id == "fixture-probe-running")));
+        sized.capture(&format!("{frame}-pending"));
+        h.screenshots.extend(sized.screenshots.iter().cloned());
+        h.actions.extend(sized.actions.iter().cloned());
+        h.frame_timings.extend(sized.frame_timings.iter().cloned());
+    }
+}
+
+fn verify_container_row_actions(h: &mut Harness) {
+    let dock_height = h.dock_height();
+    h.drag_dock(400.0);
+    let selected = h.observe(|v| v.containers.selected.clone());
+    let terminal = h.observe(|v| v.terminal.view.as_ref().unwrap().entity_id());
+    let generation = h.observe(|v| v.terminal.generation);
+    let logs_generation = h.observe(|v| v.container_logs.generation);
+    let running_only = h.observe(|v| v.containers.running_only);
+    let filter = h.observe(|v| v.containers.filter.clone());
+    h.click("search");
+    h.key("ctrl-a");
+    h.key("backspace");
+    h.key("escape");
+    if running_only {
+        h.click("all");
+    }
+    h.capture("container-row-actions");
+    h.drain_commands();
+    h.click("row-restart-fixture-standalone");
+    let commands = h.drain_commands();
+    assert!(
+        matches!(commands.as_slice(), [Command::Action { id, action: Action::Restart }] if id == "fixture-standalone")
+    );
+    h.capture("container-row-restart-pending");
+    h.click("row-restart-fixture-standalone");
+    h.click("row-primary-fixture-standalone");
+    assert!(
+        h.drain_commands().is_empty(),
+        "Pending row controls must reject duplicate and conflicting actions"
+    );
+    h.deliver(Event::ActionFinished {
+        id: "fixture-standalone".into(),
+        result: Ok(()),
+    });
+    h.dismiss_image_feedback();
+
+    h.drain_commands();
+    h.click("row-primary-fixture-standalone");
+    assert!(
+        matches!(h.drain_commands().as_slice(), [Command::Action { id, action: Action::Stop }] if id == "fixture-standalone")
+    );
+    h.deliver(Event::ActionFinished {
+        id: "fixture-standalone".into(),
+        result: Ok(()),
+    });
+    h.dismiss_image_feedback();
+
+    h.drain_commands();
+    h.click("row-primary-fixture-probe-stopped");
+    assert!(
+        matches!(h.drain_commands().as_slice(), [Command::Action { id, action: Action::Start }] if id == "fixture-probe-stopped")
+    );
+    h.capture("container-row-start-pending");
+    h.deliver(Event::ActionFinished {
+        id: "fixture-probe-stopped".into(),
+        result: Ok(()),
+    });
+    h.dismiss_image_feedback();
+
+    h.click("row-more-fixture-standalone");
+    assert_eq!(
+        h.observe(|v| v.containers.selected.clone()),
+        selected,
+        "Opening a row menu must preserve selection"
+    );
+    h.capture("container-row-menu");
+    h.drain_commands();
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.within("popup-menu").click(8, cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    assert!(
+        matches!(h.drain_commands().as_slice(), [Command::Action { id, action: Action::Stop }] if id == "fixture-standalone")
+    );
+    assert_eq!(h.observe(|v| v.containers.selected.clone()), selected);
+    assert!(h.observe(|v| v.tab == Tab::Terminal));
+    assert_eq!(h.observe(|v| v.terminal.generation), generation);
+    assert_eq!(h.observe(|v| v.container_logs.generation), logs_generation);
+    assert_eq!(
+        h.observe(|v| v.terminal.view.as_ref().unwrap().entity_id()),
+        terminal
+    );
+    assert!(
+        h.cx.read_entity(&h.view, |v, cx| v
+            .terminal
+            .view
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .ready),
+        "Another container's action must keep the current shell ready"
+    );
+    h.deliver(Event::ActionFinished {
+        id: "fixture-standalone".into(),
+        result: Ok(()),
+    });
+    h.dismiss_image_feedback();
+    h.click("settings");
+    h.click("theme-light");
+    h.click("settings");
+    h.capture("container-row-actions-light");
+    h.click("settings");
+    h.click("theme-ferrydock");
+    h.click("settings");
+    if running_only {
+        h.click("all");
+    }
+    h.click("search");
+    h.key("ctrl-a");
+    h.type_text(&filter);
+    h.key("escape");
+    h.drag_dock(h.dock_height() - dock_height);
+    h.drain_commands();
 }
 
 fn verify_images_workspace(h: &mut Harness) {

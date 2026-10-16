@@ -1,6 +1,7 @@
 //! Virtualized resource list using Kit rows, state tags, and empty states.
 use super::FerryDock;
 use super::ui::{empty_state, palette};
+use crate::docker::Action;
 use crate::model::{Container, GroupKey, groups};
 use gpui::{prelude::*, *};
 use gpui_kit::base::TestSupportExt;
@@ -9,7 +10,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     empty::EmptyContent,
     list::ListItem,
-    menu::ContextMenuExt,
+    menu::{ContextMenuExt, DropdownMenu},
     scroll::{Scrollbar, ScrollbarMode},
     spinner::Spinner,
     tag::Tag,
@@ -28,6 +29,78 @@ impl super::containers::Containers {
 }
 
 impl FerryDock {
+    fn container_row_actions(
+        &self,
+        container: &Container,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let colors = palette(cx);
+        let unavailable = self.container_action_unavailable(container);
+        let pending = self.containers.busy.get(&container.id);
+        let primary = if container.running() {
+            Action::Stop
+        } else {
+            Action::Start
+        };
+        div()
+            .id(SharedString::from(format!("row-actions-{}", container.id)))
+            .w(px(216.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap_1()
+            // Disabled buttons and menu triggers must not select the row either.
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .when(container.running(), |view| {
+                let id = container.id.clone();
+                view.child(
+                    Button::new(SharedString::from(format!("row-restart-{id}")))
+                        .small()
+                        .ghost()
+                        .label("Restart")
+                        .icon(IconName::RefreshCw)
+                        .text_color(rgb(colors.muted))
+                        .disabled(unavailable)
+                        .loading(matches!(pending, Some(Action::Restart)))
+                        .tooltip(format!("Restart {}", container.name))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.container_action(&id, Action::Restart, window, cx);
+                        })),
+                )
+            })
+            .child({
+                let id = container.id.clone();
+                Button::new(SharedString::from(format!("row-primary-{id}")))
+                    .small()
+                    .ghost()
+                    .label(primary.label())
+                    .icon(if container.running() {
+                        gpui_kit::assets::IconName::Square
+                    } else {
+                        gpui_kit::assets::IconName::Play
+                    })
+                    .text_color(rgb(colors.muted))
+                    .disabled(unavailable)
+                    .loading(matches!(pending, Some(Action::Start | Action::Stop)))
+                    .tooltip(format!("{} {}", primary.label(), container.name))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.container_action(&id, primary, window, cx);
+                    }))
+            })
+            .child(
+                Button::new(SharedString::from(format!("row-more-{}", container.id)))
+                    .small()
+                    .ghost()
+                    .icon(IconName::Ellipsis)
+                    .text_color(rgb(colors.muted))
+                    .tooltip(format!("Actions for {}", container.name))
+                    .dropdown_menu(self.container_menu(container.id.clone(), cx)),
+            )
+    }
+
     pub(super) fn resources(&self, cx: &mut Context<Self>) -> AnyElement {
         let colors = palette(cx);
         let mut groups = groups(
@@ -154,7 +227,10 @@ impl FerryDock {
         let list = uniform_list(
             "containers-scroll",
             rows.len().max(1),
-            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+            cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
+                // Keep names and actions usable as the window gets narrower.
+                let show_ports = window.viewport_size().width >= px(1280.0);
+                let show_metrics = window.viewport_size().width >= px(1000.0);
                 range
                     .map(|index| match rows.get(index) {
                         Some(ResourceRow::Heading(project, count_label, has_children)) => {
@@ -354,11 +430,13 @@ impl FerryDock {
                                 && this.containers.selected.as_ref() == Some(&container.id);
                             let running = container.running();
                             let id = container.id.clone();
-                            let busy = this
-                                .containers
-                                .busy
-                                .get(&container.id)
-                                .map(|action| format!("{} in progress…", action.label()));
+                            let busy = this.containers.busy.get(&container.id).map(|action| {
+                                if show_metrics {
+                                    format!("{} in progress…", action.label())
+                                } else {
+                                    format!("{}…", action.label())
+                                }
+                            });
                             ListItem::new(SharedString::from(format!("row-{}", container.id)))
                                 .selected(selected)
                                 .accessibility_label(format!(
@@ -438,7 +516,8 @@ impl FerryDock {
                                         )
                                         .child(
                                             div()
-                                                .w(px(160.0))
+                                                .w(px(if show_metrics { 160.0 } else { 112.0 }))
+                                                .flex_shrink_0()
                                                 .text_size(px(12.0))
                                                 .text_color(rgb(if running {
                                                     colors.accent
@@ -474,19 +553,24 @@ impl FerryDock {
                                                         .child(container.status.clone()),
                                                 ),
                                         )
-                                        .child(this.metrics_row(container, cx))
-                                        .child(
-                                            div()
-                                                .w(px(140.0))
-                                                .text_size(px(12.0))
-                                                .text_color(rgb(colors.muted))
-                                                .text_ellipsis()
-                                                .child(if container.ports.is_empty() {
-                                                    "—".into()
-                                                } else {
-                                                    container.ports.clone()
-                                                }),
-                                        ),
+                                        .when(show_metrics, |row| {
+                                            row.child(this.metrics_row(container, cx))
+                                        })
+                                        .when(show_ports, |row| {
+                                            row.child(
+                                                div()
+                                                    .w(px(140.0))
+                                                    .text_size(px(12.0))
+                                                    .text_color(rgb(colors.muted))
+                                                    .text_ellipsis()
+                                                    .child(if container.ports.is_empty() {
+                                                        "—".into()
+                                                    } else {
+                                                        container.ports.clone()
+                                                    }),
+                                            )
+                                        })
+                                        .child(this.container_row_actions(container, cx)),
                                 )
                                 .context_menu(this.container_menu(container.id.clone(), cx))
                                 .into_any_element()

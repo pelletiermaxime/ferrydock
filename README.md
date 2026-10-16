@@ -30,9 +30,12 @@ the terminal, and container details close at hand.
   standalone container on the connected Docker endpoint. Review the command,
   choose a running instance when a service has replicas, and run it manually
   in the integrated interactive terminal.
-- **Start, stop, and restart containers.** See progress and any errors in the
-  detail panel. Associate Compose files to control a whole project, rebuild its
-  images and restart its services, and watch its operation output.
+- **Start, stop, and restart containers.** Use the actions at the right of each
+  container row or in its detail panel. Row actions keep your current logs or
+  terminal open when controlling another container. See progress in the row and
+  completion or errors in notifications. Associate Compose files to control a
+  whole project, rebuild its images and restart its services, and watch its
+  operation output.
 - **Inspect container configuration.** Read syntax-highlighted JSON with line
   numbers, text selection, folding, and built-in search. The view is read-only.
 - **Manage local images.** Open **Images** to search tags, digests, or image IDs,
@@ -156,7 +159,8 @@ display and Docker environment.
 4. To run commands in a running container, choose **Terminal**, select **Auto**,
    **Bash**, or **sh**, and click **Open shell**. Auto uses Bash when available
    and falls back to sh.
-5. Use **Start**, **Stop**, or **Restart** to control the selected container.
+5. Use **Start**, **Stop**, or **Restart** at the right of a container row, or in
+   the detail panel for the selected container. **⋯** opens its resource menu.
    Drag the divider above the detail panel to give logs or the terminal more
    space.
 
