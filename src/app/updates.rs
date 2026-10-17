@@ -241,7 +241,7 @@ impl FerryDock {
                     .child(format!("Install version {} and reopen FerryDock. Running containers stay running.", this.updates.version.as_deref().unwrap_or_default()))
                     .when(live_shell, |dialog| dialog.child(div().text_color(cx.theme().warning).child("Open terminal and quick-run sessions will close. Finish any commands you want to keep before restarting.")))
                     .footer(div().flex().justify_end().gap_2()
-                        .child(Button::new("update-restart-cancel").debug_selector(|| "update-restart-cancel".into()).label("Later").disabled(this.updates.applying).on_click(|_, window, cx| window.close_dialog(cx)))
+                        .child(Self::button("update-restart-cancel", "Later", false, this.updates.applying, cx).debug_selector(|| "update-restart-cancel".into()).on_click(|_, window, cx| window.close_dialog(cx)))
                         .child(Self::button("update-restart-confirm", "Restart and apply", false, this.update_restart_blocked() || this.updates.busy, cx)
                             .debug_selector(|| "update-restart-confirm".into())
                             .on_click(cx.listener(|this, _, _window, cx| {

@@ -200,7 +200,8 @@ Initialize Kit and its assets before constructing the application's Root view.
 
 Kit's `gpui-fast` feature and all direct GPUI engine/platform/WGPU dependencies
 must select the same backend so their public types remain compatible. The
-versions and features are pinned in [Cargo.toml](../Cargo.toml); `tree-sitter`
+compatible version ranges and features are declared in [Cargo.toml](../Cargo.toml),
+with resolved versions recorded in `Cargo.lock`; `tree-sitter`
 enables the JSON grammar, and `windows-manifest-provided-by-host` avoids
 supplying a second Windows manifest alongside Kit.
 
@@ -208,6 +209,12 @@ Appearance uses Kit's semantic theme tokens. Settings offers FerryDock's
 charcoal/mint default, Dark, and Light. Update all views from the same palette,
 including log and terminal defaults; preserve explicit ANSI backgrounds and
 keep bright text readable on Light surfaces.
+
+Use the shared `FerryDock::button` helper in `src/app/ui.rs` for standard action
+buttons, including every action in a custom dialog footer. It supplies Kit's
+small outlined Button with the shared palette and disabled styling. Keep size
+and spacing consistent within an action row; use Kit's specialized variants
+only when the control's role calls for them.
 
 Preferences are saved in `$XDG_CONFIG_HOME/ferrydock/appearance.json`, falling
 back to `~/.config/ferrydock/appearance.json`, separately from Compose settings.

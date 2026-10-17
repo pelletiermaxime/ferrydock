@@ -16,6 +16,21 @@ from verification_evidence import keep_runs, prune_runs
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def resolved_gpui_version(manifest, lock):
+    packages = {manifest["dependencies"][name]["package"]
+                for name in ("gpui", "gpui_platform", "gpui_wgpu")}
+    versions = set()
+    for name in packages:
+        resolved = {package["version"] for package in lock["package"]
+                    if package["name"] == name}
+        if len(resolved) != 1:
+            raise RuntimeError(f"Expected one resolved version of {name} in Cargo.lock")
+        versions.update(resolved)
+    if len(versions) != 1:
+        raise RuntimeError("GPUI packages must resolve to the same version")
+    return next(iter(versions))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, help="New evidence directory; existing paths are refused")
@@ -44,11 +59,9 @@ def main():
     command = ["cargo", "test", "--lib", "--features", "headless-tests", "--locked", "--offline",
                test_name, "--", "--nocapture", "--test-threads=1"]
     manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
-    revisions = {manifest["dependencies"][name]["version"] for name in ("gpui", "gpui_platform", "gpui_wgpu")}
-    if len(revisions) != 1:
-        raise RuntimeError("GPUI packages must share one pinned snapshot version")
+    lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
     report = {"status": "failed", "selected_flow": args.flow, "evidence": str(evidence), "command": command,
-              "gpui_snapshot": next(iter(revisions)),
+              "gpui_snapshot": resolved_gpui_version(manifest, lock),
               "gpui_engine": manifest["dependencies"]["gpui"]["package"],
               "display": None, "wayland_display": None,
               "custom_evidence": args.evidence is not None,
