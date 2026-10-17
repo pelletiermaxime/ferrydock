@@ -18,7 +18,6 @@ class HeadlessDependencyTests(unittest.TestCase):
             for alias, package in (
                 ('gpui', 'gpui-fast'),
                 ('gpui_platform', 'gpui-fast-platform'),
-                ('gpui_wgpu', 'gpui-fast-wgpu'),
             )
         }}
         self.lock = {'package': [

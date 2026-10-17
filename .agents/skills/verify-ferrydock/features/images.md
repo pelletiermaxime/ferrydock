@@ -32,8 +32,8 @@ preserves images referenced by running or stopped containers. Pending pruning
 blocks conflicting Docker actions; completion refreshes inventory and reports
 reclaimed MiB or unavailable space.
 
-Use `python3 scripts/verify-headless.py` for GPUI input and GPU rendering proof.
-Inspect the `images-*` screenshots: inventory, stopped reference, search/no
+Use `python3 scripts/verify-headless.py` for GPUI input and Kit layout proof.
+The `images-*` checkpoints cover inventory, stopped reference, search/no
 matches, untagged/unavailable size, removal review, removing/failure/success,
 Light, large inventory/search, discovery failure and disconnection. The flow
 asserts rendered column alignment, fewer than 40 rendered rows for 10,000 images,
@@ -42,11 +42,11 @@ Cancel and duplicate-operation protection, references appearing during review,
 stale snapshots, and disconnected operation results. Discovery is supplied at
 the worker boundary; these checks perform no real Docker mutation.
 The detail flow clicks all tabs and uses the keyboard shortcuts, verifies
-read-only JSON typing and search, syntax-coloured glyphs, history context-copy feedback,
+read-only JSON typing and search, editor visibility, history context-copy feedback,
 empty/error/loading states, refresh retry, stale generation/wrong-ID/closed
 workspace/disconnect guards, reconnect requests and 2,000-entry virtualization.
-Inspect `images-history*` and `images-inspect*` screenshots, including the Light
-history frame. Table checks cover header/cell alignment with long commands, a
+The `images-history*` and `images-inspect*` checkpoints include Light history.
+No screenshot or syntax-color assertion runs in the headless tests. Table checks cover header/cell alignment with long commands, a
 53-command sample, actual divider dragging, column toggles retaining width and
 row selection, filtered original step numbers, pointer/keyboard command copying,
 full-command dialog read-only typing/search and double-click/Enter/Close,
@@ -55,8 +55,8 @@ folding remain outside this flow.
 Sorting checks click every header in both directions, verify numeric size/count
 ordering and rendered row positions, keep unavailable sizes last, preserve the
 selected ID through sorting/filtering/refreshed snapshots, and send no worker
-commands. Inspect the `images-size-ascending`, `images-size-descending`,
-`images-references-descending`, and `images-name-descending` screenshots.
+commands. Checkpoints include `images-size-ascending`, `images-size-descending`,
+`images-references-descending`, and `images-name-descending`.
 Multi-selection checks dispatch real Ctrl-modified pointer events, verify Kit
 row highlights and empty-selection protection, retain selection through sorting,
 filtering and refreshed snapshots, review hidden targets, confirm exact bulk
@@ -64,15 +64,14 @@ IDs, reject duplicates/stale results, and check partial/full success selection.
 Popup checks include Cancel/Escape, pointer confirmation, stale-reference and
 disconnected invalidation. Age checks sort raw timestamps both ways (youngest
 first ascending, oldest first descending),
-keep unavailable values last, and assert aligned date cells. Inspect the
-`images-age-oldest-first` and `images-age-youngest-first` frames.
-Inspect the `images-multiple-*` screenshots, including hidden selection/review
-and completion feedback. No removal-results panel should appear in the workspace.
+keep unavailable values last, and assert aligned date cells. Checkpoints include
+`images-age-oldest-first`, `images-age-youngest-first` and `images-multiple-*`,
+including hidden selection/review and completion feedback. No removal-results panel should appear in the workspace.
 
 Prune checks drive Cancel/Escape, neutral Enter, both mode buttons, pending and
 duplicate guards, stale completion, success/error/unavailable-space feedback,
-and refresh with selection preserved. Inspect `images-prune-review`,
-`images-prune-pending`, `images-prune-success` and `images-prune-feedback` frames.
+and refresh with selection preserved. Checkpoints include `images-prune-review`,
+`images-prune-pending`, `images-prune-success` and `images-prune-feedback`.
 `cargo test --locked --test images_prune` verifies the real Bollard request filters,
 reclaimed bytes and daemon-error propagation against an owned Unix socket API
 fixture. It performs no real Docker pruning.
@@ -108,7 +107,7 @@ refresh, workspace closure and disconnect invalidate it.
 Analyze/Cancel requests, stale/wrong-image results, retry, layer selection,
 folder expansion, Files/Findings, metadata-only and unavailable-efficiency
 states, keyboard navigation, 2,000 layers/10,000 files and Light rendering.
-Inspect Files, expanded-folder, Findings, Light and disconnected frames.
+Named checkpoints cover Files, expanded-folder, Findings, Light and disconnected states.
 This uses fixture events at the Docker worker boundary.
 
 `bash scripts/verify-image-analysis.sh` independently builds an owned labelled

@@ -20,9 +20,9 @@ Stop, start and restart a container through its row actions or detail-dock contr
 
 ## Driving it with native.py
 
-Preconditions: headless checks need cached dependencies and a usable Linux WGPU driver; native checks additionally need the skill's native Doctor, owned fixture selection and pointer calibration.
+Preconditions: headless checks need cached dependencies and the GPUI Kit test runtime; native checks additionally need the skill's native Doctor, owned fixture selection and pointer calibration.
 
-- **Headless development check:** `python3 scripts/verify-headless.py` clicks the painted detail Stop and row Start/Stop/Restart controls through GPUI and asserts the outgoing fixture container IDs/actions. Row menu lifecycle actions preserve selection, log generation, terminal identity and shell readiness. Pending clicks and project-operation conflicts are blocked. Default/Light, pending, menu and 820/1440-wide row frames are retained; the width checks also click Stop. This proves rendering and requests at the fixture worker boundary. No real container is changed; daemon lifecycle results and physical desktop input remain outside this flow.
+- **Headless development check:** `python3 scripts/verify-headless.py` clicks the painted detail Stop and row Start/Stop/Restart controls through GPUI and asserts the outgoing fixture container IDs/actions. Row menu lifecycle actions preserve selection, log generation, terminal identity and shell readiness. Pending clicks and project-operation conflicts are blocked. Default/Light, pending, menu and 820/1440-wide row checkpoints are recorded; the width checks also click Stop. This proves rendering and requests at the fixture worker boundary. No real container is changed; daemon lifecycle results and physical desktop input remain outside this flow.
 
 The native fixture below can safely stop because it has no data or host mounts.
 

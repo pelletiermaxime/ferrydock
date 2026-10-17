@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the real headless GPU UI flow, preserving evidence without a desktop or Docker."""
+"""Run headless GPUI input tests without screenshots, a desktop or Docker."""
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def resolved_gpui_version(manifest, lock):
     packages = {manifest["dependencies"][name]["package"]
-                for name in ("gpui", "gpui_platform", "gpui_wgpu")}
+                for name in ("gpui", "gpui_platform")}
     versions = set()
     for name in packages:
         resolved = {package["version"] for package in lock["package"]
@@ -47,22 +47,23 @@ def main():
     env.pop("WAYLAND_DISPLAY", None)
     env["FERRYDOCK_HEADLESS_EVIDENCE"] = str(evidence)
     test_name = {
-        "all": "headless_tests::headless_gpu_user_flow",
-        "volumes": "headless_tests::headless_gpu_volume_flow",
-        "analysis": "headless_tests::headless_gpu_image_analysis_flow",
-        "networks": "headless_tests::headless_gpu_network_flow",
-        "favorites": "headless_tests::headless_gpu_favorites_flow",
-        "quick-run": "headless_tests::headless_gpu_quick_run_flow",
-        "updates": "headless_tests::update_flow::headless_gpu_update_flow",
-        "lifecycle": "headless_tests::lifecycle_flow::headless_gpu_lifecycle_flow",
+        "all": "app::kit_tests::user_flow::journey",
+        "volumes": "app::kit_tests::volumes::journey",
+        "analysis": "app::kit_tests::image_analysis::journey",
+        "networks": "app::kit_tests::networks::journey",
+        "favorites": "app::kit_tests::favorites::journey",
+        "quick-run": "app::kit_tests::quick_run::journey",
+        "updates": "app::kit_tests::updates::journey",
+        "lifecycle": "app::kit_tests::lifecycle::journey",
     }[args.flow]
     command = ["cargo", "test", "--lib", "--features", "headless-tests", "--locked", "--offline",
-               test_name, "--", "--nocapture", "--test-threads=1"]
+               test_name, "--", "--exact", "--nocapture", "--test-threads=1"]
     manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
     lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
     report = {"status": "failed", "selected_flow": args.flow, "evidence": str(evidence), "command": command,
               "gpui_snapshot": resolved_gpui_version(manifest, lock),
               "gpui_engine": manifest["dependencies"]["gpui"]["package"],
+              "framework": "gpui-kit", "real_gpu": False,
               "display": None, "wayland_display": None,
               "custom_evidence": args.evidence is not None,
               "cargo_lock_sha256": hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest()}
@@ -77,11 +78,8 @@ def main():
             if code:
                 raise RuntimeError("Headless UI test failed; see test.log")
             flow = json.loads((evidence / "headless.json").read_text())
-            if flow["status"] != "passed" or not flow["screenshots"]:
-                raise RuntimeError("Missing successful GPU flow report")
-            for name in flow["screenshots"]:
-                if not (evidence / name).is_file():
-                    raise RuntimeError("Missing retained screenshot: " + name)
+            if flow["status"] != "passed" or not flow["checkpoints"]:
+                raise RuntimeError("Missing successful headless flow report")
             report.update(status="passed", flow=flow)
         except (Exception, KeyboardInterrupt) as failure:
             error = str(failure) or type(failure).__name__

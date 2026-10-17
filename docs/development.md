@@ -198,7 +198,7 @@ Keep the virtualized ANSI log views and Alacritty terminal rendering specialized
 Inspect uses Kit's read-only JSON editor with syntax highlighting and search.
 Initialize Kit and its assets before constructing the application's Root view.
 
-Kit's `gpui-fast` feature and all direct GPUI engine/platform/WGPU dependencies
+Kit's `gpui-fast` feature and all direct GPUI engine/platform dependencies
 must select the same backend so their public types remain compatible. The
 compatible version ranges and features are declared in [Cargo.toml](../Cargo.toml),
 with resolved versions recorded in `Cargo.lock`; `tree-sitter`
@@ -264,8 +264,8 @@ are not stopped by the updater.
 
 Run `cargo test --lib updater::tests -- --test-threads=1` for owned loopback HTTP,
 checksum/size/header rejection, preference, replacement and rollback checks.
-Run `python3 scripts/verify-headless.py --flow updates` for GPUI input and GPU
-screenshots of the Settings, progress, ready, review and failure states. The
+Run `python3 scripts/verify-headless.py --flow updates` for GPUI input checks of
+the Settings, progress, ready, review and failure states. The
 fixture UI flow checks requests rather than exiting its test process. A public
 GitHub old-to-new update and a packaged desktop restart require separate proof.
 
@@ -516,12 +516,38 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 python3 scripts/verify-headless.py
 ```
 
-The headless flow uses the real FerryDock view, WGPU renderer, and GPUI keyboard
-and pointer events. It needs Python 3.11+, cached Cargo dependencies, and a
-usable Linux graphics driver. It removes display variables only from its child
-and supplies fixture events at the Docker worker boundary. No desktop window
-or Docker worker starts. The optional `headless-tests` feature stays disabled
-in normal builds.
+The headless flow uses the real FerryDock view and GPUI Kit's
+`#[gpui_kit::test]` runner with `TestAppContext`. It needs Python 3.11+ and cached
+Cargo dependencies, but no GPU renderer, display server or Docker daemon.
+The wrapper removes display variables only from its child and supplies fixture
+events at the Docker worker boundary. The optional `headless-tests` feature
+stays disabled in normal builds.
+
+Tests live in `src/app/kit_tests/`: `mod.rs` composes the suite, `support.rs`
+owns the shared fixture/input helpers, and feature modules hold their journeys
+and assertions. Keep new feature checks in that folder rather than extending a
+single application-wide test file. The broad `user_flow` journey retains the
+cross-feature session/focus checks; focused journeys run independently through
+`python3 scripts/verify-headless.py --flow FLOW`.
+
+Use `gpui_kit::test::TestWindowExt` for element lookup, clicks, right/double
+clicks, keyboard/text input, wheel scrolling and dragging. Kit 0.7.3 does not
+expose pointer modifiers or hover offsets, so only Ctrl-click and
+position-specific hover use small native-event adapters. Use Kit's
+`TestAppContextExt::wait_for` to observe deferred popups. Notification dismissal
+first hovers the visible toast to reveal Close. The Updates flow uses the visible
+Settings restart entry after lifecycle feedback covers the banner.
+
+Test contexts enable reduced motion and advance GPUI's test clock for lifecycle
+timers and deferred focus restoration. Do not sleep to wait for animations.
+Keep the existing timer ticks and intermediate frames in `settle_ui`; these
+preserve worker polling, tooltip state and deferred focus. The harness explicitly
+shuts down every owned context and flushes the final input actions through its
+shared `finish` helper.
+Production animation/theme settings are unchanged. Headless checkpoints record
+input/layout evidence with `real_gpu: false`; they do not capture screenshots or
+prove pixel colors, contrast or actual GPU rendering. Use native verification
+for visual and compositor behavior.
 
 Coverage includes search/editing, resource menus, themes and persistence,
 log scrolling/ANSI rendering, Inspect search/read-only behavior, resizing,
@@ -532,7 +558,7 @@ UI behavior; real operations require the separate integration checks:
 | Command | Boundary exercised |
 | --- | --- |
 | `bash scripts/verify-docker.sh` | Real discovery/logs, Start/Stop/Restart, interactive shell I/O, PTY resize, ANSI parsing, full-screen vi, shell exit, missing Bash |
-| `python3 scripts/verify-headless.py --flow lifecycle` | GPU/input proof of lifecycle markers, timestamp ordering, refresh/navigation retention, project service filter, replay/session/endpoint guards, event-stream warnings and Light rendering |
+| `python3 scripts/verify-headless.py --flow lifecycle` | Kit input/layout proof of lifecycle markers, timestamp ordering, refresh/navigation retention, project service filter, replay/session/endpoint guards, event-stream warnings and Light rendering |
 | `bash scripts/verify-docker.sh docker_external_lifecycle_markers` | Production event listener observes external Docker CLI stop/start/restart on the owned fixture with container/project/service identity |
 | `bash scripts/verify-compose.sh` | Production worker/Compose CLI, saved configuration and override order, environment/profiles, lifecycle effects, changed build inputs and rebuilt image/container contents, build failure without stopping services, streamed failures, restart/rebuild/recreation log recovery, bounded batches |
 | `cargo test --locked --test volumes_prune` | Owned Unix HTTP fixtures: exact anonymous/all-unused filters, deleted names and reclaimed bytes, empty/zero/unavailable results, Docker errors and old-API refusal |
@@ -629,7 +655,7 @@ actual display on your workstation. See the
 [verification feature map](../.agents/skills/verify-ferrydock/features/README.md)
 for entry points and the coverage boundaries of each flow.
 
-Headless checks establish GPUI input and GPU rendering using fixture worker
+Headless checks establish GPUI input and layout using fixture worker
 events. Docker and Compose integration checks establish daemon/CLI behavior
 separately. Neither proves native desktop input or operating-system clipboard
 behavior. The native log-load helper covers log reading and search on its
@@ -662,22 +688,21 @@ For the focused Networks input/rendering flow, run
 `python3 scripts/verify-headless.py --flow networks`. It exercises search,
 selection, configured stopped endpoints, full-value copying in the virtual
 clipboard, errors/retry, stale guards, container routing and large-list
-virtualization. Inspect its endpoint, scoped-network and Light screenshots.
+virtualization, with named endpoint, scoped-network and Light checkpoints.
 `bash scripts/verify-networks.sh` separately verifies production worker reads
 against two uniquely labelled bridge networks and two Alpine containers, one
 stopped. The fixture has no published ports, host mounts or volumes. Its test
 disconnects only its owned running endpoint to verify membership reconciliation;
 cleanup removes only the fixture's labelled containers/networks. Require
 `.verification/networks/<run>/result.json` with `status: passed` and
-`cleanup_success: true`. Headless screenshots do not prove native desktop input;
+`cleanup_success: true`. Headless input tests do not prove native desktop input;
 worker tests do not prove user-interface interactions or DNS reachability.
 
 ## CI and releases
 
 [Tests](../.github/workflows/ci.yml) runs on pushes to `main`, pull requests,
 and manual dispatches. It checks formatting, Clippy, Rust and Python tests, the disposable
-Docker and Compose integration fixtures, and the headless UI flow with Mesa's
-software GPU driver. Headless and Compose evidence are retained as workflow
+Docker and Compose integration fixtures, and the GPUI Kit headless UI flow. Headless and Compose evidence are retained as workflow
 artifacts for seven days.
 
 Pull requests run the full Linux suite only; newer commits cancel superseded
@@ -819,8 +844,8 @@ results and stopped/changed-target guards. The owned Docker test
 `bash scripts/verify-docker.sh quick_run_terminals_preserve_interactive_sessions`
 corroborates independent regular/two-quick PTYs with separately read files.
 
-Run `python3 scripts/verify-headless.py --flow favorites` for real GPUI input and
-screenshots, including running/success/failure, continued use of the same shell,
+Run `python3 scripts/verify-headless.py --flow favorites` for real GPUI input
+checks, including running/success/failure, continued use of the same shell,
 partial-input protection, manager persistence/focus and scope guards. Preferences
 use an isolated evidence path. `bash scripts/verify-docker.sh
 favorite_command_uses_an_interactive_pty` exercises the real sh worker in its

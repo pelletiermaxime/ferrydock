@@ -103,6 +103,8 @@ jobs:
         run: python3 scripts/verify-headless.py --flow quick-run --timeout 900
       - name: Headless Networks UI tests
         run: python3 scripts/verify-headless.py --flow networks --timeout 900
+      - name: Headless lifecycle UI tests
+        run: python3 scripts/verify-headless.py --flow lifecycle --timeout 900
       - name: Headless UI tests
         run: python3 scripts/verify-headless.py --timeout 900
       - name: Headless image analysis UI tests

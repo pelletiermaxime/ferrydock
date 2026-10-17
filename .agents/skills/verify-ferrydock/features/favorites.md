@@ -29,9 +29,9 @@ project-header button (first three pins). **Quick runs** reopens interactive
 consoles; Hide keeps them alive and End session releases one. Idle quick shells
 are reused, busy ones stay intact, and at most six are retained.
 
-Run `python3 scripts/verify-headless.py --flow quick-run`. Inspect search,
+Run `python3 scripts/verify-headless.py --flow quick-run`. Checkpoints cover search,
 connecting/running/completed/failed, project pin, replica picker and unavailable
-frames. This exercises keyboard input from a regular terminal and quick console,
+states. This exercises keyboard input from a regular terminal and quick console,
 pin/recent-use persistence, independent sessions, idle reuse and stale target/
 endpoint guards. The separate owned Docker test
 `bash scripts/verify-docker.sh quick_run_terminals_preserve_interactive_sessions`
@@ -41,14 +41,14 @@ files, closing one preserves the others, and exit 0/1 reaches the right session.
 The quick-run flow also checks launcher/pin protection during target and Compose
 project restarts, then launches and sends a pending favorite while another service
 in the same project restarts. The favorites flow checks the terminal Run button
-blocks a target restart and permits another replica's restart. Inspect the
-`quick-*-restart-*` and `favorites-*-restart-*` frames; these use worker events
+blocks a target restart and permits another replica's restart. The
+`quick-*-restart-*` and `favorites-*-restart-*` checkpoints use worker events
 for operation state and real GPUI input for launch.
 
-Run `python3 scripts/verify-headless.py --flow favorites`. Inspect manager/editor,
+Run `python3 scripts/verify-headless.py --flow favorites`. Checkpoints cover manager/editor,
 terminal selector, running/completed/failed, partial-input protection, endpoint,
-stopped and recreated frames. Require result passed, owned process exited and
-all listed PNGs. Input uses the real GPUI view with a fixture worker and isolated
+stopped and recreated states. Require result passed, owned process exited and
+completed checkpoints. Input uses the real GPUI view with a fixture worker and isolated
 settings. It proves requests/rendering, not real shell or native desktop behavior.
 
 Run `bash scripts/verify-docker.sh favorite_command_uses_an_interactive_pty`.
@@ -67,4 +67,4 @@ Unit checks cover split prompt markers, unrelated/malformed escape preservation,
 bounded decoding, multiline grouping, persistence CRUD/endpoint separation and
 unreadable-file preservation. Native Favorites interaction, OS clipboard, other
 startup configurations and macOS remain outside these checks. Preserve run
-reports and screenshots under ignored `.verification/`.
+reports and actions under ignored `.verification/`.

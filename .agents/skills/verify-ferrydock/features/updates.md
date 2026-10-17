@@ -26,8 +26,8 @@ before apply, installed-file changes, atomic replacement and launch-failure
 rollback. They never touch the user's AppImage or Docker resources.
 
 The focused GPUI flow wires a fixture updater channel before driving controls.
-Inspect the Settings, downloading, ready, restart review, applying, failed
-restart, current and non-AppImage screenshots. Assertions require the preference,
+Checkpoints cover Settings, downloading, ready, restart review, applying, failed
+restart, current and non-AppImage states without screenshots. Assertions require the preference,
 check and Apply requests, block duplicate checks, show that readiness and Later
 do not apply, block new terminals while applying, and allow retry after failure.
 No production update endpoint is overridden and no desktop application is exited.

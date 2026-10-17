@@ -1,8 +1,10 @@
-#[test]
-fn headless_gpu_network_flow() {
+use super::*;
+
+#[gpui_kit::test]
+fn journey(test_cx: &mut TestAppContext) {
     use crate::networks::{Member, Network};
     let started = Instant::now();
-    let mut h = Harness::new();
+    let mut h = Harness::new(test_cx);
     h.deliver(Event::Connected(Connection {
         name: "Network fixture".into(),
         endpoint: "unix:///fixture.sock".into(),
@@ -78,13 +80,13 @@ fn headless_gpu_network_flow() {
     });
     let detail_generation = h.observe(|view| view.networks.detail_generation);
     assert!(h.drain_commands().iter().any(|command| matches!(command,Command::NetworkDetails {id,generation} if id == "demo-network" && *generation == detail_generation)));
-    h.capture("networks-loading-details");
+    h.checkpoint("networks-loading-details");
     h.deliver(Event::NetworkDetails {
         id: network.id.clone(),
         generation: detail_generation,
         result: Ok(network.clone()),
     });
-    h.capture("networks-endpoints");
+    h.checkpoint("networks-endpoints");
     h.click("network-copy-api");
     h.cx.update_window(h.window.into(), |_, _, cx| {
         let text = cx
@@ -101,11 +103,11 @@ fn headless_gpu_network_flow() {
     h.key("ctrl-f");
     h.type_text("other");
     assert_eq!(h.observe(|view| view.networks.visible.len()), 1);
-    h.capture("networks-search");
+    h.checkpoint("networks-search");
     h.key("ctrl-a");
     h.type_text("no-such-network");
     assert!(h.observe(|view| view.networks.visible.is_empty()));
-    h.capture("networks-empty-search");
+    h.checkpoint("networks-empty-search");
     h.key("ctrl-a");
     h.key("backspace");
     h.key("escape");
@@ -126,7 +128,7 @@ fn headless_gpu_network_flow() {
         generation: other_generation,
         result: Err("Fixture endpoint read failed".into()),
     });
-    h.capture("networks-detail-error");
+    h.checkpoint("networks-detail-error");
     h.key("ctrl-r");
     let generation = h.observe(|view| view.networks.generation);
     let current_details = h.observe(|view| view.networks.detail_generation);
@@ -143,7 +145,7 @@ fn headless_gpu_network_flow() {
         h.observe(|view| view.networks.selected.clone()),
         Some(other.id.clone())
     );
-    h.capture("networks-empty-endpoints");
+    h.checkpoint("networks-empty-endpoints");
     h.key("up");
     let detail_generation = h.observe(|view| view.networks.detail_generation);
     h.deliver(Event::NetworkDetails {
@@ -163,13 +165,9 @@ fn headless_gpu_network_flow() {
             .iter()
             .any(|command| matches!(command, Command::CloseNetworks))
     );
-    h.capture("networks-open-stopped-container");
+    h.checkpoint("networks-open-stopped-container");
     h.click("container-more");
-    h.cx.update_window(h.window.into(), |_, window, cx| {
-        window.within("popup-menu").click(3, cx)
-    })
-    .unwrap();
-    h.cx.run_until_parked();
+    h.click_popup_item(3);
     assert!(h.observe(|view| view.networks_open));
     let generation = h.observe(|view| view.networks.generation);
     h.deliver(Event::Networks {
@@ -183,7 +181,7 @@ fn headless_gpu_network_flow() {
         generation: detail_generation,
         result: Ok(network.clone()),
     });
-    h.capture("networks-for-container");
+    h.checkpoint("networks-for-container");
     h.click("network-show-all");
     assert_eq!(h.observe(|view| view.networks.visible.len()), 2);
     // Refresh preserves selection but rejects results from earlier requests.
@@ -207,7 +205,7 @@ fn headless_gpu_network_flow() {
         generation,
         result: Ok(many),
     });
-    h.capture("networks-large-inventory");
+    h.checkpoint("networks-large-inventory");
     assert!(h.observe(|view| view.networks.rows_rendered.get()) < 80);
     let selected = h.observe(|view| view.networks.selected.clone()).unwrap();
     let many_members = (0..2_000)
@@ -229,12 +227,12 @@ fn headless_gpu_network_flow() {
         generation: details,
         result: Ok(large),
     });
-    h.capture("networks-large-endpoints");
+    h.checkpoint("networks-large-endpoints");
     assert!(h.observe(|view| view.networks.members_rendered.get()) < 80);
     h.click("settings");
     h.click("theme-light");
     h.click("settings");
-    h.capture("networks-light");
+    h.checkpoint("networks-light");
     h.deliver(Event::Disconnected("Fixture Docker disconnected".into()));
     h.deliver(Event::NetworkDetails {
         id: selected,
@@ -242,7 +240,7 @@ fn headless_gpu_network_flow() {
         result: Ok(network.clone()),
     });
     assert!(h.observe(|view| view.networks.details.is_none() && view.networks.items.is_empty()));
-    h.capture("networks-disconnected");
+    h.checkpoint("networks-disconnected");
     h.deliver(Event::Connected(Connection {
         name: "Network fixture".into(),
         endpoint: "unix:///fixture.sock".into(),
@@ -258,7 +256,7 @@ fn headless_gpu_network_flow() {
         generation: details,
         result: Ok(network),
     });
-    h.capture("networks-reconnected");
+    h.checkpoint("networks-reconnected");
     h.deliver(Event::Connected(Connection {
         name: "Different context".into(),
         endpoint: "unix:///different.sock".into(),
@@ -271,19 +269,9 @@ fn headless_gpu_network_flow() {
         generation,
         result: Err("Fixture inventory unavailable".into()),
     });
-    h.capture("networks-inventory-error");
-    let report = json!({"status":"passed","renderer":"GPUI Kit gpui-fast WgpuHeadlessRenderer","docker_worker_started":false,
-        "screenshots":h.screenshots,"frame_timings":h.frame_timings,"render_and_flow_seconds":started.elapsed().as_secs_f64(),
+    h.checkpoint("networks-inventory-error");
+    let report = json!({"docker_worker_started":false,
+        "render_and_flow_seconds":started.elapsed().as_secs_f64(),
         "checks":["sidebar session preservation","search and keyboard selection","configured stopped endpoints and IPv4/IPv6 CIDR","aliases/DNS copy in virtual clipboard","detail failure/retry","refresh/selection/disconnect stale guards","open stopped container","container-scoped network navigation","10000 networks and 2000 virtualized endpoints","Light theme","reconnection"]});
-    std::fs::write(
-        h.evidence.join("headless.json"),
-        serde_json::to_vec_pretty(&report).unwrap(),
-    )
-    .unwrap();
-    std::fs::write(
-        h.evidence.join("actions.json"),
-        serde_json::to_vec_pretty(&h.actions).unwrap(),
-    )
-    .unwrap();
+    h.finish(report);
 }
-

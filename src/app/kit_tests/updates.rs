@@ -2,15 +2,15 @@
 use super::*;
 use crate::updater::{Command as UpdateCommand, Event as UpdateEvent, Worker};
 
-#[test]
-fn headless_gpu_update_flow() {
+#[gpui_kit::test]
+fn journey(test_cx: &mut TestAppContext) {
     let started = Instant::now();
-    let mut h = Harness::new();
+    let mut h = Harness::new(test_cx);
     let (worker, commands, events) = Worker::fixture();
     // Wire the fixture boundary before any input; behavior below uses only
     // painted controls and worker responses, never private action handlers.
     h.view.update(&mut h.cx, |view, _| {
-        view.updates = super::super::updates::Updates::fixture(worker);
+        view.updates = crate::app::updates::Updates::fixture(worker);
     });
     h.deliver(Event::Connected(Connection {
         name: "Updater fixture".into(),
@@ -33,7 +33,7 @@ fn headless_gpu_update_flow() {
     h.deliver(Event::TerminalReady { generation });
     let deliver = |h: &mut Harness, event| {
         events.try_send(event).unwrap();
-        h.cx.advance_clock(Duration::from_millis(40));
+        h.cx.executor().advance_clock(Duration::from_millis(40));
         h.cx.run_until_parked();
     };
     deliver(
@@ -50,7 +50,7 @@ fn headless_gpu_update_flow() {
     })
     .unwrap();
     h.cx.run_until_parked();
-    h.capture("updates-settings");
+    h.checkpoint("updates-settings");
     h.click("update-automatic");
     assert!(matches!(
         commands.try_recv(),
@@ -73,9 +73,9 @@ fn headless_gpu_update_flow() {
             total: 100 * 1_048_576,
         },
     );
-    h.capture("updates-downloading");
+    h.checkpoint("updates-downloading");
     deliver(&mut h, UpdateEvent::Ready("0.13.0".into()));
-    h.capture("updates-ready");
+    h.checkpoint("updates-ready");
     assert_eq!(
         h.observe(|v| v.terminal.generation),
         generation,
@@ -86,7 +86,7 @@ fn headless_gpu_update_flow() {
         "A downloaded update must never apply automatically"
     );
     h.click("update-restart");
-    h.capture("updates-restart-review");
+    h.checkpoint("updates-restart-review");
     h.deliver(Event::ActionStarted {
         id: "updater-probe".into(),
         action: Action::Restart,
@@ -105,7 +105,8 @@ fn headless_gpu_update_flow() {
         commands.try_recv().is_err(),
         "Later must leave the downloaded update staged"
     );
-    h.click("update-restart");
+    // Lifecycle feedback covers the banner; use the visible Settings entry.
+    h.click("update-restart-settings");
     h.click("update-restart-confirm");
     assert!(matches!(commands.try_recv(), Ok(UpdateCommand::Apply)));
     h.key("ctrl-k");
@@ -113,17 +114,17 @@ fn headless_gpu_update_flow() {
         !h.observe(|v| v.quick_surface_open()),
         "Applying must prevent opening another terminal"
     );
-    h.capture("updates-applying");
+    h.checkpoint("updates-applying");
     deliver(
         &mut h,
         UpdateEvent::Error("Could not restart; restored the previous AppImage".into()),
     );
-    h.capture("updates-restart-failed");
+    h.checkpoint("updates-restart-failed");
     assert!(!h.observe(|v| v.updates.applying));
     h.click("update-check");
     assert!(matches!(commands.try_recv(), Ok(UpdateCommand::Check)));
     deliver(&mut h, UpdateEvent::Current);
-    h.capture("updates-current");
+    h.checkpoint("updates-current");
     deliver(
         &mut h,
         UpdateEvent::Loaded {
@@ -136,7 +137,7 @@ fn headless_gpu_update_flow() {
         commands.try_recv().is_err(),
         "A package-managed installation must never self-replace"
     );
-    h.capture("updates-other-installation");
+    h.checkpoint("updates-other-installation");
     // Exercise the same Kit settings controls in Light at the minimum width.
     h.cx.update_window(h.window.into(), |_, window, cx| {
         window.within("settings-sidebar").click("0-0", cx);
@@ -149,11 +150,11 @@ fn headless_gpu_update_flow() {
     })
     .unwrap();
     h.cx.run_until_parked();
-    h.capture("updates-light");
-    let mut narrow = Harness::with_size(820.0, 640.0);
+    h.checkpoint("updates-light");
+    let mut narrow = Harness::with_size(&h.cx, 820.0, 640.0);
     let (worker, _commands, events) = Worker::fixture();
     narrow.view.update(&mut narrow.cx, |view, _| {
-        view.updates = super::super::updates::Updates::fixture(worker);
+        view.updates = crate::app::updates::Updates::fixture(worker);
     });
     events
         .try_send(UpdateEvent::Loaded {
@@ -161,7 +162,10 @@ fn headless_gpu_update_flow() {
             unavailable: None,
         })
         .unwrap();
-    narrow.cx.advance_clock(Duration::from_millis(40));
+    narrow
+        .cx
+        .executor()
+        .advance_clock(Duration::from_millis(40));
     narrow.cx.run_until_parked();
     narrow.key("ctrl-,");
     narrow
@@ -172,7 +176,7 @@ fn headless_gpu_update_flow() {
         })
         .unwrap();
     narrow.cx.run_until_parked();
-    narrow.capture("updates-light-narrow");
+    narrow.checkpoint("updates-light-narrow");
     narrow
         .cx
         .update_window(narrow.window.into(), |_, window, cx| {
@@ -184,20 +188,12 @@ fn headless_gpu_update_flow() {
             );
         })
         .unwrap();
-    h.screenshots.extend(narrow.screenshots.clone());
-    h.frame_timings.extend(narrow.frame_timings.clone());
+    h.checkpoints.extend(narrow.checkpoints.clone());
     h.actions.extend(narrow.actions.clone());
-    std::fs::write(h.evidence.join("headless.json"), serde_json::to_vec_pretty(&json!({
-        "status": "passed", "renderer": "GPUI Kit gpui-fast WgpuHeadlessRenderer",
+    h.finish(json!({
         "display": null, "wayland_display": null, "docker_worker_started": false,
-        "logical_width": 1180, "logical_height": 820, "pixel_width": 2360, "pixel_height": 1640,
+        "logical_width": 1180, "logical_height": 820,
         "render_and_flow_seconds": started.elapsed().as_secs_f64(),
-        "screenshots": h.screenshots, "frame_timings": h.frame_timings,
         "checks": ["Settings navigation", "automatic preference request", "manual check and duplicate guard", "download progress in MiB", "download preserves live shell", "ready banner without automatic apply", "restart review and Later", "new Docker mutation blocks stale restart review", "manual apply request", "apply blocks new terminals", "failed restart recovers and retries", "current release", "non-AppImage installation protected", "Light theme at minimum width"]
-    })).unwrap()).unwrap();
-    std::fs::write(
-        h.evidence.join("actions.json"),
-        serde_json::to_vec_pretty(&h.actions).unwrap(),
-    )
-    .unwrap();
+    }));
 }

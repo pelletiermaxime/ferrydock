@@ -42,7 +42,7 @@ refreshes discovery without recalculating surviving sizes. Late operations after
 disconnect are ignored. API 1.42+ is required for both modes.
 
 Run `python3 scripts/verify-headless.py --flow volumes` for focused GPUI input and
-WGPU rendering proof. The default full application flow includes these checks
+WKit layout proof. The default full application flow includes these checks
 as well. Inspect `volumes-*` frames for inventory, youngest/oldest-first age,
 aligned columns, multi-selection and hidden-target review, partial/full removal,
 stopped reference, no matches, pending/failure/success, Light theme, 10,000-row

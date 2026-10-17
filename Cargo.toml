@@ -22,10 +22,8 @@ hyper = "1.12.0"
 hyper-util = "0.1.21"
 # GPUI Kit and direct engine consumers must share its selected Fast backend.
 gpui-kit = { version = "0.7.3", features = ["gpui-fast", "tree-sitter"] }
-gpui = { package = "gpui-fast", version = "0.1.7", default-features = false, features = ["wayland", "x11", "windows-manifest-provided-by-host"] }
-gpui_platform = { package = "gpui-fast-platform", version = "0.1.7", default-features = false, features = ["font-kit", "wayland", "x11"] }
-gpui_wgpu = { package = "gpui-fast-wgpu", version = "0.1.7", optional = true, features = ["test-support"] }
-image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+gpui = { package = "gpui-fast", version = "0.1.9", default-features = false, features = ["wayland", "x11", "windows-manifest-provided-by-host"] }
+gpui_platform = { package = "gpui-fast-platform", version = "0.1.9", default-features = false, features = ["font-kit", "wayland", "x11"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "process", "io-util", "macros", "fs"] }
@@ -49,7 +47,7 @@ hyper-named-pipe = "0.1.1"
 embed-resource = "3.0.12"
 
 [features]
-headless-tests = ["gpui/test-support", "gpui-kit/test-support", "gpui_platform/test-support", "dep:gpui_wgpu", "dep:image"]
+headless-tests = ["gpui/test-support", "gpui-kit/test-support"]
 
 [profile.dev]
 debug = 0
@@ -62,8 +60,7 @@ opt-level = 2
 [profile.dev.package.taffy]
 opt-level = 2
 
-# PNG readback is part of the development verification loop. Optimize these
-# stable dependencies while keeping FerryDock itself quick to rebuild.
+# Optimize stable image dependencies while keeping FerryDock quick to rebuild.
 [profile.dev.package.image]
 opt-level = 2
 

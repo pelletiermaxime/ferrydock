@@ -202,5 +202,4 @@ impl FerryDock {
 }
 
 #[cfg(all(test, feature = "headless-tests", target_os = "linux"))]
-#[path = "headless_tests.rs"]
-mod headless_tests;
+mod kit_tests;

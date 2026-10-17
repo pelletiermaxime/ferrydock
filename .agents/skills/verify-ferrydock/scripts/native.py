@@ -64,10 +64,10 @@ def base_doctor(binary, env):
         raise RuntimeError("DISPLAY is missing. On this observed desktop use --display :0.")
     if not binary.is_file():
         raise RuntimeError("Build first: cargo build --release --locked")
-    # This module is compiled only for the optional headless unit tests. Editing
-    # it should not make a current shipping binary appear stale.
+    # Kit test modules are absent from shipping builds. Their edits do not
+    # make a current shipping binary appear stale.
     sources = [path for path in (ROOT / "src").rglob("*.rs")
-               if path != ROOT / "src/headless_tests.rs"] + [ROOT / "Cargo.toml", ROOT / "Cargo.lock"]
+               if ROOT / "src/app/kit_tests" not in path.parents] + [ROOT / "Cargo.toml", ROOT / "Cargo.lock"]
     if any(path.stat().st_mtime > binary.stat().st_mtime for path in sources):
         raise RuntimeError("Release binary predates source/config; rebuild with cargo build --release --locked")
     command(["xdotool", "getdisplaygeometry"], env)

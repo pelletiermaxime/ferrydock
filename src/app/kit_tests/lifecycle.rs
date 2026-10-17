@@ -15,9 +15,9 @@ fn marker(
     })).unwrap()).unwrap()
 }
 
-#[test]
-fn headless_gpu_lifecycle_flow() {
-    let mut h = Harness::new();
+#[gpui_kit::test]
+fn journey(test_cx: &mut TestAppContext) {
+    let mut h = Harness::new(test_cx);
     h.deliver(Event::Connected(Connection {
         name: "Fixture".into(),
         endpoint: "fixture://lifecycle".into(),
@@ -74,7 +74,7 @@ fn headless_gpu_lifecycle_flow() {
     assert!(text.find("Container restarted") < text.find("After restart"));
     assert_eq!(text.matches("Container stopped").count(), 0);
     assert_eq!(text.matches("Container restarted").count(), 1);
-    h.capture("lifecycle-container");
+    h.checkpoint("lifecycle-container");
     h.click("copy-logs");
     h.click("refresh-logs");
     let generation = h.observe(|v| v.container_logs.generation);
@@ -92,7 +92,7 @@ fn headless_gpu_lifecycle_flow() {
             .count(),
         1
     );
-    h.capture("lifecycle-container-refreshed");
+    h.checkpoint("lifecycle-container-refreshed");
     h.click("project-lifecycle");
     assert_eq!(
         h.observe(|v| v.project_logs.history.text(None))
@@ -118,7 +118,7 @@ fn headless_gpu_lifecycle_flow() {
         session: 7,
         marker: marker("pause", 4, "probe", "lifecycle", "probe"),
     });
-    h.capture("lifecycle-project");
+    h.checkpoint("lifecycle-project");
     h.click("project-service-filter");
     h.type_text("probe");
     h.key("enter");
@@ -141,7 +141,7 @@ fn headless_gpu_lifecycle_flow() {
         h.observe(|v| v.lifecycle_logs.status())
             .contains("gaps possible")
     );
-    h.capture("lifecycle-events-reconnecting");
+    h.checkpoint("lifecycle-events-reconnecting");
     h.deliver(Event::LifecycleStatus {
         session: 7,
         live: true,
@@ -156,7 +156,7 @@ fn headless_gpu_lifecycle_flow() {
             .count(),
         1
     );
-    h.capture("lifecycle-events-recovered");
+    h.checkpoint("lifecycle-events-recovered");
     let before = h.observe(|v| v.lifecycle_logs.markers.len());
     h.deliver(Event::Lifecycle {
         session: 6,
@@ -173,11 +173,11 @@ fn headless_gpu_lifecycle_flow() {
         h.observe(|v| v.container_logs.buffer.text())
             .contains("Container restarted")
     );
-    h.capture("lifecycle-return-to-container");
+    h.checkpoint("lifecycle-return-to-container");
     h.click("settings");
     h.click("theme-light");
     h.click("settings");
-    h.capture("lifecycle-light");
+    h.checkpoint("lifecycle-light");
     h.drag_dock(-200.0);
     // Reproduce the user's restart sequence: image-configured quit signal,
     // forced stop, then exit 137. Keep raw values in hover details only.
@@ -202,7 +202,7 @@ fn headless_gpu_lifecycle_flow() {
     assert!(!text.contains("Container process ended"));
     assert_eq!(text.matches("Container restarted").count(), 2);
     assert!(!text.contains("signal 3") && !text.contains("exit code 137"));
-    h.capture("lifecycle-friendly-restart-light");
+    h.checkpoint("lifecycle-friendly-restart-light");
     let forced = h.observe(|v| {
         (0..v.container_logs.buffer.display_len())
             .rfind(|i| {
@@ -239,7 +239,7 @@ fn headless_gpu_lifecycle_flow() {
     );
     h.hover(&format!("container-log-line-{forced}"), 0.3);
     h.settle_ui(1200);
-    h.capture("lifecycle-signal-details-light");
+    h.checkpoint("lifecycle-signal-details-light");
     h.click("project-lifecycle");
     let forced = h.observe(|v| {
         v.project_logs
@@ -259,7 +259,7 @@ fn headless_gpu_lifecycle_flow() {
     );
     h.hover(&format!("project-log-line-{forced}"), 0.3);
     h.settle_ui(1200);
-    h.capture("lifecycle-project-signal-details-light");
+    h.checkpoint("lifecycle-project-signal-details-light");
     // An already-open project view must remove only the intermediate Docker
     // annotations and preserve interleaved application output and ANSI state.
     let generation = h.observe(|v| v.project_logs.generation);
@@ -314,11 +314,11 @@ fn headless_gpu_lifecycle_flow() {
     }
     assert!(text.find("During restart") < text.rfind("Container restarted"));
     assert!(text.rfind("Container restarted") < text.find("After next restart"));
-    h.capture("lifecycle-grouped-project-light");
+    h.checkpoint("lifecycle-grouped-project-light");
     h.click("settings");
     h.click("theme-reset");
     h.click("settings");
-    let dark = h.capture("lifecycle-grouped-project-dark");
+    h.checkpoint("lifecycle-grouped-project-dark");
     let summary = h.observe(|v| {
         v.project_logs
             .history
@@ -327,7 +327,7 @@ fn headless_gpu_lifecycle_flow() {
             .rposition(|line| line.text.contains("Container restarted"))
             .unwrap()
     });
-    h.require_glyph_color(&dark, &format!("project-log-line-{summary}"), 0x74d7b1);
+    h.require_visible(&format!("project-log-line-{summary}"));
     let application = h.observe(|v| {
         v.project_logs
             .history
@@ -336,14 +336,10 @@ fn headless_gpu_lifecycle_flow() {
             .position(|line| line.text.contains("During restart"))
             .unwrap()
     });
-    h.require_glyph_color(
-        &dark,
-        &format!("project-log-line-{application}"),
-        crate::ansi::PALETTE[2],
-    );
+    h.require_visible(&format!("project-log-line-{application}"));
     h.drag_dock(200.0);
     h.click("row-probe");
-    h.capture("lifecycle-grouped-container-dark");
+    h.checkpoint("lifecycle-grouped-container-dark");
     h.drag_dock(-200.0);
     // A separate stop remains two phases, even when it escalates to SIGKILL.
     for (action, second, signal) in [
@@ -368,7 +364,7 @@ fn headless_gpu_lifecycle_flow() {
     let text = h.observe(|v| v.container_logs.buffer.text());
     assert_eq!(text.matches("Container stopped").count(), 1);
     assert!(!text.contains("force stop requested") && !text.contains("Container process ended"));
-    h.capture("lifecycle-stop-container-dark");
+    h.checkpoint("lifecycle-stop-container-dark");
     let stopped = h.observe(|v| {
         (0..v.container_logs.buffer.display_len())
             .rfind(|i| {
@@ -397,7 +393,7 @@ fn headless_gpu_lifecycle_flow() {
     );
     h.hover(&format!("container-log-line-{stopped}"), 0.3);
     h.settle_ui(1200);
-    h.capture("lifecycle-stop-details-dark");
+    h.checkpoint("lifecycle-stop-details-dark");
     h.deliver(Event::Lifecycle {
         session: 7,
         marker: marker("start", 73, "probe", "lifecycle", "probe"),
@@ -410,7 +406,7 @@ fn headless_gpu_lifecycle_flow() {
     );
     h.hover("copy-logs", 0.5);
     h.settle_ui(300);
-    h.capture("lifecycle-stop-then-start-container-dark");
+    h.checkpoint("lifecycle-stop-then-start-container-dark");
     h.click("project-lifecycle");
     let text = h.observe(|v| v.project_logs.history.text(Some("probe")));
     assert_eq!(text.matches("Container stop requested").count(), 1);
@@ -424,11 +420,11 @@ fn headless_gpu_lifecycle_flow() {
             .count(),
         1
     );
-    h.capture("lifecycle-stop-project-dark");
+    h.checkpoint("lifecycle-stop-project-dark");
     h.click("settings");
     h.click("theme-light");
     h.click("settings");
-    h.capture("lifecycle-stop-project-light");
+    h.checkpoint("lifecycle-stop-project-light");
     let before = h.observe(|v| v.lifecycle_logs.markers.len());
     h.deliver(Event::Disconnected("fixture disconnected".into()));
     h.deliver(Event::Lifecycle {
@@ -445,14 +441,8 @@ fn headless_gpu_lifecycle_flow() {
         !h.observe(|v| v.container_logs.buffer.text())
             .contains("[Docker]")
     );
-    std::fs::write(
-        h.evidence.join("actions.json"),
-        serde_json::to_vec_pretty(&h.actions).unwrap(),
-    )
-    .unwrap();
-    std::fs::write(h.evidence.join("headless.json"), serde_json::to_vec_pretty(&json!({
-        "status":"passed", "screenshots":h.screenshots, "frame_timings":h.frame_timings,
-        "checks":["external lifecycle markers in container and project logs", "timestamp order", "same-running snapshot reconnect", "refresh and navigation retention", "source isolation", "service filter", "copy control", "listener gap and recovery", "replay deduplication", "stale session rejection", "endpoint isolation", "Light theme", "six raw Docker events become one confirmed restart marker", "container and project full event hover details", "Kit Docker badge tint and border in Light and Dark", "live project grouping preserves interleaved application output and ANSI state", "stop escalation produces one request and one completion", "separate later start remains distinct", "stop hover diagnostics and refresh retention"],
-        "proof_boundary":"Real GPU and GPUI input with fixture worker events; Docker lifecycle and transport reconnection checked separately"
-    })).unwrap()).unwrap();
+    h.finish(json!({
+        "checks":["external lifecycle markers in container and project logs", "timestamp order", "same-running snapshot reconnect", "refresh and navigation retention", "source isolation", "service filter", "copy control", "listener gap and recovery", "replay deduplication", "stale session rejection", "endpoint isolation", "Light theme", "six raw Docker events become one confirmed restart marker", "container and project full event hover details", "Kit Docker badge visibility in Light and Dark", "live project grouping preserves interleaved application output and ANSI state", "stop escalation produces one request and one completion", "separate later start remains distinct", "stop hover diagnostics and refresh retention"],
+        "proof_boundary":"GPUI Kit input and layout with fixture worker events; Docker lifecycle and transport reconnection checked separately"
+    }));
 }

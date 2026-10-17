@@ -9,13 +9,13 @@ Click a local container name to open its existing details. **Copy** copies full
 addresses, aliases/DNS names and any endpoint error; hover reveals full values.
 
 Run `python3 scripts/verify-headless.py --flow networks`. Require a passed
-`result.json`, owned process exit, and inspect the endpoint, scoped-container,
-large-inventory, large-endpoint, Light and disconnected/reconnected PNGs.
+`result.json`, owned process exit, and endpoint, scoped-container,
+large-inventory, large-endpoint, Light and disconnected/reconnected checkpoints.
 The GPUI input flow covers sidebar/session preservation, keyboard search and
 selection, configured stopped endpoints without an active address, virtual
 clipboard contents, failure/retry, obsolete-result rejection, opening a stopped
 container, container scoping, and virtualization of 10,000 networks / 2,000
-endpoints. It uses fixture worker events and the real WGPU view. It does not
+endpoints. It uses fixture worker events and the real GPUI view. It does not
 prove compositor clipboard integration, native desktop input, or real Docker.
 
 Run `bash scripts/verify-networks.sh` for production worker/daemon proof. It pins

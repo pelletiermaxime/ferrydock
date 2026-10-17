@@ -21,9 +21,9 @@ Open a real shell inside the selected running container, send keyboard input thr
 
 ## Driving it with native.py
 
-Preconditions: headless checks need cached dependencies and a usable Linux WGPU driver; native checks additionally need the skill's native Doctor and owned running Alpine probe. The native probe has sh, not Bash; its proof file path must be absent before typing.
+Preconditions: headless checks need cached dependencies and the GPUI Kit test runtime; native checks additionally need the skill's native Doctor and owned running Alpine probe. The native probe has sh, not Bash; its proof file path must be absent before typing.
 
-- **Headless development check:** `python3 scripts/verify-headless.py` dispatches Enter, asserts a terminal request for the selected fixture, delivers ready/ANSI-output events through the channel, captures the rendered terminal, then types `echo verified` and Enter through GPUI. It asserts exact outgoing bytes `echo verified\r`. This proves terminal rendering/input routing; it does not execute a shell or prove Docker PTY transport.
+- **Headless development check:** `python3 scripts/verify-headless.py` dispatches Enter, asserts a terminal request for the selected fixture, delivers ready/ANSI-output events through the channel, renders the terminal without screenshot readback, then types `echo verified` and Enter through GPUI. It asserts exact outgoing bytes `echo verified\r`. This proves terminal rendering/input routing; it does not execute a shell or prove Docker PTY transport.
 
 - **Open:** `python3 .agents/skills/verify-ferrydock/scripts/native.py run --feature terminal --display :0` isolates/selects the fixture and presses Return. Proof: Terminal view and “Connected” in a native screenshot, after list/detail selection proof.
 - **Type/observe:** the same command types a unique `printf … | tee /tmp/<project>.txt; stty size | tee /tmp/<project>-size.txt` shell command and presses Return. Proof: retained native screenshot and transcript, independent read-only `docker exec … cat` of the new file matching the unique marker, and positive PTY rows/columns in `side-effect-after.json`. Docker does not execute the product action.

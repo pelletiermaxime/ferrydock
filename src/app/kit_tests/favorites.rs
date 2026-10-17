@@ -1,8 +1,10 @@
+use super::*;
+
 // Input-driven favorites flow using the real terminal toolbar and a fixture worker.
-#[test]
-fn headless_gpu_favorites_flow() {
+#[gpui_kit::test]
+fn journey(test_cx: &mut TestAppContext) {
     use crate::terminal::FavoriteStatus;
-    let mut h = Harness::new();
+    let mut h = Harness::new(test_cx);
     h.deliver(Event::Connected(Connection {
         name: "Favorites fixture".into(),
         endpoint: "fixture://favorites".into(),
@@ -33,12 +35,12 @@ fn headless_gpu_favorites_flow() {
     h.settle_ui(150);
     h.click("project-favorite-demo");
     h.click("project-favorites");
-    h.capture("favorites-manager-empty");
+    h.checkpoint("favorites-manager-empty");
     h.click("favorite-add");
     h.type_text("Show environment");
     h.click("favorite-command");
     h.type_text("printf 'READY\\n'; read answer; printf '%s\\n' \"$answer\"");
-    h.capture("favorites-editor");
+    h.checkpoint("favorites-editor");
     h.drain_commands();
     h.click("favorite-save");
     h.settle_ui(150);
@@ -50,7 +52,7 @@ fn headless_gpu_favorites_flow() {
     let path = h.evidence.join("favorites.json");
     let saved = crate::favorites::Store::load(&path).unwrap();
     let favorite_id = saved.favorites[0].id;
-    h.capture("favorites-manager-saved");
+    h.checkpoint("favorites-manager-saved");
     h.click("favorite-service");
     h.type_text("worker");
     h.key("enter");
@@ -75,7 +77,7 @@ fn headless_gpu_favorites_flow() {
     h.settle_ui(150);
     h.click("row-favorite-one");
     h.click_tab("container-tabs", 1);
-    h.capture("favorites-terminal-open-shell-first");
+    h.checkpoint("favorites-terminal-open-shell-first");
     h.drain_commands();
     h.click("terminal-favorite-run");
     assert!(
@@ -109,16 +111,23 @@ fn headless_gpu_favorites_flow() {
     h.click("terminal-favorite-picker");
     h.type_text("Show environment");
     h.key("enter");
-    h.capture("favorites-terminal-ready");
+    h.checkpoint("favorites-terminal-ready");
     h.deliver(Event::ActionStarted {
         id: "favorite-one".into(),
         action: Action::Restart,
     });
     h.drain_commands();
     h.click("terminal-favorite-run");
-    assert!(!h.drain_commands().iter().any(|c| matches!(c, Command::RunFavorite { .. })));
-    h.capture("favorites-target-restart-blocked");
-    h.deliver(Event::ActionFinished { id: "favorite-one".into(), result: Ok(()) });
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|c| matches!(c, Command::RunFavorite { .. }))
+    );
+    h.checkpoint("favorites-target-restart-blocked");
+    h.deliver(Event::ActionFinished {
+        id: "favorite-one".into(),
+        result: Ok(()),
+    });
     // A different replica of this service can restart while this shell stays ready.
     h.deliver(Event::ActionStarted {
         id: "favorite-two".into(),
@@ -158,8 +167,11 @@ fn headless_gpu_favorites_flow() {
         })
         .unwrap();
     assert!(h.observe(|v| v.containers.busy.contains_key("favorite-two")));
-    h.capture("favorites-unrelated-restart-allowed");
-    h.deliver(Event::ActionFinished { id: "favorite-two".into(), result: Ok(()) });
+    h.checkpoint("favorites-unrelated-restart-allowed");
+    h.deliver(Event::ActionFinished {
+        id: "favorite-two".into(),
+        result: Ok(()),
+    });
     h.cx.read_entity(&h.view, |v, cx| {
         assert!(matches!(
             v.terminal
@@ -199,7 +211,7 @@ fn headless_gpu_favorites_flow() {
     assert!(h.drain_commands().iter().any(
         |c| matches!(c, Command::Input { generation: current, .. } if *current == generation)
     ));
-    h.capture("favorites-terminal-running");
+    h.checkpoint("favorites-terminal-running");
     h.click("terminal-favorite-run");
     assert!(
         !h.drain_commands()
@@ -232,8 +244,8 @@ fn headless_gpu_favorites_flow() {
         ));
         assert!(t.core.visible_text().contains("interactive-proof"));
     });
-    let completed = h.capture("favorites-terminal-completed");
-    h.require_glyph_color(&completed, "terminal-favorite-status", 0x74d7b1);
+    h.checkpoint("favorites-terminal-completed");
+    h.require_visible("terminal-favorite-status");
     // Repeated runs stay in the same shell; failure is visible and keeps the prompt.
     h.click("terminal-favorite-run");
     let second_run = h
@@ -265,8 +277,8 @@ fn headless_gpu_favorites_flow() {
         generation,
         data: b"example command failure\r\n/app # ".to_vec(),
     });
-    let failed = h.capture("favorites-terminal-failed");
-    h.require_glyph_color(&failed, "terminal-favorite-status", 0xffa4a4);
+    h.checkpoint("favorites-terminal-failed");
+    h.require_visible("terminal-favorite-status");
     h.type_text("unfinished-input");
     h.click("terminal-favorite-run");
     assert!(
@@ -274,7 +286,7 @@ fn headless_gpu_favorites_flow() {
             .iter()
             .any(|c| matches!(c, Command::RunFavorite { .. }))
     );
-    h.capture("favorites-terminal-input-protected");
+    h.checkpoint("favorites-terminal-input-protected");
     h.key("ctrl-c");
     let input_count = h.cx.read_entity(&h.view, |v, cx| {
         v.terminal.view.as_ref().unwrap().read(cx).input_count
@@ -342,7 +354,7 @@ fn headless_gpu_favorites_flow() {
             .iter()
             .any(|c| matches!(c, Command::RunFavorite { .. }))
     );
-    h.capture("favorites-other-endpoint");
+    h.checkpoint("favorites-other-endpoint");
     h.deliver(Event::Connected(Connection {
         name: "Favorites fixture".into(),
         endpoint: "fixture://favorites".into(),
@@ -358,7 +370,7 @@ fn headless_gpu_favorites_flow() {
             .iter()
             .any(|c| matches!(c, Command::RunFavorite { .. }))
     );
-    h.capture("favorites-stopped-container");
+    h.checkpoint("favorites-stopped-container");
     let recreated = container(
         "favorite-recreated",
         "favorite-demo-probe-1",
@@ -390,7 +402,7 @@ fn headless_gpu_favorites_flow() {
     h.key("enter");
     h.click("terminal-favorite-run");
     assert!(h.drain_commands().iter().any(|c| matches!(c, Command::RunFavorite { id, command, .. } if id == "favorite-recreated" && command == "echo updated")));
-    h.capture("favorites-recreated-container");
+    h.checkpoint("favorites-recreated-container");
     h.click("terminal-favorite-manage");
     h.click(&format!("favorite-delete-{favorite_id}"));
     h.settle_ui(150);
@@ -412,11 +424,10 @@ fn headless_gpu_favorites_flow() {
             .favorites
             .is_empty()
     );
-    h.capture("favorites-deleted");
+    h.checkpoint("favorites-deleted");
     h.key("escape");
     h.settle_ui(150);
-    std::fs::write(h.evidence.join("headless.json"), serde_json::to_vec_pretty(&json!({
-        "status":"passed", "screenshots":h.screenshots,"frame_timings":h.frame_timings,
+    h.finish(json!({
         "checks":["manage/create/edit/delete and service/endpoint persistence", "Kit favorites selector and Run above terminal", "same-shell requests and explicit current replica", "running/completed/failed exit status", "interactive input and visible output", "busy/partial-input guards", "stale run/session guards", "management focus/session preservation", "stopped/endpoint/recreated guards"]
-    })).unwrap()).unwrap();
+    }));
 }

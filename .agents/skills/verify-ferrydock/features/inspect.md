@@ -23,10 +23,10 @@ Read Docker inspection JSON for the selected container in its detail dock.
 
 `python3 scripts/verify-headless.py` clicks the real Kit Inspect tab, delivers
 fixture-only JSON through the worker event boundary, and checks the editor value.
-It verifies colored glyph pixels inside the rendered editor body, rejects typed
+It verifies nonempty editor text bounds, rejects typed
 replacement after Select All, and uses Ctrl+F plus real typing to find a match
-with replacement unavailable. Inspect the `kit-inspect-json` and
-`kit-inspect-search` screenshots. The flow also drags the real Kit divider to
+with replacement unavailable. The `kit-inspect-json` and
+`kit-inspect-search` checkpoints render frames without pixel readback. The flow also drags the real Kit divider to
 resize the dock and checks its minimum height. This proves GPUI input/rendering,
 not actual Docker inspection, OS clipboard, or every folding/scroll gesture.
 
@@ -35,7 +35,7 @@ not actual Docker inspection, OS clipboard, or every folding/scroll gesture.
 Preconditions: skill Doctor passes; helper owns/proves fixture selection; terminal does not own keyboard focus.
 
 - **Open/identity:** `python3 .agents/skills/verify-ferrydock/scripts/native.py run --feature inspect --display :0` selects the fixture and presses Ctrl+3. Proof: the full fixture ID and Config appear on the native screen, corroborated with owned fixture inspection identity in `inspection-observed.json`.
-- **Other native entry points:** the Inspect tab button, JSON scrolling and daemon errors remain outside the native proof. The tab and read-only search have separate headless GPU proof above.
+- **Other native entry points:** the Inspect tab button, JSON scrolling and daemon errors remain outside the native proof. The tab and read-only search have separate headless Kit input/layout proof above.
 
 ## Gotchas
 
