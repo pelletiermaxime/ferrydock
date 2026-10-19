@@ -34,7 +34,7 @@ def resolved_gpui_version(manifest, lock):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, help="New evidence directory; existing paths are refused")
-    parser.add_argument("--flow", choices=("all", "volumes", "analysis", "networks", "favorites", "quick-run", "updates", "lifecycle", "highlighting"), default="all", help="Full application or focused workspace input/rendering flow")
+    parser.add_argument("--flow", choices=("all", "volumes", "analysis", "networks", "favorites", "terminal", "quick-run", "updates", "lifecycle", "highlighting"), default="all", help="Full application or focused workspace input/rendering flow")
     parser.add_argument("--timeout", type=int, default=600, help="Build plus test timeout in seconds")
     parser.add_argument("--keep-runs", type=keep_runs, default=8,
                         help="Completed default-path runs to retain; 0 keeps all")
@@ -52,6 +52,7 @@ def main():
         "analysis": "app::kit_tests::image_analysis::journey",
         "networks": "app::kit_tests::networks::journey",
         "favorites": "app::kit_tests::favorites::journey",
+        "terminal": "app::kit_tests::terminal::journey",
         "quick-run": "app::kit_tests::quick_run::journey",
         "updates": "app::kit_tests::updates::journey",
         "lifecycle": "app::kit_tests::lifecycle::journey",

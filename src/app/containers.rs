@@ -79,10 +79,7 @@ impl FerryDock {
         if self.containers.selected.as_ref() == Some(&id) && !returning_from_project {
             return;
         }
-        if self.containers.selected.as_ref() != Some(&id) {
-            self.backend.send(Command::CloseTerminal);
-            self.terminal.view = None;
-        }
+        self.terminal.select(&id);
         self.containers.selected = Some(id.clone());
         self.container_logs.generation += 1;
         self.reset_container_log_buffer();
@@ -100,8 +97,10 @@ impl FerryDock {
             id,
             generation: self.container_logs.generation,
         });
-        // Avoid opening another interactive process merely by changing rows.
-        if self.tab == Tab::Terminal {
+        // Restore an existing shell without starting a process on row selection.
+        if self.terminal.view.is_some() {
+            self.tab = Tab::Terminal;
+        } else if self.tab == Tab::Terminal {
             self.tab = Tab::Logs;
         }
         cx.notify();
@@ -146,17 +145,8 @@ impl FerryDock {
             return;
         }
         let id = id.to_owned();
-        if self.containers.selected.as_ref() == Some(&id)
-            && matches!(action, Action::Stop | Action::Restart)
-        {
-            self.backend.send(Command::CloseTerminal);
-            if let Some(view) = &self.terminal.view {
-                view.update(cx, |view, cx| {
-                    view.ready = false;
-                    view.status = "Container operation closed this shell session".into();
-                    cx.notify();
-                });
-            }
+        if matches!(action, Action::Stop | Action::Restart) {
+            self.close_container_terminal(&id, "Container operation closed this shell session", cx);
         }
         self.containers.busy.insert(id.clone(), action);
         window.remove_notification::<FeedbackNotification>(cx);

@@ -214,17 +214,20 @@ impl FerryDock {
                 | compose::Action::Restart
                 | compose::Action::Rebuild
                 | compose::Action::Cleanup { .. }
-        ) && self
-            .selected_container()
-            .is_some_and(|container| container.project.as_ref() == Some(&project))
-        {
-            self.backend.send(Command::CloseTerminal);
-            if let Some(terminal) = &self.terminal.view {
-                terminal.update(cx, |view, cx| {
-                    view.ready = false;
-                    view.status = "Compose operation closed this shell session".into();
-                    cx.notify();
-                });
+        ) {
+            let ids = self
+                .containers
+                .items
+                .iter()
+                .filter(|container| container.project.as_ref() == Some(&project))
+                .map(|container| container.id.clone())
+                .collect::<Vec<_>>();
+            for id in ids {
+                self.close_container_terminal(
+                    &id,
+                    "Compose operation closed this shell session",
+                    cx,
+                );
             }
         }
         self.backend.send(Command::Compose {

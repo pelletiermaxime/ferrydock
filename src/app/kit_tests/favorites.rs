@@ -1,5 +1,17 @@
 use super::*;
 
+fn select_replica(h: &mut Harness, n: usize) {
+    h.click("search");
+    h.key("ctrl-a");
+    h.type_text(&format!("favorite-demo-probe-{n}"));
+    h.key("escape");
+    h.click(if n == 1 {
+        "row-favorite-one"
+    } else {
+        "row-favorite-two"
+    });
+}
+
 // Input-driven favorites flow using the real terminal toolbar and a fixture worker.
 #[gpui_kit::test]
 fn journey(test_cx: &mut TestAppContext) {
@@ -160,7 +172,7 @@ fn journey(test_cx: &mut TestAppContext) {
                 assert_eq!(command, saved.favorites[0].command);
                 Some(run)
             }
-            Command::Terminal { .. } | Command::CloseTerminal => {
+            Command::Terminal { .. } | Command::CloseTerminal { .. } => {
                 panic!("Running a favorite must preserve the current shell")
             }
             _ => None,
@@ -212,6 +224,77 @@ fn journey(test_cx: &mut TestAppContext) {
         |c| matches!(c, Command::Input { generation: current, .. } if *current == generation)
     ));
     h.checkpoint("favorites-terminal-running");
+    // A busy favorite survives navigation and another container's regular shell.
+    let original_view = h.observe(|v| v.terminal.view.as_ref().unwrap().entity_id());
+    h.drain_commands();
+    select_replica(&mut h, 2);
+    assert!(h.observe(|v| v.terminal.view.is_none()));
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|c| matches!(c, Command::CloseTerminal { .. } | Command::Terminal { .. }))
+    );
+    h.click_tab("container-tabs", 1);
+    h.click("open-shell");
+    let other_generation = h
+        .drain_commands()
+        .into_iter()
+        .find_map(|c| match c {
+            Command::Terminal { generation, id, .. } => {
+                assert_eq!(id, "favorite-two");
+                Some(generation)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_ne!(generation, other_generation);
+    h.deliver(Event::TerminalReady {
+        generation: other_generation,
+    });
+    h.deliver(Event::TerminalData {
+        generation,
+        data: b"STILL_WATCHING_WHILE_AWAY\r\n".to_vec(),
+    });
+    h.deliver(Event::TerminalData {
+        generation: other_generation,
+        data: b"OTHER_CONTAINER_ONLY\r\n".to_vec(),
+    });
+    select_replica(&mut h, 1);
+    assert!(h.observe(|v| v.tab == Tab::Terminal));
+    assert_eq!(h.observe(|v| v.terminal.generation), generation);
+    assert_eq!(
+        h.observe(|v| v.terminal.view.as_ref().unwrap().entity_id()),
+        original_view
+    );
+    h.cx.read_entity(&h.view, |v, cx| {
+        let terminal = v.terminal.view.as_ref().unwrap().read(cx);
+        assert!(terminal.ready);
+        assert!(
+            terminal
+                .core
+                .visible_text()
+                .contains("STILL_WATCHING_WHILE_AWAY")
+        );
+        assert!(
+            !terminal
+                .core
+                .visible_text()
+                .contains("OTHER_CONTAINER_ONLY")
+        );
+        assert!(matches!(
+            terminal.favorite.as_ref().unwrap().status,
+            FavoriteStatus::Running
+        ));
+    });
+    // Enter on the container list reveals this same shell instead of replacing it.
+    h.key("enter");
+    assert!(
+        !h.drain_commands()
+            .iter()
+            .any(|c| matches!(c, Command::CloseTerminal { .. } | Command::Terminal { .. }))
+    );
+    h.checkpoint("favorites-running-shell-restored-after-container-switch");
+
     h.click("terminal-favorite-run");
     assert!(
         !h.drain_commands()
@@ -221,6 +304,7 @@ fn journey(test_cx: &mut TestAppContext) {
     let input_count = h.cx.read_entity(&h.view, |v, cx| {
         v.terminal.view.as_ref().unwrap().read(cx).input_count
     });
+    select_replica(&mut h, 2);
     h.deliver(Event::FavoriteFinished {
         generation,
         run,
@@ -231,6 +315,15 @@ fn journey(test_cx: &mut TestAppContext) {
         input_count,
         at_prompt: true,
     });
+    h.click("disconnect-terminal");
+    assert!(h.drain_commands().iter().any(|c| matches!(c,
+        Command::CloseTerminal { generation: g } if *g == other_generation)));
+    select_replica(&mut h, 1);
+    assert_eq!(
+        h.observe(|v| v.terminal.view.as_ref().unwrap().entity_id()),
+        original_view
+    );
+    h.checkpoint("favorites-hidden-completion-and-scoped-disconnect");
     h.deliver(Event::TerminalData {
         generation,
         data: b"interactive-proof\r\n/app # ".to_vec(),
@@ -335,7 +428,7 @@ fn journey(test_cx: &mut TestAppContext) {
     assert_eq!(h.observe(|v| v.terminal.generation), generation);
     assert!(!h.drain_commands().iter().any(|c| matches!(
         c,
-        Command::RunFavorite { .. } | Command::CloseTerminal | Command::Terminal { .. }
+        Command::RunFavorite { .. } | Command::CloseTerminal { .. } | Command::Terminal { .. }
     )));
     h.type_text("focus-restored");
     assert!(

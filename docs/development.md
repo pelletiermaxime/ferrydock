@@ -3,8 +3,12 @@
 FerryDock is a Cargo workspace with a desktop package and a small offline
 `crates/image-analysis-core` library. The desktop has separate UI, model, Docker worker, and
 terminal modules. Docker I/O runs on a two-thread Tokio runtime away from the
-GPUI thread. Event delivery is bounded, view updates are batched, and streams
-are cancelled when selection changes or the window closes.
+GPUI thread. Event delivery is bounded and view updates are batched. Log streams
+are cancelled when selection changes; container terminals retain up to six
+sessions with 5,000 scrollback lines each, independently of selection. Terminal
+input, output, prompt/favorite status, resize and close route by session generation.
+Closed generations reject late events; stop/removal, Compose operations and Docker
+disconnect invalidate affected sessions. Closing the application ends attachments.
 
 For the user guide, see the [README](../README.md).
 

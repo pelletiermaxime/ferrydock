@@ -834,9 +834,10 @@ fn journey(test_cx: &mut TestAppContext) {
         terminal_generation
     );
     assert!(
-        !h.drain_commands()
-            .iter()
-            .any(|command| matches!(command, Command::Terminal { .. } | Command::CloseTerminal)),
+        !h.drain_commands().iter().any(|command| matches!(
+            command,
+            Command::Terminal { .. } | Command::CloseTerminal { .. }
+        )),
         "Appearance changes must not recreate or close a live shell"
     );
     h.click("settings");

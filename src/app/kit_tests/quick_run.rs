@@ -231,7 +231,7 @@ fn journey(test_cx: &mut TestAppContext) {
     let cmds = h.drain_commands();
     assert!(!cmds.iter().any(|c| matches!(
         c,
-        Command::CloseTerminal | Command::Input { .. } | Command::Terminal { .. }
+        Command::CloseTerminal { .. } | Command::Input { .. } | Command::Terminal { .. }
     )));
     let second = cmds
         .into_iter()
@@ -300,7 +300,7 @@ fn journey(test_cx: &mut TestAppContext) {
     let cmds = h.drain_commands();
     assert!(!cmds.iter().any(|c| matches!(
         c,
-        Command::QuickTerminal { .. } | Command::CloseTerminal | Command::Input { .. }
+        Command::QuickTerminal { .. } | Command::CloseTerminal { .. } | Command::Input { .. }
     )));
     assert!(
         cmds.iter()

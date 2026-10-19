@@ -727,7 +727,7 @@ async fn favorite_command_uses_an_interactive_pty_and_preserves_busy_session() -
         wait_for_favorite(&mut events, &mut terminal, generation, 8).await?,
         Ok(7)
     );
-    backend.send(Command::CloseTerminal);
+    backend.send(Command::CloseTerminal { generation });
     println!(
         "PASS favorite PTY 28x96; interactive input/file proof; same shell and prompt after success/failure; exit 0/1; multiline cwd/export persistence; busy/manual/partial-input rejection"
     );
@@ -936,9 +936,157 @@ async fn quick_run_terminals_preserve_interactive_sessions() -> Result<()> {
         });
     }
     backend.send(Command::CloseQuickTerminal { generation: quick2 });
-    backend.send(Command::CloseTerminal);
+    backend.send(Command::CloseTerminal {
+        generation: regular,
+    });
     println!(
         "PASS independent regular + two quick PTYs; interactive inputs and files isolated; sibling close preserved; exit 0/1"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "Uses scripts/verify-docker.sh's owned fixture and a labelled peer removed by its cleanup trap"]
+async fn container_terminals_preserve_independent_sessions() -> Result<()> {
+    use ferrydock::favorites::Target;
+    let id = env::var("FERRYDOCK_TEST_CONTAINER")?;
+    let connection = docker::resolve_connection().await?;
+    let docker = docker::connect(&connection).await?;
+    let fixture = docker.inspect_container(&id, None).await?;
+    let config = fixture.config.context("Fixture config missing")?;
+    let labels = config.labels.context("Fixture labels missing")?;
+    let project = labels
+        .get("com.docker.compose.project")
+        .context("Fixture project missing")?
+        .clone();
+    if labels.get("dev.ferrydock.fixture").map(String::as_str) != Some("true")
+        || !project.starts_with("ferrydock-verify-")
+    {
+        bail!("Refusing non-owned fixture");
+    }
+    // Label this peer as an orphan in the owned project so the script's trap
+    // also removes it when an assertion fails or this test is interrupted.
+    let peer = docker
+        .create_container(
+            Some(
+                bollard::query_parameters::CreateContainerOptionsBuilder::default()
+                    .name(&format!("{project}-terminal-peer"))
+                    .build(),
+            ),
+            bollard::models::ContainerCreateBody {
+                image: config.image,
+                cmd: Some(vec!["sleep".into(), "86400".into()]),
+                labels: Some(std::collections::HashMap::from([
+                    ("dev.ferrydock.fixture".into(), "true".into()),
+                    ("com.docker.compose.project".into(), project.clone()),
+                    ("com.docker.compose.service".into(), "terminal-peer".into()),
+                    ("com.docker.compose.container-number".into(), "1".into()),
+                    ("com.docker.compose.oneoff".into(), "False".into()),
+                ])),
+                host_config: Some(bollard::models::HostConfig {
+                    network_mode: Some("none".into()),
+                    memory: Some(64 * 1024 * 1024),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .await?
+        .id;
+    docker.start_container(&peer, None).await?;
+    let (backend, mut events) = Backend::start();
+    loop {
+        match receive(&mut events).await? {
+            Event::Connected(_) => break,
+            Event::Disconnected(error) => bail!("{error}"),
+            _ => {}
+        }
+    }
+    let first = 901;
+    let second = 902;
+    let mut primary = TerminalCore::new(96, 28);
+    let mut other = TerminalCore::new(96, 28);
+    backend.send(Command::Terminal {
+        id: id.clone(),
+        generation: first,
+        shell: Shell::Sh,
+        columns: 96,
+        rows: 28,
+    });
+    wait_for_prompt(&mut events, &mut primary, first).await?;
+    backend.send(Command::RunFavorite { id: id.clone(), generation: first, run: 1, endpoint: connection.endpoint.clone(), target: Target::Service { project, service: "probe".into() }, command: "printf 'WATCH_WAITING\\n'; read answer; printf '%s' \"$answer\" > /tmp/ferrydock-container-terminal; printf 'WATCH_FINISHED\\n'".into() });
+    wait_for_text(&mut events, &mut primary, first, "WATCH_WAITING").await?;
+    backend.send(Command::Terminal {
+        id: peer.clone(),
+        generation: second,
+        shell: Shell::Sh,
+        columns: 96,
+        rows: 28,
+    });
+    wait_for_prompt(&mut events, &mut other, second).await?;
+    backend.send(Command::Input {
+        generation: second,
+        data: b"printf peer > /tmp/ferrydock-container-terminal; printf 'PEER_FINISHED\\n'\r"
+            .to_vec(),
+    });
+    wait_for_text(&mut events, &mut other, second, "PEER_FINISHED").await?;
+    backend.send(Command::CloseTerminal { generation: second });
+    // The original foreground command still accepts input after a second
+    // container shell has opened, run a command, and explicitly disconnected.
+    backend.send(Command::Input {
+        generation: first,
+        data: b"watch-answer\r".to_vec(),
+    });
+    assert_eq!(
+        wait_for_favorite(&mut events, &mut primary, first, 1).await?,
+        Ok(0)
+    );
+    wait_for_prompt(&mut events, &mut primary, first).await?;
+    backend.send(Command::Resize {
+        generation: first,
+        columns: 103,
+        rows: 31,
+    });
+    backend.send(Command::Input {
+        generation: first,
+        data: b"stty size; printf 'ORIGINAL_STILL_CONNECTED\\n'\r".to_vec(),
+    });
+    wait_for_text(&mut events, &mut primary, first, "ORIGINAL_STILL_CONNECTED").await?;
+    assert!(primary.visible_text().contains("31 103"));
+    for (container, expected) in [(&id, "watch-answer"), (&peer, "peer")] {
+        let exec = docker
+            .create_exec(
+                container,
+                bollard::exec::CreateExecOptions {
+                    attach_stdout: Some(true),
+                    cmd: Some(vec!["cat", "/tmp/ferrydock-container-terminal"]),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let bollard::exec::StartExecResults::Attached { mut output, .. } =
+            docker.start_exec(&exec.id, None).await?
+        else {
+            bail!("Missing proof stream");
+        };
+        let mut proof = Vec::new();
+        while let Some(frame) = output.next().await {
+            proof.extend(frame?.into_bytes());
+        }
+        assert_eq!(String::from_utf8(proof)?, expected);
+    }
+    backend.send(Command::CloseTerminal { generation: first });
+    docker
+        .remove_container(
+            &peer,
+            Some(bollard::query_parameters::RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            }),
+        )
+        .await?;
+    println!(
+        "PASS two container PTYs; foreground favorite survived peer open/input/disconnect; original input/resize and independent files verified"
     );
     Ok(())
 }

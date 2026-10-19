@@ -118,12 +118,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.15.0`; replace it with the version you downloaded.
+The examples below use `0.15.1`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.15.0_amd64.deb
+sudo apt install ./ferrydock_0.15.1_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -131,11 +131,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.15.0-linux-x86_64.AppImage`:
+`ferrydock-0.15.1-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.15.0-linux-x86_64.AppImage
-./ferrydock-0.15.0-linux-x86_64.AppImage
+chmod +x ferrydock-0.15.1-linux-x86_64.AppImage
+./ferrydock-0.15.1-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -153,7 +153,7 @@ The Debian package and portable archive offer the release-page link in Settings
 and are updated manually.
 
 Alternatively, extract
-`ferrydock-0.15.0-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.15.1-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in
@@ -191,6 +191,12 @@ display and Docker environment.
 
 Type `exit` to end a shell normally. Stopping or restarting a container closes
 its terminal session; open a new shell after it starts again.
+Changing containers keeps each open shell connected, including commands such as
+`gulp watch`. Return to the container to recover its terminal output and favorite
+command status. Up to six container shells stay open; use **Disconnect** on a
+shell to free a slot. Disconnect closes the attachment; it does not confirm that
+the command stopped. Use **Ctrl+C** in the terminal to stop a foreground command
+and wait for the prompt before disconnecting.
 
 ### Favorite commands
 

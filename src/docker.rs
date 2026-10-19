@@ -164,7 +164,9 @@ pub enum Command {
         columns: u16,
         rows: u16,
     },
-    CloseTerminal,
+    CloseTerminal {
+        generation: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -653,8 +655,14 @@ async fn connected(
             CancellationToken,
         ),
     >::new();
-    let mut terminal_cancel = cancel.child_token();
-    let mut terminal = None::<(u64, String, mpsc::UnboundedSender<TerminalCommand>)>;
+    let mut terminals = std::collections::HashMap::<
+        u64,
+        (
+            String,
+            mpsc::UnboundedSender<TerminalCommand>,
+            CancellationToken,
+        ),
+    >::new();
     let mut busy = HashSet::new();
     let mut actions = FuturesUnordered::new();
     let mut compose_jobs = FuturesUnordered::new();
@@ -933,7 +941,9 @@ async fn connected(
                         }
                     }
                     Command::CloseLogs => logs_cancel.cancel(),
-                    Command::CloseTerminal => { terminal_cancel.cancel(); terminal = None; },
+                    Command::CloseTerminal { generation } => {
+                        if let Some((_, _, token)) = terminals.remove(&generation) { token.cancel(); }
+                    },
                     Command::Logs { id, generation } => {
                         logs_cancel.cancel(); logs_cancel = cancel.child_token();
                         tokio::spawn(stream_logs(docker.clone(), id, generation, events.clone(), logs_cancel.clone()));
@@ -958,9 +968,15 @@ async fn connected(
                         let _ = events.send(Event::ActionFinished { id, result: Err("Another operation is running on this container, its Compose project, or a volume".into()) }).await;
                     },
                     Command::Terminal { id, generation, shell, columns, rows } => {
-                        terminal_cancel.cancel(); terminal_cancel = cancel.child_token();
-                        let (tx, rx) = mpsc::unbounded_channel(); terminal = Some((generation, id.clone(), tx));
-                        tokio::spawn(terminal_session(docker.clone(), id, generation, shell, columns, rows, rx, events.clone(), terminal_cancel.clone()));
+                        terminals.retain(|_, (_, sender, _)| !sender.is_closed());
+                        if terminals.values().any(|(container, _, _)| container == &id) || terminals.len() >= 6 || terminals.contains_key(&generation) {
+                            let _ = events.send(Event::TerminalEnded { generation, error: Some("Container shell already open or session limit 6 reached".into()) }).await;
+                        } else {
+                            let token = cancel.child_token();
+                            let (tx, rx) = mpsc::unbounded_channel();
+                            terminals.insert(generation, (id.clone(), tx, token.clone()));
+                            tokio::spawn(terminal_session(docker.clone(), id, generation, shell, columns, rows, rx, events.clone(), token));
+                        }
                     }
                     Command::QuickTerminal { id, generation } => {
                         if quick_terminals.len() >= 6 || quick_terminals.contains_key(&generation) {
@@ -977,7 +993,7 @@ async fn connected(
                     }
                     Command::RunFavorite { id, generation, run, endpoint, target, command } => {
                         let available = endpoint == connection.endpoint && !pruning && volume_busy.is_empty() && !busy.contains(&id) && !container_projects.get(&id).and_then(Option::as_ref).is_some_and(|p| compose_busy.contains(p));
-                        let sender = terminal.as_ref().filter(|(active, container, _)| generation == *active && container == &id).map(|(_, _, sender)| sender)
+                        let sender = terminals.get(&generation).filter(|(container, _, _)| container == &id).map(|(_, sender, _)| sender)
                             .or_else(|| quick_terminals.get(&generation).filter(|(container, _, _)| container == &id).map(|(_, sender, _)| sender));
                         if available && let Some(sender) = sender {
                             let _ = sender.send(TerminalCommand::Favorite { run, target, command });
@@ -986,17 +1002,17 @@ async fn connected(
                         }
                     }
                     Command::Input { generation, data } => {
-                        let sender = terminal.as_ref().filter(|(active, _, _)| generation == *active).map(|(_, _, sender)| sender)
+                        let sender = terminals.get(&generation).map(|(_, sender, _)| sender)
                             .or_else(|| quick_terminals.get(&generation).map(|(_, sender, _)| sender));
                         if let Some(sender) = sender { let _ = sender.send(TerminalCommand::Input(data)); }
                     }
                     Command::TerminalReply { generation, data } => {
-                        let sender = terminal.as_ref().filter(|(active, _, _)| generation == *active).map(|(_, _, sender)| sender)
+                        let sender = terminals.get(&generation).map(|(_, sender, _)| sender)
                             .or_else(|| quick_terminals.get(&generation).map(|(_, sender, _)| sender));
                         if let Some(sender) = sender { let _ = sender.send(TerminalCommand::Reply(data)); }
                     }
                     Command::Resize { generation, columns, rows } => {
-                        let sender = terminal.as_ref().filter(|(active, _, _)| generation == *active).map(|(_, _, sender)| sender)
+                        let sender = terminals.get(&generation).map(|(_, sender, _)| sender)
                             .or_else(|| quick_terminals.get(&generation).map(|(_, sender, _)| sender));
                         if let Some(sender) = sender { let _ = sender.send(TerminalCommand::Resize(columns, rows)); }
                     }

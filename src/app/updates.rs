@@ -235,7 +235,7 @@ impl FerryDock {
         let owner = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, cx| {
             owner.update(cx, |this, cx| {
-                let live_shell = this.terminal.view.as_ref().is_some_and(|v| v.read(cx).ready) || this.live_quick_runs(cx);
+                let live_shell = this.terminal.live() || this.live_quick_runs(cx);
                 dialog.title(if this.updates.applying { "Applying update…" } else { "Restart FerryDock to update?" }).width(px(520.0))
                     .overlay_closable(false).keyboard(!this.updates.applying).close_button(!this.updates.applying)
                     .child(format!("Install version {} and reopen FerryDock. Running containers stay running.", this.updates.version.as_deref().unwrap_or_default()))

@@ -35,6 +35,7 @@ mod networks;
 mod project_cleanup;
 mod quick_run;
 mod support;
+mod terminal;
 mod updates;
 mod user_flow;
 mod volume_pruning;

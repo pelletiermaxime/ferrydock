@@ -217,7 +217,13 @@ impl FerryDock {
         event: Event,
         cx: &mut Context<Self>,
     ) {
-        let Some(terminal) = &self.terminal.view else {
+        let generation = match &event {
+            Event::TerminalPrompt { generation, .. }
+            | Event::FavoriteStarted { generation, .. }
+            | Event::FavoriteFinished { generation, .. } => *generation,
+            _ => return,
+        };
+        let Some(terminal) = self.terminal.event_view(generation) else {
             return;
         };
         terminal.update(cx, |view, cx| {

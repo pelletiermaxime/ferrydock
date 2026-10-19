@@ -170,6 +170,16 @@ impl FerryDock {
                 }
             }
             Event::Connected(connection) => {
+                if self
+                    .connection
+                    .as_ref()
+                    .is_some_and(|old| old.endpoint != connection.endpoint)
+                {
+                    self.close_all_container_terminals(
+                        "Docker endpoint changed · reopen the shell",
+                        cx,
+                    );
+                }
                 self.lifecycle_logs.connect(&connection.endpoint);
                 self.annotate_container_logs();
                 self.volumes_connected(&connection.endpoint);
@@ -199,7 +209,6 @@ impl FerryDock {
                 self.images.interrupt_removal();
                 self.metrics.session = None;
                 self.container_logs.generation += 1;
-                self.terminal.generation += 1;
                 self.project_logs.generation += 1;
                 self.project_logs.status =
                     "Docker disconnected · project logs reconnecting…".into();
@@ -222,14 +231,10 @@ impl FerryDock {
                     form.error = Some("Docker disconnected; reconnect before saving".into());
                 }
                 self.container_logs.status = "Disconnected · reconnecting…".into();
-                if let Some(terminal) = &self.terminal.view {
-                    terminal.update(cx, |view, cx| {
-                        view.ready = false;
-                        view.status =
-                            "Docker disconnected · reopen the shell after reconnecting".into();
-                        cx.notify();
-                    });
-                }
+                self.close_all_container_terminals(
+                    "Docker disconnected · reopen the shell after reconnecting",
+                    cx,
+                );
             }
             Event::Snapshot(containers) => {
                 self.metrics.containers.retain(|id, _| {
@@ -255,6 +260,7 @@ impl FerryDock {
                     .selected
                     .as_ref()
                     .is_some_and(|id| containers.iter().any(|container| &container.id == id));
+                self.reconcile_container_terminals(&containers, cx);
                 self.networks_container_snapshot(&containers);
                 self.containers.items = containers;
                 self.project_logs.history.retain_sources(
@@ -266,7 +272,6 @@ impl FerryDock {
                 if !selected_exists {
                     self.containers.selected = None;
                     self.backend.send(Command::CloseLogs);
-                    self.backend.send(Command::CloseTerminal);
                     self.terminal.view = None;
                     self.reset_container_log_buffer();
                     self.containers
@@ -289,32 +294,20 @@ impl FerryDock {
                     let after = self
                         .selected_container()
                         .map(|container| container.state.clone());
-                    if before != after || self.container_logs.reopen {
-                        if let Some(id) = self.containers.selected.clone()
-                            && (after.as_deref() == Some("running") || self.container_logs.reopen)
-                        {
-                            self.container_logs.generation += 1;
-                            self.reset_container_log_buffer();
-                            self.backend.send(Command::Logs {
-                                id: id.clone(),
-                                generation: self.container_logs.generation,
-                            });
-                            self.backend.send(Command::Inspect {
-                                id: id.clone(),
-                                generation: self.container_logs.generation,
-                            });
-                        }
-                        if after.as_deref() != Some("running") {
-                            self.backend.send(Command::CloseTerminal);
-                            if let Some(terminal) = &self.terminal.view {
-                                terminal.update(cx, |view, cx| {
-                                    view.ready = false;
-                                    view.status =
-                                        "Container stopped · start it to open a new shell".into();
-                                    cx.notify();
-                                });
-                            }
-                        }
+                    if (before != after || self.container_logs.reopen)
+                        && let Some(id) = self.containers.selected.clone()
+                        && (after.as_deref() == Some("running") || self.container_logs.reopen)
+                    {
+                        self.container_logs.generation += 1;
+                        self.reset_container_log_buffer();
+                        self.backend.send(Command::Logs {
+                            id: id.clone(),
+                            generation: self.container_logs.generation,
+                        });
+                        self.backend.send(Command::Inspect {
+                            id,
+                            generation: self.container_logs.generation,
+                        });
                     }
                 }
                 self.container_logs.reopen = false;
@@ -368,37 +361,13 @@ impl FerryDock {
                     });
                 }
             }
-            Event::TerminalReady { generation } if generation == self.terminal.generation => {
-                if let Some(terminal) = &self.terminal.view {
-                    terminal.update(cx, |view, cx| { view.ready = true; view.status = "Connected · Ctrl+Shift+C/V to copy/paste · Shift+PageUp/Down for scrollback".into(); cx.notify(); });
-                }
-            }
-            event @ (Event::TerminalPrompt { generation, .. }
-            | Event::FavoriteStarted { generation, .. }
-            | Event::FavoriteFinished { generation, .. })
-                if generation == self.terminal.generation =>
-            {
-                self.handle_favorite_terminal_event(event, cx);
-            }
-            Event::TerminalData { generation, data } if generation == self.terminal.generation => {
-                if let Some(terminal) = &self.terminal.view {
-                    terminal.update(cx, |view, cx| view.feed(&data, cx));
-                }
-            }
-            Event::TerminalEnded { generation, error }
-                if generation == self.terminal.generation =>
-            {
-                if let Some(terminal) = &self.terminal.view {
-                    terminal.update(cx, |view, cx| {
-                        view.ready = false;
-                        view.status = error
-                            .map(|error| format!("Shell failed: {error}"))
-                            .unwrap_or_else(|| {
-                                "Shell exited · reopen to start a new session".into()
-                            });
-                        cx.notify();
-                    });
-                }
+            event @ (Event::TerminalReady { .. }
+            | Event::TerminalData { .. }
+            | Event::TerminalEnded { .. }
+            | Event::TerminalPrompt { .. }
+            | Event::FavoriteStarted { .. }
+            | Event::FavoriteFinished { .. }) => {
+                self.container_terminal_event(event, cx);
             }
             _ => {}
         }
