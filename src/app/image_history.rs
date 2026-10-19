@@ -116,6 +116,55 @@ impl TableDelegate for HistoryTable {
             .resizable(index != 0)
             .movable(false)
     }
+    fn fit_column(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Option<Pixels> {
+        let column = self.column(index, cx);
+        let source_column = self.active_columns()[index];
+        let measure = |text: SharedString, font: Font, font_size: Pixels| {
+            window
+                .text_system()
+                .shape_line(
+                    text.clone(),
+                    font_size,
+                    &[TextRun {
+                        len: text.len(),
+                        font,
+                        color: rgb(palette(cx).text).into(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                )
+                .width
+        };
+        let mut width = measure(
+            column.name,
+            Font {
+                family: "Inter".into(),
+                ..Default::default()
+            },
+            window.rem_size() * 0.875,
+        );
+        let font = Font {
+            family: MONOSPACE_FONT.into(),
+            ..Default::default()
+        };
+        for row in 0..self.visible.len() {
+            // A full instruction remains available in View command. Bound shaping
+            // work for unusually long commands; Kit caps resized columns at 1200px.
+            let text: String = self.text(row, source_column).chars().take(512).collect();
+            width = width.max(measure(text.into(), font.clone(), px(12.0)));
+            if width >= px(1200.0) {
+                break;
+            }
+        }
+        Some(width)
+    }
     fn render_th(
         &mut self,
         index: usize,

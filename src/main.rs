@@ -3,6 +3,9 @@
 use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
 fn main() {
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
+    env_logger::init();
+
     #[cfg(target_os = "linux")]
     {
         let has_display = ["WAYLAND_DISPLAY", "DISPLAY"]

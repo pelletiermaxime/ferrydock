@@ -28,6 +28,8 @@ impl FerryDock {
         if tab == Tab::Terminal {
             if let Some(terminal) = &self.terminal.view {
                 terminal.update(cx, |view, cx| view.focus(window, cx));
+            } else {
+                self.focus.focus(window, cx);
             }
         } else if tab == Tab::Inspect {
             self.containers

@@ -201,9 +201,16 @@ Initialize Kit and its assets before constructing the application's Root view.
 Kit's `gpui-fast` feature and all direct GPUI engine/platform dependencies
 must select the same backend so their public types remain compatible. The
 compatible version ranges and features are declared in [Cargo.toml](../Cargo.toml),
-with resolved versions recorded in `Cargo.lock`; `tree-sitter`
-enables the JSON grammar, and `windows-manifest-provided-by-host` avoids
+with resolved versions recorded in `Cargo.lock`. Kit is currently 0.8.0.
+Kit's `tree-sitter` feature enables only the JSON grammar;
+`windows-manifest-provided-by-host` avoids
 supplying a second Windows manifest alongside Kit.
+
+`python3 scripts/verify-headless.py --flow highlighting` checks JSON folding
+candidates, read-only input and search on roughly 8 KiB, 126 KiB and 1 MiB
+documents. Its timings include fixture delivery, editor layout and drained
+background work in a headless development build; they are not isolated parser
+or GPU benchmarks.
 
 Appearance uses Kit's semantic theme tokens. Settings offers FerryDock's
 charcoal/mint default, Dark, and Light. Update all views from the same palette,
@@ -393,6 +400,42 @@ For interactive development, reuse the incremental debug build:
 cargo run --locked
 ```
 
+For optional Rust UI hot reload, install Dioxus CLI **0.7.10**, matching the
+Subsecond protocol used by GPUI Fast 0.1.10:
+
+```sh
+cargo install dioxus-cli --version 0.7.10 --locked
+bash scripts/dev-hot-reload.sh
+```
+
+`FERRYDOCK_DX=/absolute/path/to/dx` selects an existing CLI binary instead.
+The launcher enables FerryDock's `hot-reload` feature and runs
+`dx serve --hot-patch` with the native renderer and locked dependencies.
+It selects the development-only `ferrydock-dev` workspace package, which shares
+`src/main.rs` with the shipping binary. This works around
+[Dioxus #5778](https://github.com/DioxusLabs/dioxus/issues/5778): DX 0.7.10 otherwise
+silently produces empty patches for a package containing both a library and a
+binary. Keeping FerryDock's library below the development binary lets DX replay
+its changed code. The default `cargo run` and release package remain FerryDock.
+It preserves the desktop's Wayland/X11 selection. DX uses a separate hot-patch
+build and may need its nightly Rust toolchain on the first run. The first build
+can be substantially slower than subsequent patches.
+
+Edit view/component render code or helpers it calls to update the running
+window. Compatible patches retain in-memory state, including the selected
+container and existing terminal attachment. Restart when changing state struct
+layouts, startup code, or long-lived background tasks. Custom element
+`request_layout`/`prepaint`/`paint` implementations are outside GPUI's current
+hot-patch boundary. The integration is experimental; it is enabled only in
+debug builds and is not part of the default or shipping configuration.
+
+With an application firewall such as OpenSnitch, allow the development
+FerryDock binary to connect to DX's loopback server (normally
+`127.0.0.1:8080`). A denied connection still lets the window open, but DX reports
+`Ignoring hotpatch since there is no ASLR reference`. Restart the development
+session after allowing the connection; a full rebuild can produce a new binary
+path that needs a new firewall decision.
+
 For a release build:
 
 ```sh
@@ -531,9 +574,9 @@ cross-feature session/focus checks; focused journeys run independently through
 `python3 scripts/verify-headless.py --flow FLOW`.
 
 Use `gpui_kit::test::TestWindowExt` for element lookup, clicks, right/double
-clicks, keyboard/text input, wheel scrolling and dragging. Kit 0.7.3 does not
-expose pointer modifiers or hover offsets, so only Ctrl-click and
-position-specific hover use small native-event adapters. Use Kit's
+clicks, keyboard/text input, wheel scrolling and dragging. Kit 0.8.0 provides
+`click_with_modifiers` and `ClickOptions` for modified and offset clicks;
+only position-specific hover retains a small native-event adapter. Use Kit's
 `TestAppContextExt::wait_for` to observe deferred popups. Notification dismissal
 first hovers the visible toast to reveal Close. The Updates flow uses the visible
 Settings restart entry after lifecycle feedback covers the banner.

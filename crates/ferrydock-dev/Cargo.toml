@@ -1,0 +1,21 @@
+[package]
+name = "ferrydock-dev"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# DX 0.7.10 skips the tip package's library when building a hot patch.
+# Make FerryDock a workspace dependency while sharing its real entry point.
+# https://github.com/DioxusLabs/dioxus/issues/5778
+[[bin]]
+name = "ferrydock-dev"
+path = "../../src/main.rs"
+
+[dependencies]
+ferrydock = { path = "../.." }
+gpui = { package = "gpui-fast", version = "0.1.10", default-features = false }
+gpui-kit = { version = "0.8.0", features = ["gpui-fast"] }
+env_logger = { version = "0.11", default-features = false, optional = true }
+
+[features]
+hot-reload = ["ferrydock/hot-reload", "dep:env_logger"]

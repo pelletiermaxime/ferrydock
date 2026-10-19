@@ -770,10 +770,18 @@ fn journey(test_cx: &mut TestAppContext) {
     h.settle_ui(1000);
     assert_eq!(h.notification_count(), 0);
 
-    // Select the row before the list's Enter shortcut.
+    // Leaving an editor for an empty terminal must restore a live focus target.
     h.click("row-fixture-probe-running");
+    h.key("ctrl-3");
+    assert!(h.observe(|v| v.tab == Tab::Inspect && v.terminal.view.is_none()));
+    h.key("ctrl-2");
+    h.checkpoint("kit-empty-terminal-from-inspect");
     h.key("enter");
     assert!(h.observe(|v| v.tab == Tab::Terminal));
+    assert!(
+        h.observe(|v| v.terminal.view.is_some()),
+        "Enter must open a shell after leaving Inspect"
+    );
     let terminal_generation = h.observe(|v| v.terminal.generation);
     assert!(h.drain_commands().iter().any(|command| matches!(command,
         Command::Terminal { id, .. } if id == "fixture-probe-running")));

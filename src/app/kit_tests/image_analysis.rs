@@ -134,6 +134,45 @@ fn journey(test_cx: &mut TestAppContext) {
     });
     assert!(!h.observe(|v| v.images.details.analysis.loading));
     h.checkpoint("image-analysis-files");
+    h.actions
+        .push(json!({"input": "sidebar-drag", "delta": 60}));
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        let from = window
+            .within("analysis-split")
+            .find(("resizable-handle", 0_usize))
+            .bounds()
+            .center();
+        window.drag(from, from + gpui::point(px(60.0), px(0.0)), cx);
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    h.checkpoint("image-analysis-sidebar-dragged");
+    let sidebar_width =
+        h.cx.debug_bounds(h.window.into(), "analysis-layer-pane")
+            .unwrap()
+            .unwrap()
+            .size
+            .width;
+    assert!(
+        sidebar_width > px(300.0),
+        "The fixed sidebar must remain manually resizable; actual width: {sidebar_width:?}"
+    );
+    h.actions
+        .push(json!({"input": "window-resize", "width": 1440, "height": 820}));
+    h.cx.simulate_window_resize(h.window.into(), size(px(1440.0), px(820.0)));
+    h.cx.run_until_parked();
+    h.checkpoint("image-analysis-fixed-sidebar-wide");
+    assert_eq!(
+        h.cx.debug_bounds(h.window.into(), "analysis-layer-pane")
+            .unwrap()
+            .unwrap()
+            .size
+            .width,
+        sidebar_width,
+        "Resizing the window must preserve the layer sidebar width"
+    );
+    h.cx.simulate_window_resize(h.window.into(), size(px(1180.0), px(820.0)));
+    h.cx.run_until_parked();
     h.click("analysis-file-2"); // Expand build-cache via Kit Tree input.
     h.checkpoint("image-analysis-expanded-folder");
     assert!(

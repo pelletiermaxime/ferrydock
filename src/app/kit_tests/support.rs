@@ -452,55 +452,16 @@ impl Harness {
 
     pub(super) fn ctrl_click(&mut self, selector: &str) {
         let dialog_was_open = self.dialog_open();
-        // Kit 0.7.3's pointer helpers always use default modifiers. Keep this
-        // adapter only for multi-selection; ordinary clicks use Kit above.
-        let button = MouseButton::Left;
-        let modifiers = Modifiers {
-            control: true,
-            ..Modifiers::none()
-        };
-        let bounds = self
-            .cx
-            .debug_bounds(self.window.into(), selector)
-            .unwrap()
-            .expect("Ctrl-click target");
-        let position = bounds.center();
-        self.actions.push(
-            json!({"input": "click", "selector": selector, "button": format!("{button:?}"), "control":modifiers.control,
-            "x": f32::from(position.x), "y": f32::from(position.y)}),
-        );
+        self.actions
+            .push(json!({"input": "click", "selector": selector, "control": true}));
         self.cx
             .update_window(self.window.into(), |_, window, cx| {
-                window.dispatch_event(
-                    MouseMoveEvent {
-                        position,
-                        pressed_button: None,
-                        modifiers,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-                // Commit hover-dependent hitboxes before pressing a control.
-                window.render_frame(cx);
-                window.dispatch_event(
-                    MouseDownEvent {
-                        position,
-                        button,
-                        modifiers,
-                        click_count: 1,
-                        first_mouse: false,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-                window.dispatch_event(
-                    MouseUpEvent {
-                        position,
-                        button,
-                        modifiers,
-                        click_count: 1,
-                    }
-                    .to_platform_input(),
+                window.click_with_modifiers(
+                    SharedString::from(selector.to_owned()),
+                    Modifiers {
+                        control: true,
+                        ..Modifiers::none()
+                    },
                     cx,
                 );
             })

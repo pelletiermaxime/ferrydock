@@ -14,8 +14,8 @@ use std::{
 };
 
 use gpui::{
-    AppContext, Entity, Focusable, InputEvent, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, SharedString, TestAppContext, WindowHandle, px, size,
+    AppContext, Entity, Focusable, InputEvent, Modifiers, MouseButton, MouseMoveEvent,
+    SharedString, TestAppContext, WindowHandle, px, size,
 };
 
 use gpui_kit::component::WindowExt as _;
@@ -25,6 +25,7 @@ use tokio::sync::mpsc;
 
 mod containers;
 mod favorites;
+mod highlighting;
 mod image_analysis;
 mod image_details;
 mod image_sorting;

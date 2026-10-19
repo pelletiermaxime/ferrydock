@@ -34,7 +34,7 @@ def resolved_gpui_version(manifest, lock):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, help="New evidence directory; existing paths are refused")
-    parser.add_argument("--flow", choices=("all", "volumes", "analysis", "networks", "favorites", "quick-run", "updates", "lifecycle"), default="all", help="Full application or focused workspace input/rendering flow")
+    parser.add_argument("--flow", choices=("all", "volumes", "analysis", "networks", "favorites", "quick-run", "updates", "lifecycle", "highlighting"), default="all", help="Full application or focused workspace input/rendering flow")
     parser.add_argument("--timeout", type=int, default=600, help="Build plus test timeout in seconds")
     parser.add_argument("--keep-runs", type=keep_runs, default=8,
                         help="Completed default-path runs to retain; 0 keeps all")
@@ -55,6 +55,7 @@ def main():
         "quick-run": "app::kit_tests::quick_run::journey",
         "updates": "app::kit_tests::updates::journey",
         "lifecycle": "app::kit_tests::lifecycle::journey",
+        "highlighting": "app::kit_tests::highlighting::journey",
     }[args.flow]
     command = ["cargo", "test", "--lib", "--features", "headless-tests", "--locked", "--offline",
                test_name, "--", "--exact", "--nocapture", "--test-threads=1"]
@@ -64,6 +65,7 @@ def main():
               "gpui_snapshot": resolved_gpui_version(manifest, lock),
               "gpui_engine": manifest["dependencies"]["gpui"]["package"],
               "framework": "gpui-kit", "real_gpu": False,
+              "highlighter": "tree-sitter",
               "display": None, "wayland_display": None,
               "custom_evidence": args.evidence is not None,
               "cargo_lock_sha256": hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest()}

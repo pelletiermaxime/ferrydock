@@ -80,6 +80,38 @@ pub(super) fn verify_image_details(h: &mut Harness, inventory: &[crate::images::
     })
     .unwrap();
     h.history_click_line(0, MouseButton::Left);
+    h.actions.push(json!({"input": "double-click", "scope": "image-history-table", "selector": "resizable-handle", "column": 2}));
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        let mut table = window.within("image-history-table");
+        let header = table.find(("col-header", 2_usize)).bounds();
+        table.click_with_options(
+            ("col-header", 2_usize),
+            gpui_kit::test::ClickOptions::new()
+                .with_count(2)
+                .with_offset(gpui::point(
+                    header.size.width - px(1.0),
+                    header.size.height / 2.0,
+                )),
+            cx,
+        );
+    })
+    .unwrap();
+    h.cx.run_until_parked();
+    h.checkpoint("images-history-column-fitted");
+    h.cx.read_entity(&h.view, |view, cx| {
+        let table = view.images.details.history_view.table.read(cx);
+        assert!(table.col_width(2).unwrap() >= px(70.0));
+        assert!(
+            table.col_width(2).unwrap() < px(100.0),
+            "Size column must shrink to its header/content"
+        );
+        assert_eq!(table.delegate().widths[2], table.col_width(2).unwrap());
+        assert_eq!(
+            table.selected_row(),
+            Some(0),
+            "Auto-fit must preserve the selected command"
+        );
+    });
     let width = h.cx.read_entity(&h.view, |view, cx| {
         view.images
             .details
