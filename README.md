@@ -118,12 +118,12 @@ launch, try opening FerryDock, then go to **System Settings → Privacy & Securi
 The **Linux x86-64** packages are built on Ubuntu 24.04 and require glibc 2.39
 or newer.
 
-The examples below use `0.15.1`; replace it with the version you downloaded.
+The examples below use `0.15.2`; replace it with the version you downloaded.
 On Ubuntu 24.04 or a compatible Debian-based distribution, install the Debian
 package:
 
 ```sh
-sudo apt install ./ferrydock_0.15.1_amd64.deb
+sudo apt install ./ferrydock_0.15.2_amd64.deb
 ```
 
 Launch **FerryDock** from your applications menu or run `ferrydock` from a desktop
@@ -131,11 +131,11 @@ terminal. The package installs its runtime library dependencies automatically.
 You still need Docker and a working graphics driver.
 
 For a portable download on a compatible distribution, use
-`ferrydock-0.15.1-linux-x86_64.AppImage`:
+`ferrydock-0.15.2-linux-x86_64.AppImage`:
 
 ```sh
-chmod +x ferrydock-0.15.1-linux-x86_64.AppImage
-./ferrydock-0.15.1-linux-x86_64.AppImage
+chmod +x ferrydock-0.15.2-linux-x86_64.AppImage
+./ferrydock-0.15.2-linux-x86_64.AppImage
 ```
 
 The AppImage bundles application libraries and needs no package installation.
@@ -153,7 +153,7 @@ The Debian package and portable archive offer the release-page link in Settings
 and are updated manually.
 
 Alternatively, extract
-`ferrydock-0.15.1-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
+`ferrydock-0.15.2-linux-x86_64.tar.gz` and run `./ferrydock` from the extracted
 directory. Its `INSTALL.txt` lists the runtime dependencies. Each release
 includes a `SHA256SUMS` file to verify its downloads. On macOS, use
 `shasum -a 256 <downloaded-file>` and compare the result with its entry in

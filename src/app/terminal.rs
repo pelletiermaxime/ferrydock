@@ -51,6 +51,7 @@ impl Terminal {
         self.generation = session.map_or(self.next_generation, |session| session.generation);
     }
 
+    #[cfg(target_os = "linux")]
     pub(super) fn live(&self) -> bool {
         self.sessions.values().any(|session| !session.ended)
     }
