@@ -126,7 +126,7 @@ fn init_path(path: Result<PathBuf, String>, cx: &mut App) {
             Ok(theme) => (Some(path), theme, None),
             Err(error) => (Some(path), AppTheme::default(), Some(error)),
         },
-        Err(error) => (None, AppTheme::default(), Some(error.to_string())),
+        Err(error) => (None, AppTheme::default(), Some(error)),
     };
     cx.set_global(Appearance { theme, path, error });
     theme.apply(cx);

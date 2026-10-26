@@ -137,7 +137,10 @@ impl FerryDock {
         self.favorites.items.iter().find(|f| f.id == *id)
     }
 
-    fn terminal_favorite_available(&self, cx: &App) -> Result<(), &'static str> {
+    fn terminal_favorite_available(
+        &self,
+        cx: &App,
+    ) -> Result<(&Favorite, &crate::model::Container), &'static str> {
         let container = self
             .selected_container()
             .ok_or("Select a container to run a favorite")?;
@@ -177,16 +180,16 @@ impl FerryDock {
         if favorite.endpoint != connection.endpoint || !favorite.target.matches(container) {
             return Err("Choose a favorite for this container and Docker endpoint");
         }
-        Ok(())
+        Ok((favorite, container))
     }
 
     fn run_terminal_favorite(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.terminal_favorite_available(cx).is_err() {
+        let Ok((favorite, container)) = self.terminal_favorite_available(cx) else {
             return;
-        }
-        let favorite = self.selected_terminal_favorite(cx).unwrap().clone();
+        };
+        let favorite = favorite.clone();
+        let id = container.id.clone();
         self.favorites.used_pending.insert(favorite.id);
-        let id = self.selected_container().unwrap().id.clone();
         self.favorites.next_run += 1;
         let run = self.favorites.next_run;
         let generation = self.terminal.generation;

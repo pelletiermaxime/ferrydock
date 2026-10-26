@@ -72,11 +72,13 @@ impl Config {
                 })
                 .collect()
         };
+        let files = resolve(&self.files)?;
+        let env_files = resolve(&self.env_files)?;
         Ok(Self {
             project: self.project.clone(),
-            directory: directory.clone(),
-            files: resolve(&self.files)?,
-            env_files: resolve(&self.env_files)?,
+            directory,
+            files,
+            env_files,
             profiles: self.profiles.clone(),
         })
     }
@@ -131,19 +133,14 @@ impl Action {
     pub fn is_cleanup(self) -> bool {
         matches!(self, Self::Cleanup { .. })
     }
-    fn args(self) -> Vec<&'static str> {
+    fn args(self) -> &'static [&'static str] {
         match self {
-            Self::Start => vec!["up", "--detach", "--no-build"],
-            Self::Stop => vec!["stop"],
-            Self::Restart => vec!["restart"],
-            Self::Rebuild => vec!["up", "--detach", "--build", "--force-recreate"],
-            Self::Cleanup { volumes, .. } => {
-                let mut args = vec!["down", "--remove-orphans"];
-                if volumes {
-                    args.push("--volumes");
-                }
-                args
-            }
+            Self::Start => &["up", "--detach", "--no-build"],
+            Self::Stop => &["stop"],
+            Self::Restart => &["restart"],
+            Self::Rebuild => &["up", "--detach", "--build", "--force-recreate"],
+            Self::Cleanup { volumes: true, .. } => &["down", "--remove-orphans", "--volumes"],
+            Self::Cleanup { volumes: false, .. } => &["down", "--remove-orphans"],
         }
     }
 }

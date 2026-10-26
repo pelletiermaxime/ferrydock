@@ -161,7 +161,7 @@ impl FerryDock {
     pub(super) fn update_settings(&self, cx: &mut Context<Self>) -> SettingPage {
         let owner = cx.entity().downgrade();
         let automatic_owner = owner.clone();
-        let status_owner = owner.clone();
+        let status_owner = owner;
         SettingPage::new("Updates").group(SettingGroup::new().title("AppImage updates")
             .description(format!("Installed version: {}. Stable updates come from FerryDock’s GitHub Releases.", env!("CARGO_PKG_VERSION")))
             .item(SettingItem::new("Automatic updates", SettingField::render(move |_, _, cx| {
@@ -171,7 +171,8 @@ impl FerryDock {
                         .checked(this.updates.automatic)
                         .disabled(!this.updates.loaded || this.updates.busy || this.updates.unavailable.is_some())
                         .on_click(cx.listener(|this, enabled, _, cx| { this.updates.send(Command::Automatic(*enabled)); cx.notify(); }))
-                }).unwrap().into_any_element()
+                        .into_any_element()
+                }).unwrap_or_else(|_| div().into_any_element())
             })).layout(Axis::Vertical).description("Checks run after startup and every six hours. You choose when to restart and apply a downloaded update."))
             .item(SettingItem::new("Update status", SettingField::render(move |_, _, cx| {
                 status_owner.update(cx, |this, cx| {
@@ -188,7 +189,7 @@ impl FerryDock {
                             .child(Button::new("update-releases").small().label("Release notes")
                                 .on_click(|_, _, cx| cx.open_url("https://github.com/pelletiermaxime/ferrydock/releases"))))
                         .into_any_element()
-                }).unwrap()
+                }).unwrap_or_else(|_| div().into_any_element())
             })).layout(Axis::Vertical))
             .item(SettingItem::new("Download verification", SettingField::render(|_, _, _| {
                 div().text_sm().max_w(px(460.0)).child("Downloads are checked against the release’s SHA256SUMS. Publisher signatures are not used in this version.")

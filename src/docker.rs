@@ -1031,7 +1031,7 @@ async fn stream_logs(
 ) {
     // Load the finite history before painting it. Replaying history through the
     // live stream makes Follow visibly walk down the output on every selection.
-    let started = chrono::Utc::now().timestamp() as i32;
+    let started = chrono::Utc::now().timestamp();
     let history_options = LogsOptionsBuilder::default()
         .stdout(true)
         .stderr(true)
@@ -1058,9 +1058,6 @@ async fn stream_logs(
             }
         }
     }
-    let since = history
-        .latest
-        .map_or(started, |timestamp| timestamp.timestamp() as i32);
     let data = std::mem::take(&mut history.data);
     tokio::select! {
         _ = cancel.cancelled() => return,
@@ -1068,6 +1065,18 @@ async fn stream_logs(
             if result.is_err() { return; }
         }
     }
+    let since = match history.resume_since(started) {
+        Ok(since) => since,
+        Err(error) => {
+            let _ = events
+                .send(Event::LogsEnded {
+                    generation,
+                    error: Some(error.to_string()),
+                })
+                .await;
+            return;
+        }
+    };
     // Resume from the snapshot's timestamp so output produced between requests
     // is retained. Docker's second-resolution `since` also replays history;
     // remove those records, including duplicates at the exact boundary.
@@ -1107,6 +1116,13 @@ impl LogHistory {
     // Docker's tail limit counts records, not bytes. Refuse oversized history
     // before copying arbitrarily large records into the initial snapshot.
     const MAX_BYTES: usize = 32 * 1024 * 1024;
+
+    fn resume_since(&self, started: i64) -> Result<i32> {
+        let timestamp = self.latest.map_or(started, |latest| latest.timestamp());
+        i32::try_from(timestamp).with_context(|| {
+            format!("Log timestamp {timestamp} is outside the supported Docker log API range")
+        })
+    }
 
     fn timestamp(record: &[u8]) -> Option<chrono::DateTime<chrono::FixedOffset>> {
         let end = record.iter().position(|byte| *byte == b' ')?;
@@ -1157,6 +1173,29 @@ impl LogHistory {
 #[cfg(test)]
 mod log_history_tests {
     use super::LogHistory;
+
+    #[test]
+    fn resume_timestamp_rejects_wrapping_at_the_docker_api_boundary() {
+        let history = LogHistory::default();
+        for timestamp in [i64::from(i32::MIN), 0, i64::from(i32::MAX)] {
+            assert_eq!(
+                i64::from(history.resume_since(timestamp).unwrap()),
+                timestamp
+            );
+        }
+        for timestamp in [i64::from(i32::MIN) - 1, i64::from(i32::MAX) + 1] {
+            assert!(
+                history.resume_since(timestamp).is_err(),
+                "timestamp {timestamp}"
+            );
+        }
+        let mut history = LogHistory::default();
+        history.push(b"2038-01-19T03:14:08Z future log\n").unwrap();
+        assert!(
+            history.resume_since(0).is_err(),
+            "The latest log timestamp takes precedence"
+        );
+    }
 
     #[test]
     fn resume_keeps_gap_output_and_removes_snapshot_replay() {

@@ -16,7 +16,7 @@ impl FerryDock {
                     self.container_logs.generation += 1;
                     self.reset_container_log_buffer();
                     self.backend.send(Command::Logs {
-                        id: id.clone(),
+                        id,
                         generation: self.container_logs.generation,
                     });
                 }

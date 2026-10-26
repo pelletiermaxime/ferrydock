@@ -107,14 +107,16 @@ impl History {
             if age > metrics::HISTORY_WINDOW {
                 continue;
             }
-            let value = if cpu {
-                sample.cpu_percent
+            let reading = if cpu {
+                sample
+                    .cpu_percent
+                    .map(|value| (value, format!("{value:.2}%")))
             } else {
                 sample
                     .memory_used
-                    .map(|bytes| bytes as f64 / (1024.0 * 1024.0))
+                    .map(|bytes| (bytes as f64 / (1024.0 * 1024.0), metrics::bytes(bytes)))
             };
-            let Some(value) = value.filter(|value| value.is_finite()) else {
+            let Some((value, display)) = reading.filter(|(value, _)| value.is_finite()) else {
                 // Start a new series after missing readings; do not smooth a gap
                 // into data that Docker never measured.
                 points.clear();
@@ -132,11 +134,7 @@ impl History {
                 collected: sample.collected,
                 label: time_label(age).into(),
                 value,
-                display: if cpu {
-                    format!("{value:.2}%").into()
-                } else {
-                    metrics::bytes(sample.memory_used.unwrap()).into()
-                },
+                display: display.into(),
             });
         }
         points
@@ -534,6 +532,11 @@ mod tests {
         history.samples.back_mut().unwrap().cpu_percent = None;
         assert!(history.chart_points(true, now).is_empty());
         assert_eq!(history.chart_points(false, now).len(), 2);
+        history.samples.back_mut().unwrap().memory_used = None;
+        assert!(
+            history.chart_points(false, now).is_empty(),
+            "Missing memory starts a new series just like missing CPU"
+        );
         assert!(chart_upper(0.0) > 0.0);
         assert_eq!(axis_value(0.005, 0.01, true), "0.005%");
         assert_eq!(axis_value(250.0, 250.0, false), "250 MiB");

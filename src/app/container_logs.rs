@@ -152,7 +152,7 @@ impl FerryDock {
                                     generation: this.container_logs.generation,
                                 });
                                 this.backend.send(Command::Inspect {
-                                    id: id.clone(),
+                                    id,
                                     generation: this.container_logs.generation,
                                 });
                                 this.container_logs.status = "Connecting to logs…".into();

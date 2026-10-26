@@ -267,7 +267,7 @@ impl FerryDock {
                                 project.label()
                             );
                             let toggle = Button::new(SharedString::from(toggle_id.clone()))
-                                .debug_selector(move || toggle_id.clone())
+                                .debug_selector(move || toggle_id)
                                 .small()
                                 .ghost()
                                 .icon(if expanded {

@@ -117,7 +117,7 @@ impl FerryDock {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        self.projects.form = Some(ComposeForm {
+        let form = ComposeForm {
             project: project.name.clone(),
             directory: cx.new(|cx| {
                 InputState::new(window, cx)
@@ -131,15 +131,11 @@ impl FerryDock {
             .map(|value| cx.new(|cx| TextareaState::new(window, cx).rows(2).default_value(value))),
             saving: false,
             error: None,
-        });
+        };
+        let directory_focus = form.directory.focus_handle(cx);
+        self.projects.form = Some(form);
         self.expand_dock(500.0, window, cx);
-        self.projects
-            .form
-            .as_ref()
-            .unwrap()
-            .directory
-            .focus_handle(cx)
-            .focus(window, cx);
+        directory_focus.focus(window, cx);
         cx.notify();
     }
 

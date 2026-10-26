@@ -187,7 +187,8 @@ fn summarize_stops(markers: &mut [Marker], keep: &mut [bool]) {
             related.push(next);
         }
         let request_details = details("Container stop requested", &requests, markers);
-        let stopped_details = completion.map(|_| details("Container stopped", &related, markers));
+        let completion =
+            completion.map(|index| (index, details("Container stopped", &related, markers)));
         for next in related.iter().copied().skip(1) {
             if !process_error(&markers[next]) {
                 keep[next] = false;
@@ -195,10 +196,10 @@ fn summarize_stops(markers: &mut [Marker], keep: &mut [bool]) {
         }
         markers[index].message = "Container stop requested".into();
         markers[index].details = request_details;
-        if let Some(completion) = completion {
+        if let Some((completion, stopped_details)) = completion {
             keep[completion] = true;
             markers[completion].message = "Container stopped".into();
-            markers[completion].details = stopped_details.unwrap();
+            markers[completion].details = stopped_details;
         }
     }
     // Partial event history may contain stop + die without the request. Prefer

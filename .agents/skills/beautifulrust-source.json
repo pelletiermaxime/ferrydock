@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/morganlinton/BeautifulRust",
+  "revision": "a2b22682fa69b5e2d41a5d041663df7d51aac521",
+  "skills": [
+    "rust-best-practices",
+    "rust-review"
+  ],
+  "license": "MIT"
+}

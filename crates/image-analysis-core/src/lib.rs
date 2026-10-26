@@ -142,7 +142,7 @@ impl<R: Read, F: Fn() -> bool> Read for CheckedRead<'_, R, F> {
         let count = buf
             .len()
             .min(64 * 1024)
-            .min(self.remaining.saturating_add(1) as usize);
+            .min(usize::try_from(self.remaining.saturating_add(1)).unwrap_or(usize::MAX));
         let n = self.inner.read(&mut buf[..count])?;
         if n as u64 > self.remaining {
             return Err(std::io::Error::other("Expanded archive exceeds byte limit"));
@@ -165,12 +165,18 @@ fn json_at<R: Read + Seek, T: serde::de::DeserializeOwned>(
         "Archive JSON exceeds metadata limit"
     );
     reader.seek(SeekFrom::Start(offset))?;
-    Ok(serde_json::from_reader(reader.take(size))?)
+    serde_json::from_reader(reader.take(size))
+        .with_context(|| format!("Cannot parse archive JSON {name}"))
 }
 
 /// Analyze one Docker archive manifest. Seek avoids retaining or extracting
 /// layer blobs. `cancelled` is checked throughout indexing, reading and accounting.
 /// Bounds fail explicitly; reports are never silently truncated.
+///
+/// # Errors
+///
+/// Returns an error on cancellation, exceeded limits, I/O failures, malformed or
+/// unsupported archive data, inconsistent history, or unresolved hard links.
 pub fn analyze<R: Read + Seek>(
     mut reader: R,
     limits: &Limits,
@@ -228,7 +234,8 @@ pub fn analyze<R: Read + Seek>(
     let mut path_budget = limits.metadata_bytes;
     let mut expanded_left = limits.expanded_bytes;
     let mut physical = 0usize;
-    let mut node_budget = limits.entries.saturating_mul(2);
+    let node_limit = limits.entries.saturating_mul(2);
+    let mut node_budget = node_limit;
     let history = if config.history.is_empty() {
         manifest
             .layers
@@ -319,10 +326,7 @@ pub fn analyze<R: Read + Seek>(
             expanded_left = checked.remaining;
             let payload_cursor = payloads.len();
             let changes = apply(entries, &mut live, &mut payloads, &cancelled)?;
-            ensure!(
-                live.len() <= limits.entries * 2,
-                "Filesystem node limit exceeded"
-            );
+            ensure!(live.len() <= node_limit, "Filesystem node limit exceeded");
             layer.unpacked_bytes = payloads.iter().skip(payload_cursor).map(|p| p.bytes).sum();
             layer.files = tree(&changes, &mut node_budget)?;
             report.unpacked_bytes = report
@@ -392,7 +396,13 @@ fn apply(
         checkpoint(cancelled)?;
         let (parent, base) = entry.path.rsplit_once('/').unwrap_or(("", &entry.path));
         if base == ".wh..wh..opq" {
-            remove(parent, false, live, payloads, &mut changes);
+            remove(
+                parent,
+                RemovalScope::Descendants,
+                live,
+                payloads,
+                &mut changes,
+            );
         } else if let Some(target) = base.strip_prefix(".wh.") {
             ensure!(
                 !target.is_empty() && target != "." && target != "..",
@@ -403,7 +413,7 @@ fn apply(
             } else {
                 format!("{parent}/{target}")
             };
-            remove(&target, true, live, payloads, &mut changes);
+            remove(&target, RemovalScope::Subtree, live, payloads, &mut changes);
         }
     }
     let mut links: Vec<(String, String)> = Vec::new();
@@ -418,7 +428,13 @@ fn apply(
         let existed = live.contains_key(&entry.path) || changes.contains_key(&entry.path);
         let directory = matches!(entry.kind, Kind::Directory);
         if !directory || live.get(&entry.path).is_some_and(|old| !old.directory) {
-            remove(&entry.path, true, live, payloads, &mut changes);
+            remove(
+                &entry.path,
+                RemovalScope::Subtree,
+                live,
+                payloads,
+                &mut changes,
+            );
         }
         // Materialize implicit parent directories; a child replacing a lower
         // file/symlink removes its old payload instead of retaining impossible state.
@@ -426,7 +442,7 @@ fn apply(
         for n in 1..parts.len() {
             let parent = parts[..n].join("/");
             if live.get(&parent).is_some_and(|v| !v.directory) {
-                remove(&parent, true, live, payloads, &mut changes);
+                remove(&parent, RemovalScope::Subtree, live, payloads, &mut changes);
                 changes.insert(parent.clone(), ("Modified".into(), 0));
             }
             live.entry(parent).or_insert(Live {
@@ -493,9 +509,14 @@ fn apply(
     }
     Ok(changes.into_iter().map(|(p, (c, b))| (p, c, b)).collect())
 }
+enum RemovalScope {
+    Descendants,
+    Subtree,
+}
+
 fn remove(
     target: &str,
-    itself: bool,
+    scope: RemovalScope,
     live: &mut BTreeMap<String, Live>,
     payloads: &[Payload],
     changes: &mut BTreeMap<String, (String, u64)>,
@@ -510,7 +531,7 @@ fn remove(
         .take_while(|(p, _)| p.starts_with(&prefix))
         .map(|(p, _)| p.clone())
         .collect();
-    if itself && live.contains_key(target) {
+    if matches!(scope, RemovalScope::Subtree) && live.contains_key(target) {
         keys.push(target.to_owned());
     }
     for key in keys {
@@ -751,6 +772,25 @@ mod tests {
         let bad = image(vec![tar(&[])], serde_json::json!([{"empty_layer":true}]));
         assert!(analyze(Cursor::new(bad), &Limits::default(), || false).is_err());
     }
+
+    #[test]
+    fn maximum_entry_budget_does_not_overflow_node_limit() {
+        let bytes = image(
+            vec![tar(&[("file", b'0', b"123", "")])],
+            serde_json::json!([]),
+        );
+        let report = analyze(
+            Cursor::new(bytes),
+            &Limits {
+                entries: usize::MAX,
+                ..Default::default()
+            },
+            || false,
+        )
+        .unwrap();
+        assert_eq!(report.unpacked_bytes, 3);
+        assert_eq!(report.largest_files[0].path, "file");
+    }
 }
 
 #[cfg(test)]
@@ -778,7 +818,7 @@ mod boundary_tests {
         let mut changes = BTreeMap::new();
         remove(
             "d",
-            true,
+            RemovalScope::Subtree,
             &mut live,
             &[Payload { bytes: 5 }, Payload { bytes: 3 }],
             &mut changes,
@@ -848,6 +888,41 @@ mod boundary_tests {
                 .to_string()
                 .contains("cancelled")
         );
+    }
+
+    #[test]
+    fn checked_reader_distinguishes_exact_eof_from_overflow() {
+        for remaining in [3, u64::MAX] {
+            let mut reader = CheckedRead {
+                inner: Cursor::new(b"abc"),
+                cancelled: &|| false,
+                remaining,
+            };
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, b"abc", "budget {remaining}");
+        }
+        let mut reader = CheckedRead {
+            inner: Cursor::new(b"abcd"),
+            cancelled: &|| false,
+            remaining: 3,
+        };
+        let error = reader.read_to_end(&mut Vec::new()).unwrap_err();
+        assert!(error.to_string().contains("exceeds byte limit"));
+    }
+
+    #[test]
+    fn malformed_json_identifies_the_archive_member_and_preserves_the_cause() {
+        let index = BTreeMap::from([("config.json".into(), (0, 1))]);
+        let error = json_at::<_, serde_json::Value>(
+            &mut Cursor::new(b"{"),
+            &index,
+            "config.json",
+            &Limits::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("config.json"));
+        assert!(error.downcast_ref::<serde_json::Error>().is_some());
     }
     #[test]
     fn final_tree_budget_is_shared_across_layers() {

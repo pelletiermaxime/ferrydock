@@ -465,7 +465,7 @@ impl FerryDock {
         let view = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, cx| {
             view.update(cx, |this, cx| this.volume_removal_dialog(dialog, cx))
-                .unwrap()
+                .unwrap_or_else(|_| Dialog::new(cx).title("Volume unavailable"))
         });
         cx.notify();
     }

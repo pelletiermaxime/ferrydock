@@ -12,6 +12,15 @@ disconnect invalidate affected sessions. Closing the application ends attachment
 
 For the user guide, see the [README](../README.md).
 
+## Rust guidance
+
+BeautifulRust's project-local [rust-best-practices](../.agents/skills/rust-best-practices/SKILL.md)
+and [rust-review](../.agents/skills/rust-review/SKILL.md) skills guide Rust changes and reviews.
+Their pinned upstream revision is recorded in
+[beautifulrust-source.json](../.agents/skills/beautifulrust-source.json), with MIT licenses
+alongside each skill. Apply the guidance within FerryDock's application architecture
+and verify changes using the workflows below.
+
 ## Application structure
 
 `src/app.rs` composes the GPUI application and wires its worker channel. Feature
