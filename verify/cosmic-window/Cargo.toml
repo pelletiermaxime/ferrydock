@@ -1,0 +1,10 @@
+[package]
+name = "ferrydock-cosmic-window"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+anyhow = "1"
+cosmic-client-toolkit = "0.2.0"
+png = "0.18"

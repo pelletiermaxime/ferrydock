@@ -226,6 +226,8 @@ fn journey(test_cx: &mut TestAppContext) {
     h.checkpoint("favorites-terminal-running");
     // A busy favorite survives navigation and another container's regular shell.
     let original_view = h.observe(|v| v.terminal.view.as_ref().unwrap().entity_id());
+    // Let the successful restart feedback clear the search field before clicking it.
+    h.settle_ui(5_500);
     h.drain_commands();
     select_replica(&mut h, 2);
     assert!(h.observe(|v| v.terminal.view.is_none()));

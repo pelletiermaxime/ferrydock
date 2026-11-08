@@ -434,7 +434,7 @@ impl Render for TerminalView {
                     cx.notify();
                 }),
             )
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 let delta = event.delta.pixel_delta(px(LINE_HEIGHT));
                 this.core
                     .term

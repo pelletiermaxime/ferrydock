@@ -187,7 +187,19 @@ fn journey(test_cx: &mut TestAppContext) {
     h.click_tab("analysis-content-tabs", 1);
     h.checkpoint("image-analysis-findings");
     h.click_tab("analysis-content-tabs", 0);
+    h.actions
+        .push(json!({"input": "wheel", "selector": "analysis-layer-pane", "delta": -160}));
+    h.cx.update_window(h.window.into(), |_, window, cx| {
+        window.scroll(
+            "analysis-layer-pane",
+            gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-160.0))),
+            cx,
+        );
+    })
+    .unwrap();
+    h.cx.run_until_parked();
     h.click("analysis-layer-2");
+    assert_eq!(h.observe(|v| v.images.details.analysis.layer), 2);
     h.checkpoint("image-analysis-metadata-only");
     h.key("ctrl-1");
     h.key("ctrl-4");

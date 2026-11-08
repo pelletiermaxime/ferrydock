@@ -157,6 +157,31 @@ class NativeDesktopTests(unittest.TestCase):
             self.assertEqual(desktop.run.call_args_list[-1].args[0],
                              ['kdotool', 'windowactivate', '{owned-window}'])
 
+    def test_cosmic_attaches_only_to_the_new_ferrydock_window(self):
+        desktop = VERIFIER.NativeDesktop(
+            'wayland', {'XDG_CURRENT_DESKTOP': 'COSMIC'}, Path('/tmp/evidence'), Path('/test/binary'))
+        desktop.alive = Mock()
+        desktop.cosmic_window = Mock(side_effect=[
+            ['existing-window'], ['existing-window', 'owned-window'], [], [],
+        ])
+        desktop.prepare_launch()
+        desktop.attach(Mock(), 12345)
+        self.assertEqual(desktop.window, 'owned-window')
+        self.assertEqual(desktop.cosmic_window.call_args_list[-2].args, ('activate', 'owned-window'))
+
+    def test_cosmic_requires_owned_toplevel_focus_before_sending_keys(self):
+        desktop = VERIFIER.NativeDesktop(
+            'wayland', {'XDG_CURRENT_DESKTOP': 'COSMIC'}, Path('/tmp/evidence'), Path('/test/binary'))
+        desktop.alive = Mock()
+        desktop.window = 'owned-window'
+        desktop.run = Mock(return_value=SimpleNamespace(
+            returncode=1, stdout='', stderr='FerryDock toplevel is not focused'))
+        with self.assertRaisesRegex(RuntimeError, 'not focused'):
+            desktop.keys('ctrl+f')
+        desktop.alive.assert_called_once()
+        desktop.run.assert_called_once_with(
+            [str(desktop.cosmic_helper), 'focused', 'owned-window'], timeout=5, check=False)
+
 
 if __name__ == '__main__':
     unittest.main()

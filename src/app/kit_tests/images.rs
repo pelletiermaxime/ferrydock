@@ -2,6 +2,8 @@ use super::*;
 
 pub(super) fn verify_image_prune(h: &mut Harness, inventory: &[crate::images::Image]) {
     use crate::images::PruneMode;
+    // The history error toast can cover the Prune button in the compact window.
+    h.dismiss_image_feedback();
     let selection = h.observe(|v| v.images.selection.clone());
     h.drain_commands();
     h.click("image-prune");

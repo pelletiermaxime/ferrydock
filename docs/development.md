@@ -214,7 +214,7 @@ Initialize Kit and its assets before constructing the application's Root view.
 Kit's `gpui-fast` feature and all direct GPUI engine/platform dependencies
 must select the same backend so their public types remain compatible. The
 compatible version ranges and features are declared in [Cargo.toml](../Cargo.toml),
-with resolved versions recorded in `Cargo.lock`. Kit is currently 0.8.0.
+with resolved versions recorded in `Cargo.lock`.
 Kit's `tree-sitter` feature enables only the JSON grammar;
 `windows-manifest-provided-by-host` avoids
 supplying a second Windows manifest alongside Kit.
@@ -587,9 +587,9 @@ cross-feature session/focus checks; focused journeys run independently through
 `python3 scripts/verify-headless.py --flow FLOW`.
 
 Use `gpui_kit::test::TestWindowExt` for element lookup, clicks, right/double
-clicks, keyboard/text input, wheel scrolling and dragging. Kit 0.8.0 provides
-`click_with_modifiers` and `ClickOptions` for modified and offset clicks;
-only position-specific hover retains a small native-event adapter. Use Kit's
+clicks, keyboard/text input, wheel scrolling and dragging. Use
+`click_with_modifiers` and `ClickOptions` for modified and offset clicks.
+Position-specific hover uses a small native-event adapter. Use Kit's
 `TestAppContextExt::wait_for` to observe deferred popups. Notification dismissal
 first hovers the visible toast to reveal Close. The Updates flow uses the visible
 Settings restart entry after lifecycle feedback covers the banner.
@@ -684,12 +684,16 @@ The default `--backend auto` selects native Wayland when `WAYLAND_DISPLAY` is
 set, otherwise X11. Use `--backend wayland` to require Wayland, or
 `--backend x11 --display :0` for an explicit XWayland comparison. A missing
 Wayland prerequisite fails the run instead of silently switching backends.
-The demonstrated Wayland adapter requires KDE/KWin, `kdotool`, `qdbus6`,
-Spectacle, `ydotool`, `ydotoold`, and access to `/dev/uinput`; other compositors
-need a separate adapter. It starts its own temporary keyboard daemon/socket,
-checks window PID and focus before input/capture, and removes those resources
-along with its application and Docker fixture. It does not change system input
-permissions. X11 uses `xdotool` and ImageMagick. Both backends use Tesseract.
+Both Wayland adapters require `ydotool`, `ydotoold`, and access to `/dev/uinput`.
+On COSMIC, build the separate verification helper with
+`cargo build --locked -p ferrydock-cosmic-window`. It uses COSMIC's toplevel
+management and Wayland's per-window image capture. COSMIC exposes a toplevel ID
+rather than a PID, so the harness snapshots existing FerryDock windows, checks
+the child executable separately, and requires exactly one new FerryDock toplevel.
+It checks the new window's ID and focus before input or capture.
+KDE/KWin uses `kdotool`, `qdbus6`, and Spectacle. The harness owns and cleans up
+the temporary keyboard daemon/socket, application, and Docker fixture. X11 uses
+`xdotool` and ImageMagick. All backends use Tesseract.
 The result records the actual backend, child display environment, input/capture
 methods, and input cleanup. Search timings include backend-specific automation
 overhead, so compare CPU/RSS separately from input/capture timings.

@@ -26,6 +26,7 @@ def desktop_environment(requested, display, environment):
         if not env.get('WAYLAND_DISPLAY') or not env.get('XDG_RUNTIME_DIR'):
             raise RuntimeError('Wayland requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR from your desktop session')
         env.pop('DISPLAY', None)
+        env.pop('WAYLAND_SOCKET', None)
     else:
         if not display:
             raise RuntimeError('X11 requires DISPLAY or --display')
@@ -47,6 +48,9 @@ class NativeDesktop:
 
     def __init__(self, backend, env, evidence, binary):
         self.backend, self.env, self.evidence, self.binary = backend, env, evidence, binary
+        self.cosmic = backend == 'wayland' and 'cosmic' in env.get('XDG_CURRENT_DESKTOP', '').casefold().split(':')
+        self.cosmic_helper = ROOT / 'target/debug/ferrydock-cosmic-window'
+        self.existing_windows = None
         self.app = self.pid = self.window = None
         self.input_daemon = self.input_log = None
         self.input_socket = evidence / 'input.sock'
@@ -55,9 +59,20 @@ class NativeDesktop:
         return subprocess.run(command, env=self.env, capture_output=True, text=True,
                               timeout=timeout, check=check)
 
+    def cosmic_window(self, *args, timeout=5):
+        response = self.run([str(self.cosmic_helper), *args], timeout=timeout, check=False)
+        if response.returncode:
+            raise RuntimeError(f'COSMIC {args[0]} failed: {response.stderr.strip()}')
+        return response.stdout.split()
+
     def doctor(self):
-        tools = ['tesseract'] + (['kdotool', 'qdbus6', 'spectacle', 'ydotool', 'ydotoold']
-                                if self.backend == 'wayland' else ['xdotool', 'magick'])
+        tools = ['tesseract']
+        if self.backend == 'wayland':
+            tools += ['ydotool', 'ydotoold']
+            if not self.cosmic:
+                tools += ['kdotool', 'qdbus6', 'spectacle']
+        else:
+            tools += ['xdotool', 'magick']
         missing = [tool for tool in tools if not shutil.which(tool)]
         if missing:
             raise RuntimeError('Missing native verification tools: ' + ', '.join(missing))
@@ -71,16 +86,24 @@ class NativeDesktop:
                 raise RuntimeError('Wayland display socket is unavailable: ' + str(socket))
             if not os.access('/dev/uinput', os.R_OK | os.W_OK):
                 raise RuntimeError('Wayland input requires access to /dev/uinput; system permissions are not changed by this helper')
-            # This is the demonstrated KDE/KWin adapter. Refuse unsupported
-            # compositors rather than silently measuring XWayland instead.
-            try:
-                self.run(['qdbus6', 'org.kde.KWin', '/KWin', 'activeOutputName'])
-            except subprocess.CalledProcessError as error:
-                raise RuntimeError('Native Wayland automation currently requires KDE/KWin; use --backend x11 explicitly for XWayland') from error
+            if self.cosmic:
+                if not self.cosmic_helper.is_file():
+                    raise RuntimeError('Build the COSMIC helper with cargo build --locked -p ferrydock-cosmic-window')
+                self.prepare_launch()
+            else:
+                try:
+                    self.run(['qdbus6', 'org.kde.KWin', '/KWin', 'activeOutputName'])
+                except subprocess.CalledProcessError as error:
+                    raise RuntimeError('Native Wayland automation requires COSMIC or KDE/KWin') from error
         else:
             self.run(['xdotool', 'getdisplaygeometry'])
         return {'ready': True, 'backend': self.backend, 'display': self.env.get('DISPLAY'),
-                'wayland_display': self.env.get('WAYLAND_DISPLAY')}
+                'wayland_display': self.env.get('WAYLAND_DISPLAY'),
+                'wayland_adapter': ('COSMIC' if self.cosmic else 'KWin') if self.backend == 'wayland' else None}
+
+    def prepare_launch(self):
+        if self.cosmic:
+            self.existing_windows = set(self.cosmic_window('list'))
 
     def start_input(self):
         if self.backend != 'wayland':
@@ -103,33 +126,54 @@ class NativeDesktop:
         time.sleep(1)  # Let the compositor register the owned virtual keyboard.
 
     def alive(self):
-        assert self.app.poll() is None, 'Owned application exited'
-        assert Path(f'/proc/{self.pid}/exe').resolve() == self.binary, 'Owned executable changed'
+        if self.app.poll() is not None:
+            raise RuntimeError('Owned application exited')
+        if Path(f'/proc/{self.pid}/exe').resolve() != self.binary:
+            raise RuntimeError('Owned executable changed')
 
     def attach(self, app, pid):
         self.app, self.pid = app, pid
+        if self.cosmic and self.existing_windows is None:
+            raise RuntimeError('Snapshot COSMIC toplevels before launching FerryDock')
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             self.alive()
-            command = (['kdotool', 'search', '--all', '--pid', str(pid), '--title', '^FerryDock$']
-                       if self.backend == 'wayland' else
-                       ['xdotool', 'search', '--all', '--onlyvisible', '--pid', str(pid), '--name', '^FerryDock$'])
-            found = self.run(command, check=False)
-            # kdotool returns exit 0 with empty output before the surface appears.
-            windows = found.stdout.split() if found.returncode == 0 else []
+            if self.cosmic:
+                windows = sorted(set(self.cosmic_window('list')) - self.existing_windows)
+            else:
+                command = (['kdotool', 'search', '--all', '--pid', str(pid), '--title', '^FerryDock$']
+                           if self.backend == 'wayland' else
+                           ['xdotool', 'search', '--all', '--onlyvisible', '--pid', str(pid), '--name', '^FerryDock$'])
+                found = self.run(command, check=False)
+                windows = found.stdout.split() if found.returncode == 0 else []
             if windows:
-                assert len(windows) == 1, 'Refuse an ambiguous owned window'
+                if len(windows) != 1:
+                    raise RuntimeError('Refuse an ambiguous owned window')
                 self.window = windows[0]
                 break
             time.sleep(0.1)
         if self.window is None:
             raise RuntimeError('No owned FerryDock window appeared')
+        if self.cosmic:
+            self.alive()
+            self.cosmic_window('activate', self.window)
+            for _ in range(20):
+                self.alive()
+                try:
+                    self.cosmic_window('focused', self.window)
+                    return
+                except RuntimeError:
+                    time.sleep(0.1)
+            raise RuntimeError('COSMIC did not focus the owned FerryDock window')
         command = (['kdotool', 'windowactivate', self.window] if self.backend == 'wayland'
                    else ['xdotool', 'windowactivate', '--sync', self.window])
         self.run(command)
 
     def assert_focus(self):
         self.alive()
+        if self.cosmic:
+            self.cosmic_window('focused', self.window)
+            return
         if self.backend == 'wayland':
             active = self.run(['kdotool', 'getactivewindow']).stdout.strip()
             pid = self.run(['kdotool', 'getwindowpid', self.window]).stdout.strip()
@@ -155,10 +199,13 @@ class NativeDesktop:
 
     def capture(self, path):
         self.assert_focus()
-        command = (['spectacle', '--background', '--activewindow', '--nonotify', '--no-decoration', '--no-shadow', '--output', str(path)]
-                   if self.backend == 'wayland' else
-                   ['magick', 'import', '-limit', 'thread', '1', '-window', self.window, str(path)])
-        self.run(command)
+        if self.cosmic:
+            self.cosmic_window('capture', self.window, str(path), timeout=15)
+        else:
+            command = (['spectacle', '--background', '--activewindow', '--nonotify', '--no-decoration', '--no-shadow', '--output', str(path)]
+                       if self.backend == 'wayland' else
+                       ['magick', 'import', '-limit', 'thread', '1', '-window', self.window, str(path)])
+            self.run(command)
         self.assert_focus()
 
     def close(self):
@@ -301,6 +348,7 @@ def main():
             labels = container['Config']['Labels']
             assert labels.get('dev.ferrydock.fixture') == 'true' and labels.get('com.docker.compose.project') == project
         app_log = (evidence / 'application.log').open('w')
+        desktop.prepare_launch()
         app = subprocess.Popen(['gdb', '--interpreter=mi', '--args', str(binary)] if args.profile else [str(binary)], env=env, stdin=subprocess.PIPE if args.profile else None, stdout=app_log, stderr=app_log)
         if args.profile:
             app.stdin.write(b'-gdb-set pagination off\n-gdb-set mi-async on\n-exec-run\n'); app.stdin.flush()
@@ -318,10 +366,12 @@ def main():
         result['pid'] = app_pid
         desktop.attach(app, app_pid)
         result['window'] = desktop.window
-        if backend == 'wayland':
+        result['wayland_adapter'] = doctor['wayland_adapter']
+        if backend == 'wayland' and not desktop.cosmic:
             result['kwin_window_info'] = run(['qdbus6', 'org.kde.KWin', '/KWin', 'getWindowInfo', desktop.window]).stdout
         result['input_method'] = 'ydotool (owned virtual keyboard)' if backend == 'wayland' else 'xdotool'
-        result['capture_method'] = 'Spectacle' if backend == 'wayland' else 'ImageMagick X11 capture'
+        result['capture_method'] = ('Wayland toplevel image capture' if desktop.cosmic else
+                                    'Spectacle' if backend == 'wayland' else 'ImageMagick X11 capture')
 
         last_capture_completed = 0.0
 
@@ -349,7 +399,11 @@ def main():
         normalize = lambda text: text.casefold().translate(str.maketrans({'o': '0', 'l': '1', 'i': '1', '@': '0'}))
         while time.monotonic() < deadline:
             text = screenshot('busy-logs')
-            if re.search(r'c0mp0se.{0,12}' + re.escape(normalize(project)), normalize(text), re.S) and 'FERRY_PERF_' in text:
+            scanned = normalize(text)
+            if (normalize(project) in scanned
+                    and re.search(r'c0mp0se\s*[-–]', scanned)
+                    and normalize('All services') in scanned
+                    and 'FERRY_PERF_' in text):
                 break
             time.sleep(0.2)
         else:
@@ -393,7 +447,7 @@ def main():
         search_at = time.monotonic()
         desktop.keys('ctrl+f', 'ctrl+a')
         desktop.type(project + '-absent')
-        deadline = search_at + 3
+        deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             time.sleep(0.2)
             text = screenshot('responsive-search')

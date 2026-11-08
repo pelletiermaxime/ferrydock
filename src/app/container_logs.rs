@@ -99,7 +99,7 @@ impl FerryDock {
                 Toolbar::new("container-log-toolbar")
                     .gap_2()
                     .px_3()
-                    .py_2()
+                    .py_1()
                     .border_b_1()
                     .border_color(rgb(colors.border))
                     .child(
